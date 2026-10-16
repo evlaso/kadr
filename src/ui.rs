@@ -62,6 +62,11 @@ pub fn quad(bounds: Bounds<Pixels>, radius: Pixels, background: impl Into<Backgr
     PaintQuad::new(bounds).corner_radii(radius).background(background).border_widths(border).border_color(border_color).border_style(style)
 }
 
+/// White or near-black, whichever reads on `background`.
+pub fn on(background: Hsla) -> Hsla {
+    if background.lightness > 0.62 { hsla(0., 0., 0.1, 1.) } else { hsla(0., 0., 1., 1.) }
+}
+
 /// Corner smoothing for panels and windows (0 is circular).
 pub const SMOOTHING: f32 = 0.6;
 
@@ -169,9 +174,10 @@ impl Color {
 pub trait StyledExt: Styled + Sized {
     /// A raised surface: popovers and floating bars.
     fn elevation_2(self, cx: &App) -> Self {
+        let light = cx.theme().light;
         self.elevated(cx, vec![
-            BoxShadow { color: hsla(0., 0., 0., 0.12).into(), offset: point(px(0.), px(2.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if cx.theme().light { 0.03 } else { 0.06 }).into(), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if light { 0.10 } else { 0.28 }).into(), offset: point(px(0.), px(4.)), blur_radius: px(14.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.18 }).into(), offset: point(px(0.), px(1.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
         ])
     }
 
@@ -179,17 +185,15 @@ pub trait StyledExt: Styled + Sized {
     fn elevation_3(self, cx: &App) -> Self {
         let light = cx.theme().light;
         self.elevated(cx, vec![
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.12 }).into(), offset: point(px(0.), px(2.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.12 }).into(), offset: point(px(0.), px(3.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., 0.04).into(), offset: point(px(0.), px(6.)), blur_radius: px(12.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.04 } else { 0.12 }).into(), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if light { 0.14 } else { 0.36 }).into(), offset: point(px(0.), px(10.)), blur_radius: px(30.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if light { 0.08 } else { 0.22 }).into(), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
         ])
     }
 
     fn elevated(self, cx: &App, shadow: Vec<BoxShadow>) -> Self {
         let colors = cx.theme().colors();
-        // Squircle corners, iOS-style.
-        self.bg(colors.elevated_surface_background).rounded_lg().rounded_smoothing(SMOOTHING).border_1().border_color(colors.border_variant).shadow(shadow)
+        // Soft squircle surfaces with a hairline edge, macOS-style.
+        self.bg(colors.elevated_surface_background).rounded(rems_from_px(12.)).rounded_smoothing(SMOOTHING).border_1().border_color(colors.border).shadow(shadow)
     }
 }
 
@@ -394,9 +398,6 @@ impl Divider {
         Divider { vertical: true, style: StyleRefinement::default() }
     }
 
-    pub fn horizontal() -> Self {
-        Divider { vertical: false, style: StyleRefinement::default() }
-    }
 }
 
 impl Styled for Divider {
@@ -407,8 +408,10 @@ impl Styled for Divider {
 
 impl RenderOnce for Divider {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let mut line = div().flex_none().bg(cx.theme().colors().border_variant);
-        line = if self.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() };
+        // Groups are told apart by space, not lines: a vertical divider is
+        // just air, a horizontal one a barely-there hairline.
+        let mut line = div().flex_none();
+        line = if self.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full().bg(cx.theme().colors().border_variant) };
         line.style().refine(&self.style);
         line
     }
@@ -420,6 +423,7 @@ impl RenderOnce for Divider {
 #[derive(Clone, IntoElement)]
 pub struct KeyBinding {
     text: SharedString,
+    color: Option<Hsla>,
 }
 
 impl KeyBinding {
@@ -442,14 +446,14 @@ impl KeyBinding {
                 .collect::<Vec<_>>()
                 .join("-")
         });
-        KeyBinding { text: words.collect::<Vec<_>>().join(" ").into() }
+        KeyBinding { text: words.collect::<Vec<_>>().join(" ").into(), color: None }
     }
 }
 
 impl RenderOnce for KeyBinding {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         // Always at the default text size, like Zed's, whatever it sits next to.
-        div().flex_none().px_0p5().text_size(LabelSize::Default.rems()).line_height(relative(1.)).text_color(Color::Muted.color(cx)).child(self.text)
+        div().flex_none().px_0p5().text_size(LabelSize::Default.rems()).line_height(relative(1.)).text_color(self.color.unwrap_or_else(|| Color::Muted.color(cx))).child(self.text)
     }
 }
 
@@ -492,8 +496,8 @@ impl Render for Tooltip {
             .font_family(kit::UI_FONT)
             .text_size(LabelSize::Default.rems())
             .text_color(cx.theme().colors.text)
-            .py_1()
-            .px_2()
+            .py_1p5()
+            .px_2p5()
             .child(
                 h_flex()
                     .gap_4()
@@ -511,7 +515,9 @@ type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ButtonStyle {
-    /// A solid button.
+    /// The one main action: the accent colour.
+    Accent,
+    /// A soft grey button.
     Filled,
     /// Background only on hover.
     #[default]
@@ -630,7 +636,13 @@ impl RenderOnce for ButtonLike {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
         let clear = gpui::transparent_black();
+        let accent = |a: f32| {
+            let mut c = colors.text_accent;
+            c.lightness = (c.lightness + a).clamp(0., 1.);
+            c
+        };
         let (rest, hover, active) = match self.style {
+            ButtonStyle::Accent => (accent(0.), accent(0.05), accent(-0.05)),
             ButtonStyle::Filled => (if self.selected { colors.element_selected } else { colors.element_background }, colors.element_hover, colors.element_active),
             ButtonStyle::Subtle | ButtonStyle::Outlined => {
                 (if self.selected { colors.ghost_element_selected } else { clear }, colors.ghost_element_hover, colors.ghost_element_active)
@@ -643,7 +655,8 @@ impl RenderOnce for ButtonLike {
             .justify_center()
             .gap(rems_from_px(4.))
             .h(height)
-            .rounded_sm()
+            .rounded(rems_from_px(if self.size == ButtonSize::Large { 9. } else { 7. }))
+            .rounded_smoothing(SMOOTHING)
             .bg(rest)
             .when(self.style == ButtonStyle::Outlined, |b| b.border_1().border_color(colors.border_variant))
             .map(|b| if self.square { b.w(height) } else { b.px(self.size.padding()) })
@@ -728,13 +741,23 @@ impl Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let color = if self.base.disabled { Color::Disabled } else { self.color };
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let accent = self.base.style == ButtonStyle::Accent;
+        let on_accent = on(cx.theme().colors.text_accent);
+        let color = match () {
+            _ if self.base.disabled => Color::Disabled,
+            _ if accent => Color::Custom(on_accent),
+            _ => self.color,
+        };
         let size = self.label_size;
+        let hint = |mut c: Hsla| {
+            c.alpha = 0.7;
+            c
+        };
         self.base
-            .children(self.start_icon)
+            .children(self.start_icon.map(|icon| if accent { icon.color(Color::Custom(on_accent)) } else { icon }))
             .child(Label::new(self.label).size(size).color(color))
-            .children(self.key_binding)
+            .children(self.key_binding.map(|keys| if accent { KeyBinding { color: Some(hint(on_accent)), ..keys } } else { keys }))
     }
 }
 
@@ -841,23 +864,27 @@ impl RenderOnce for Switch {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = cx.theme().colors();
         let on = self.state == ToggleState::Selected;
-        let (track, border) = if on { (colors.text_accent, colors.text_accent) } else { (colors.element_background, colors.border_variant) };
-        let knob = if on { colors.editor_background } else { colors.text_muted };
+        let track = if on { colors.text_accent } else { colors.element_active };
         let next = if on { ToggleState::Unselected } else { ToggleState::Selected };
+        // A macOS switch: a soft track and a white knob with a small shadow.
         h_flex()
             .id(self.id)
             .flex_none()
-            .w(rems_from_px(28.))
-            .h(rems_from_px(16.))
+            .w(rems_from_px(30.))
+            .h(rems_from_px(18.))
             .p(px(2.))
             .rounded_full()
             .bg(track)
-            .border_1()
-            .border_color(border)
             .when(on, |s| s.justify_end())
-            .when(self.disabled, |s| s.opacity(0.5).cursor_not_allowed())
+            .when(self.disabled, |s| s.opacity(0.45).cursor_not_allowed())
             .when(!self.disabled, |s| s.cursor_pointer())
-            .child(div().size(rems_from_px(10.)).rounded_full().bg(knob))
+            .child(div().size(rems_from_px(14.)).rounded_full().bg(gpui::white()).shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.25).into(),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(2.),
+                spread_radius: px(0.),
+                inset: false,
+            }]))
             .when_some(self.on_click.filter(|_| !self.disabled), |s, on_click| {
                 s.on_click(move |_, window, cx| {
                     cx.stop_propagation();
@@ -887,7 +914,7 @@ impl RenderOnce for ProgressBar {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         div()
             .w_full()
-            .h(rems_from_px(6.))
+            .h(rems_from_px(5.))
             .rounded_full()
             .bg(self.track)
             .child(div().h_full().w(relative(self.fraction)).rounded_full().bg(self.fill))

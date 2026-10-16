@@ -376,7 +376,7 @@ impl Trimmer {
                     )
                     .child(
                         Button::new("save", "Сохранить")
-                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Accent)
                             .disabled(!self.trimmed())
                             .tooltip(Tooltip::text("Новым файлом, оригинал останется"))
                             .key_binding(kit::keys("ctrl-s"))

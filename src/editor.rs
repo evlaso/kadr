@@ -1157,8 +1157,6 @@ impl Editor {
             // outer corners to stay inside the window's.
             .rounded_t(px(kit::RADIUS - 1.))
             .rounded_smoothing(crate::ui::SMOOTHING)
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
             .child(history)
             .child(tools)
             .child(style)
@@ -1177,10 +1175,9 @@ impl Editor {
             .gap_1p5()
             .px_2()
             .py_1()
-            .rounded_md()
-            .border_1()
-            .border_dashed()
-            .border_color(cx.theme().colors().border)
+            .rounded(crate::ui::rems_from_px(7.))
+            .bg(cx.theme().colors().element_background)
+            .hover(|s| s.bg(cx.theme().colors().element_hover))
             .cursor_grab()
             .child(Icon::new(IconName::Image).size(IconSize::Small).color(Color::Muted))
             .child(Label::new("Перетащи").size(LabelSize::Small).color(Color::Muted))
@@ -1206,8 +1203,6 @@ impl Editor {
             .bg(cx.theme().colors().status_bar_background)
             .rounded_b(px(kit::RADIUS - 1.))
             .rounded_smoothing(crate::ui::SMOOTHING)
-            .border_t_1()
-            .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
                     .flex_1()
@@ -1308,7 +1303,7 @@ impl Editor {
                     )
                     .child(
                         Button::new("save", "Сохранить")
-                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Accent)
                             .key_binding(kit::keys("ctrl-s"))
                             .on_click(cx.listener(|this, _, window, cx| this.export(Export::Save, window, cx))),
                     ),
@@ -1317,7 +1312,7 @@ impl Editor {
 
     fn slider(&self, knob: Knob, value: f32, label: String, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
-        let (track, filled, knob_color) = (colors.element_background, colors.text_accent, colors.text);
+        let (track, filled, knob_color, knob_edge) = (colors.element_active, colors.text_accent, gpui::white(), colors.border);
         let sliders = self.sliders.clone();
         let v = value.clamp(0., 1.);
         let bar = canvas(
@@ -1331,7 +1326,8 @@ impl Editor {
                 window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
                 window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
                 let c = x0 + w * v;
-                window.paint_quad(crate::ui::quad(Bounds::new(point(c - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(c - px(9.), mid - px(8.)), size(px(18.), px(18.))), px(9.), gpui::hsla(0., 0., 0., 0.18), px(0.), knob_edge, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(c - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.5), knob_edge, BorderStyle::Solid));
             },
         )
         .size_full();
@@ -1353,9 +1349,8 @@ impl Editor {
     /// The background tool, like CleanShot's: what's behind the picture, its
     /// margins, corners, shadow and the output's shape.
     fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        let line = cx.theme().colors().border_variant;
         let ring = cx.theme().colors().text;
-        let section = |title: &'static str| v_flex().w_full().gap_2().pb_4().border_b_1().border_color(line).child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
+        let section = |title: &'static str| v_flex().w_full().gap_2().pb_2().child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
         let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
         let chip = |id: SharedString, label: &str, on: bool| {
             ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label.to_owned()).size(LabelSize::Small)))
@@ -1437,9 +1432,7 @@ impl Editor {
             .overflow_y_scroll()
             .gap_4()
             .p_4()
-            .border_l_1()
-            .border_color(line)
-            .bg(cx.theme().colors().panel_background)
+                        .bg(cx.theme().colors().panel_background)
             .child(
                 h_flex()
                     .w_full()

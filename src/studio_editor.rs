@@ -835,7 +835,7 @@ impl StudioEditor {
             div().absolute().top_0().left(relative((t / d) as f32)).ml_1().child(Label::new(ruler_label(t, step)).size(LabelSize::XSmall).color(Color::Muted))
         });
 
-        div().w_full().px_4().pt_1().pb_3().border_t_1().border_color(colors.border_variant).child(
+        div().w_full().px_4().pt_2().pb_3().child(
             div()
                 .id("timeline")
                 .relative()
@@ -879,8 +879,6 @@ impl StudioEditor {
             .bg(cx.theme().colors().title_bar_background)
             .rounded_t(px(kit::RADIUS - 1.))
             .rounded_smoothing(crate::ui::SMOOTHING)
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
                     .min_w_0()
@@ -908,7 +906,7 @@ impl StudioEditor {
                     .child(div().px_1().child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small).color(Color::Muted)))
                     .child(
                         Button::new("export", if gif { "Экспорт GIF" } else { "Экспорт" })
-                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Accent)
                             .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
                             .key_binding(kit::keys("ctrl-s"))
                             .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
@@ -968,7 +966,7 @@ impl StudioEditor {
 
     fn slider(&self, knob: Knob, value: f64, label: String, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        let (track, filled, knob_color) = (colors.element_background, colors.text_accent, colors.text);
+        let (track, filled, knob_color, knob_edge) = (colors.element_active, colors.text_accent, gpui::white(), colors.border);
         let sliders = self.sliders.clone();
         let v = value.clamp(0., 1.) as f32;
         let bar = canvas(
@@ -982,7 +980,8 @@ impl StudioEditor {
                 window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
                 window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
                 let cx0 = x0 + w * v;
-                window.paint_quad(crate::ui::quad(Bounds::new(point(cx0 - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(cx0 - px(9.), mid - px(8.)), size(px(18.), px(18.))), px(9.), gpui::hsla(0., 0., 0., 0.18), px(0.), knob_edge, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(cx0 - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.5), knob_edge, BorderStyle::Solid));
             },
         )
         .size_full();
@@ -1005,8 +1004,7 @@ impl StudioEditor {
         let chip = |id: SharedString, label: String, on: bool| {
             ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
         };
-        let line = cx.theme().colors().border_variant;
-        let section = |title: &'static str| v_flex().w_full().gap_2().pb_4().border_b_1().border_color(line).child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
+        let section = |title: &'static str| v_flex().w_full().gap_2().pb_2().child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
         let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
 
         let context = if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
@@ -1253,9 +1251,7 @@ impl StudioEditor {
             .overflow_y_scroll()
             .gap_4()
             .p_4()
-            .border_l_1()
-            .border_color(line)
-            .child(context)
+                        .child(context)
             .child(section("Формат").child(h_flex().flex_wrap().gap_1().children(aspects)))
             .child(
                 section("Фон")

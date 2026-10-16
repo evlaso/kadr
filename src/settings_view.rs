@@ -4,10 +4,10 @@
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, FocusHandle, Hsla, KeyDownEvent, MouseButton, PathPromptOptions, Window, div,
+    App, Context, FocusHandle, KeyDownEvent, MouseButton, PathPromptOptions, Window, div,
     layer_shell::*, linear_color_stop, linear_gradient, px, rgba,
 };
-use crate::ui::{ButtonLike, Divider, Switch, ToggleState, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
@@ -167,14 +167,11 @@ impl SettingsView {
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let s = self.settings.clone();
-        let line = cx.theme().colors().border_variant;
         let rows: Vec<AnyElement> = match self.tab {
             Tab::General => vec![
-                row(line, "Показывать карточку", "Миниатюра в углу экрана после снимка или записи", switch("show_card", s.show_card, cx, |s, on| s.show_card = on)),
-                row(line, "Копировать скриншот", "Сразу класть снимок в буфер обмена", switch("copy", s.copy_screenshot, cx, |s, on| s.copy_screenshot = on)),
-                row(
-                    line,
-                    "Иконка в трее",
+                row("Показывать карточку", "Миниатюра в углу экрана после снимка или записи", switch("show_card", s.show_card, cx, |s, on| s.show_card = on)),
+                row("Копировать скриншот", "Сразу класть снимок в буфер обмена", switch("copy", s.copy_screenshot, cx, |s, on| s.copy_screenshot = on)),
+                row("Иконка в трее",
                     "Клик открывает настройки, правый клик — снимки и запись",
                     switch("tray", s.tray, cx, |s, on| {
                         s.tray = on;
@@ -183,26 +180,22 @@ impl SettingsView {
                         if on { tray::start() } else { tray::stop() }
                     }),
                 ),
-                row(
-                    line,
-                    "Карточка исчезает через",
+                row("Карточка исчезает через",
                     "Пока на ней курсор, она не пропадает",
                     chips(cx, "secs", CARD_SECONDS.iter().map(|&n| if n == 0 { "Никогда".into() } else { format!("{n} с") }).collect(), CARD_SECONDS.iter().position(|&n| n == s.card_seconds), |s, i| s.card_seconds = CARD_SECONDS[i]),
                 ),
-                row(line, "Где показывать", "Угол экрана для карточек", chips(cx, "side", vec!["Слева".into(), "Справа".into()], Some((s.card_side == Side::Right) as usize), |s, i| s.card_side = if i == 1 { Side::Right } else { Side::Left })),
-                row(
-                    line,
-                    "Сколько карточек сразу",
+                row("Где показывать", "Угол экрана для карточек", chips(cx, "side", vec!["Слева".into(), "Справа".into()], Some((s.card_side == Side::Right) as usize), |s, i| s.card_side = if i == 1 { Side::Right } else { Side::Left })),
+                row("Сколько карточек сразу",
                     "Старые уходят, когда приходят новые",
                     chips(cx, "max", MAX_CARDS.iter().map(|n| n.to_string()).collect(), MAX_CARDS.iter().position(|&n| n == s.max_cards), |s, i| s.max_cards = MAX_CARDS[i]),
                 ),
             ],
-            Tab::Screenshots => vec![row(line, "Папка для скриншотов", "По умолчанию та же, что у Omarchy", folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true))],
+            Tab::Screenshots => vec![row("Папка для скриншотов", "По умолчанию та же, что у Omarchy", folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true))],
             Tab::Recording => vec![
-                row(line, "Папка для записей", "По умолчанию «Видео»", folder(cx, s.video_dir(), s.video_dir.is_some(), false)),
-                row(line, "Частота кадров", "60 — плавнее, 30 — файлы меньше", chips(cx, "fps", FPS.iter().map(|f| format!("{f} к/с")).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
-                row(line, "Качество", "Выше — чётче мелкий текст, но файлы больше", chips(cx, "quality", QUALITIES.iter().map(|q| q.1.to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
-                row(line, "Рамка вокруг области", "Подсвечивать записываемую область (в запись не попадает)", switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
+                row("Папка для записей", "По умолчанию «Видео»", folder(cx, s.video_dir(), s.video_dir.is_some(), false)),
+                row("Частота кадров", "60 — плавнее, 30 — файлы меньше", chips(cx, "fps", FPS.iter().map(|f| format!("{f} к/с")).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
+                row("Качество", "Выше — чётче мелкий текст, но файлы больше", chips(cx, "quality", QUALITIES.iter().map(|q| q.1.to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
+                row("Рамка вокруг области", "Подсвечивать записываемую область (в запись не попадает)", switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
             ],
             Tab::Studio => {
                 let ring = cx.theme().colors().text;
@@ -221,9 +214,9 @@ impl SettingsView {
                         .on_click(cx.listener(move |this, _, _, cx| this.update(cx, |s| s.studio_backdrop = i)))
                 }));
                 vec![
-                    row(line, "Зум по умолчанию", "Для зумов, расставленных по кликам", chips(cx, "zoom", ZOOMS.iter().map(|z| format!("×{z}")).collect(), ZOOMS.iter().position(|&z| (z - s.studio_zoom).abs() < 0.01), |s, i| s.studio_zoom = ZOOMS[i])),
-                    row(line, "Фон по умолчанию", "Подложка вокруг видео", swatches.into_any_element()),
-                    row(line, "Отступ по умолчанию", "Сколько фона видно вокруг видео", chips(cx, "pad", vec!["Нет".into(), "S".into(), "M".into(), "L".into()], Some(s.studio_padding.min(PADDINGS.len() - 1)), |s, i| s.studio_padding = i)),
+                    row("Зум по умолчанию", "Для зумов, расставленных по кликам", chips(cx, "zoom", ZOOMS.iter().map(|z| format!("×{z}")).collect(), ZOOMS.iter().position(|&z| (z - s.studio_zoom).abs() < 0.01), |s, i| s.studio_zoom = ZOOMS[i])),
+                    row("Фон по умолчанию", "Подложка вокруг видео", swatches.into_any_element()),
+                    row("Отступ по умолчанию", "Сколько фона видно вокруг видео", chips(cx, "pad", vec!["Нет".into(), "S".into(), "M".into(), "L".into()], Some(s.studio_padding.min(PADDINGS.len() - 1)), |s, i| s.studio_padding = i)),
                 ]
             }
             Tab::Text => {
@@ -232,25 +225,23 @@ impl SettingsView {
                     Label::new("Установлен").color(Color::Muted).into_any_element()
                 } else {
                     Button::new("rus", if self.downloading { "Скачиваю…" } else { "Скачать (15 МБ)" })
-                        .style(ButtonStyle::Filled)
+                        .style(ButtonStyle::Accent)
                         .disabled(self.downloading)
                         .on_click(cx.listener(|this, _, _, cx| this.download_russian(cx)))
                         .into_any_element()
                 };
                 vec![
-                    row(line, "Языки распознавания", "Tesseract читает все сразу", Label::new(self.languages.replace('+', ", ")).into_any_element()),
-                    row(line, "Русский язык", "Официальная модель Tesseract, ставится в папку kadr без sudo", action),
+                    row("Языки распознавания", "Tesseract читает все сразу", Label::new(self.languages.replace('+', ", ")).into_any_element()),
+                    row("Русский язык", "Официальная модель Tesseract, ставится в папку kadr без sudo", action),
                 ]
             }
             Tab::Shortcuts => {
                 let mut rows: Vec<AnyElement> = self
                     .bindings
                     .iter()
-                    .map(|(desc, keys)| row(line, desc, "", div().font_family(kit::MONO_FONT).text_sm().child(keys.clone()).into_any_element()))
+                    .map(|(desc, keys)| row(desc, "", div().font_family(kit::MONO_FONT).text_sm().child(keys.clone()).into_any_element()))
                     .collect();
-                rows.push(row(
-                    line,
-                    "Изменить сочетания",
+                rows.push(row("Изменить сочетания",
                     "Сочетания задаются в конфиге Hyprland",
                     Button::new("bindings", "Открыть bindings.lua")
                         .style(ButtonStyle::Subtle)
@@ -263,35 +254,41 @@ impl SettingsView {
                 rows
             }
             Tab::About => vec![
-                row(line, "kadr", "Скриншоты и запись экрана для Omarchy", Label::new(format!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
-                row(line, "Интерфейс", "GPUI и компоненты Zed v1.24.2, цвета из темы Omarchy", Label::new("Zed UI").color(Color::Muted).into_any_element()),
-                row(
-                    line,
-                    "Исходный код",
+                row("kadr", "Скриншоты и запись экрана для Omarchy", Label::new(format!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
+                row("Интерфейс", "GPUI и компоненты Zed v1.24.2, цвета из темы Omarchy", Label::new("Zed UI").color(Color::Muted).into_any_element()),
+                row("Исходный код",
                     "github.com/vlasmn/kadr-linux",
                     Button::new("repo", "Открыть").style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr-linux"))).into_any_element(),
                 ),
-                row(
-                    line,
-                    "Папка настроек",
+                row("Папка настроек",
                     "~/.config/kadr",
                     Button::new("config", "Открыть").style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(&util::config_dir())).into_any_element(),
                 ),
             ],
         };
-        v_flex().px_6().py_2().children(rows).into_any_element()
+        // An inset group, like System Settings: rows on a soft rounded card,
+        // hairlines between them.
+        let colors = cx.theme().colors();
+        let count = rows.len();
+        let group = rows.into_iter().enumerate().flat_map(|(i, row)| {
+            let line = (i + 1 < count).then(|| div().h(px(1.)).bg(colors.border_variant).into_any_element());
+            std::iter::once(row).chain(line)
+        });
+        v_flex()
+            .px_6()
+            .py_4()
+            .child(v_flex().px_4().rounded(crate::ui::rems_from_px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(colors.element_background).children(group.collect::<Vec<_>>()))
+            .into_any_element()
     }
 }
 
 /// Title and description on the left, the control on the right.
-fn row(line: Hsla, title: &str, description: &str, control: AnyElement) -> AnyElement {
+fn row(title: &str, description: &str, control: AnyElement) -> AnyElement {
     h_flex()
         .w_full()
         .justify_between()
         .gap_6()
         .py_3()
-        .border_b_1()
-        .border_color(line)
         .child(
             v_flex()
                 .min_w_0()
@@ -352,7 +349,6 @@ fn folder(cx: &mut Context<SettingsView>, dir: PathBuf, custom: bool, screenshot
 
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let divider = cx.theme().colors().border_variant;
         kit::root(cx)
             .bg(rgba(0x00000099))
             .flex()
@@ -379,9 +375,7 @@ impl Render for SettingsView {
                     .overflow_hidden()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(self.render_tabs(cx))
-                    .child(div().h(px(1.)).bg(divider))
                     .child(div().id("body").flex_1().min_h_0().overflow_y_scroll().child(self.render_body(cx)))
-                    .child(Divider::horizontal())
                     .child(
                         h_flex()
                             .justify_between()

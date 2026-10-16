@@ -399,7 +399,6 @@ impl Render for History {
         self.columns = (((width - 24.) + GAP) / (ITEM_WIDTH + GAP)).floor().max(1.) as usize;
 
         let visible = self.visible();
-        let divider = cx.theme().colors().border_variant;
         let filters: Vec<_> = Filter::ALL.iter().map(|&(filter, label)| {
             ButtonLike::new(SharedString::from(format!("filter-{label}")))
                 .style(if self.filter == filter { ButtonStyle::Filled } else { ButtonStyle::Subtle })
@@ -470,8 +469,6 @@ impl Render for History {
                             .gap_2()
                             .px_3()
                             .py_2()
-                            .border_b_1()
-                            .border_color(divider)
                             .child(search)
                             .child(h_flex().gap_0p5().children(filters))
                             .child(Label::new(format!("{}", visible.len())).size(LabelSize::Small).color(Color::Muted))
@@ -491,8 +488,6 @@ impl Render for History {
                             .gap_4()
                             .px_3()
                             .py_1p5()
-                            .border_t_1()
-                            .border_color(divider)
                             .child(hint("enter", "Открыть"))
                             .child(hint("e", "Редактор / обрезка"))
                             .child(hint("ctrl-c", "Копировать"))

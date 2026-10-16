@@ -40,76 +40,56 @@ pub fn theme() -> Theme {
         return fallback();
     };
     let muted = get("muted", "muted").unwrap_or(fg);
-    let selection = get("selection", "muted").unwrap_or(muted);
-    // Sumi Dark lifts panels a step above the background; Sumi Light keeps
-    // them white and draws structure with light greys.
-    let (surface, border, hover, text_muted) = if light {
-        (bg, get("darker_background", "selection").unwrap_or(selection), get("dark_background", "selection").unwrap_or(selection), muted)
-    } else {
-        (get("lighter_background", "background").unwrap_or(bg), selection, selection, get("dark_foreground", "muted").unwrap_or(muted))
+    // Sumi Dark lifts surfaces a step above the background; Sumi Light keeps
+    // them white.
+    let (surface, text_muted) = if light { (bg, muted) } else { (get("lighter_background", "background").unwrap_or(bg), get("dark_foreground", "muted").unwrap_or(muted)) };
+    soft(light, bg, fg, surface, accent, muted, text_muted, get("red", "accent").unwrap_or(accent), get("yellow", "accent").unwrap_or(accent))
+}
+
+/// A soft, Apple-like set: controls and separators are the text colour at a
+/// low opacity over the background, so they stay gentle in light and dark
+/// themes alike; the work area sits a shade apart instead of behind lines.
+#[allow(clippy::too_many_arguments)]
+fn soft(light: bool, bg: Hsla, fg: Hsla, surface: Hsla, accent: Hsla, muted: Hsla, text_muted: Hsla, red: Hsla, yellow: Hsla) -> Theme {
+    let tint = |a: f32| {
+        let mut c = fg;
+        c.alpha = a;
+        c
     };
-    let red = get("red", "accent").unwrap_or(accent);
+    let mut stage = bg;
+    stage.lightness = if light { (bg.lightness - 0.035).max(0.) } else { (bg.lightness - 0.025).max(0.) };
     Theme {
         light,
         colors: Colors {
             panel_background: bg,
-            editor_background: bg,
+            editor_background: stage,
             title_bar_background: bg,
             status_bar_background: bg,
             elevated_surface_background: surface,
-            border,
-            border_variant: border,
+            border: tint(if light { 0.12 } else { 0.1 }),
+            border_variant: tint(0.07),
             border_focused: accent,
-            element_background: hover,
-            element_hover: hover,
-            element_active: selection,
-            element_selected: selection,
-            ghost_element_hover: hover,
-            ghost_element_active: selection,
-            ghost_element_selected: selection,
+            element_background: tint(0.07),
+            element_hover: tint(0.1),
+            element_active: tint(0.14),
+            element_selected: tint(0.13),
+            ghost_element_hover: tint(0.07),
+            ghost_element_active: tint(0.11),
+            ghost_element_selected: tint(0.11),
             text: fg,
             text_muted,
             text_placeholder: muted,
             text_disabled: muted,
             text_accent: accent,
         },
-        status: Status {
-            error: red,
-            warning: get("yellow", "accent").unwrap_or(accent),
-            info: accent,
-        },
+        status: Status { error: red, warning: yellow, info: accent },
     }
 }
 
 fn fallback() -> Theme {
     let grey = |l: f32| hsla(0., 0., l, 1.);
     let accent = hsla(0.58, 0.6, 0.62, 1.);
-    Theme {
-        light: false,
-        colors: Colors {
-            panel_background: grey(0.1),
-            editor_background: grey(0.1),
-            title_bar_background: grey(0.1),
-            status_bar_background: grey(0.1),
-            elevated_surface_background: grey(0.14),
-            border: grey(0.22),
-            border_variant: grey(0.22),
-            border_focused: accent,
-            element_background: grey(0.2),
-            element_hover: grey(0.22),
-            element_active: grey(0.27),
-            element_selected: grey(0.27),
-            ghost_element_hover: grey(0.2),
-            ghost_element_active: grey(0.25),
-            ghost_element_selected: grey(0.25),
-            text: grey(0.9),
-            text_muted: grey(0.62),
-            text_placeholder: grey(0.45),
-            text_disabled: grey(0.45),
-            text_accent: accent,
-        },
-        status: Status { error: hsla(0.01, 0.6, 0.55, 1.), warning: hsla(0.12, 0.7, 0.5, 1.), info: accent },
-    }
+    soft(false, grey(0.1), grey(0.9), grey(0.14), accent, grey(0.45), grey(0.62), hsla(0.01, 0.6, 0.55, 1.), hsla(0.12, 0.7, 0.5, 1.))
 }
 
 /// Annotation colors for the editor: the theme's accents when it has them,

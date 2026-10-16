@@ -241,7 +241,7 @@ impl Render for Panel {
             .child(div().w_1())
             .child(
                 Button::new("record", "Записать")
-                    .style(ButtonStyle::Filled)
+                    .style(ButtonStyle::Accent)
                     .size(ButtonSize::Large)
                     .start_icon(Icon::new(IconName::Circle).size(IconSize::Small).color(Color::Error))
                     .key_binding(kit::keys("enter"))

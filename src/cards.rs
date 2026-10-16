@@ -202,31 +202,30 @@ impl CardStack {
                 action(this, &path, id, window, cx)
             })
         };
-        // Frosted-glass pills, like CleanShot's: they blur the picture behind them.
-        let glass = |el: Stateful<Div>| {
+        // Solid white pills with dark ink, like CleanShot's overlay buttons.
+        let ink = hsla(0., 0., 0.12, 1.);
+        let pill = |el: Stateful<Div>| {
             el.flex()
                 .items_center()
                 .justify_center()
                 .rounded_full()
-                .bg(hsla(0., 0., 1., 0.16))
-                .backdrop_blur(px(14.))
-                .border_1()
-                .border_color(hsla(0., 0., 1., 0.22))
-                .text_color(gpui::white())
+                .bg(hsla(0., 0., 1., 0.92))
+                .shadow(vec![gpui::BoxShadow { color: hsla(0., 0., 0., 0.25).into(), offset: gpui::point(px(0.), px(1.)), blur_radius: px(4.), spread_radius: px(0.), inset: false }])
+                .text_color(ink)
                 .cursor_pointer()
-                .hover(|s| s.bg(hsla(0., 0., 1., 0.3)))
-                .active(|s| s.bg(hsla(0., 0., 1., 0.4)))
+                .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
+                .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
         };
         let big = |key: &'static str, label: &'static str| {
-            glass(div().id((key, id)))
+            pill(div().id((key, id)))
                 .w(px(124. * kit::SCALE))
                 .h(px(30. * kit::SCALE))
-                .child(Label::new(label).size(LabelSize::Small).color(Color::Custom(gpui::white())))
+                .child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)))
         };
         let corner = |key: &'static str, icon: IconName, tip: &'static str| {
-            glass(div().id((key, id)))
+            pill(div().id((key, id)))
                 .size(px(26. * kit::SCALE))
-                .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(gpui::white())))
+                .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(ink)))
                 .tooltip(Tooltip::text(tip))
         };
 
@@ -271,10 +270,10 @@ impl CardStack {
         // Bottom right: text recognition for pictures, GIF for recordings, the folder for both.
         let extra = if video {
             (!gif).then(|| {
-                glass(div().id(("gif", id)))
+                pill(div().id(("gif", id)))
                     .h(px(26. * kit::SCALE))
                     .px_2()
-                    .child(Label::new("GIF").size(LabelSize::XSmall).color(Color::Custom(gpui::white())))
+                    .child(Label::new("GIF").size(LabelSize::XSmall).color(Color::Custom(ink)))
                     .tooltip(Tooltip::text("Сохранить как GIF (720px, 15 к/с)"))
                     .on_click(act(|_, path, _, _, cx| trim::quick_gif(path.to_owned(), cx)))
                     .into_any_element()
@@ -289,7 +288,7 @@ impl CardStack {
             .inset_0()
             .rounded(px(kit::RADIUS))
             .opacity(if shown { 1. } else { 0. })
-            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000040)))
+            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000066)))
             .flex()
             .items_center()
             .justify_center()
