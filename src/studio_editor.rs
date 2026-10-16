@@ -898,8 +898,11 @@ impl StudioEditor {
         }
         let i = ((self.playhead * CURSOR_RATE).round() as usize).min(self.cursor.len() - 1);
         let (_, x, y) = self.cursor[i];
+        // It grows with speed here too (the tilt shows in the export).
+        let grow = if self.project.cursor_motion { studio::cursor_motion(&self.cursor[i.saturating_sub(12)..=i], &self.probe).last().map_or(1., |m| m.2) } else { 1. };
         let height = studio::cursor_height(&self.track, &self.probe, self.project.cursor_size);
         let (png, (hx, hy), (w, h)) = studio::cursor_image(self.project.cursor_style, height)?;
+        let (hx, hy, w, h) = (hx * grow, hy * grow, w as f64 * grow, h as f64 * grow);
         let image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
         Some(
             img(image)
@@ -1014,8 +1017,8 @@ impl StudioEditor {
                 .justify_center()
                 .gap_1()
                 .overflow_hidden()
-                .child(Label::new(format!("×{:.2}", s.zoom).trim_end_matches('0').trim_end_matches('.').to_string()).size(LabelSize::XSmall))
-                .when(s.focus.is_some(), |d| d.child(Icon::new(IconName::Crosshair).size(IconSize::XSmall).color(Color::Muted)))
+                .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).text_color(gpui::white()).child(format!("×{:.2}", s.zoom).trim_end_matches('0').trim_end_matches('.').to_string()))
+                .when(s.focus.is_some(), |d| d.child(Icon::new(IconName::Crosshair).size(IconSize::XSmall).color(Color::Custom(gpui::white()))))
         });
         let cut_marks = self.project.cuts.iter().map(|&(a, b)| {
             let (a, b) = ((a.min(b) / d) as f32, (a.max(b) / d) as f32);
@@ -1434,6 +1437,13 @@ impl StudioEditor {
                 ))
                 .when(self.project.cursor, |s| {
                     s.child(pick(&styles, self.project.cursor_style, "cursor-style", |p, i| p.cursor_style = i, cx))
+                        .child(toggle(
+                            t("studio.cursor_motion"),
+                            Switch::new("cursor-motion", ToggleState::from(self.project.cursor_motion)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                                this.project.cursor_motion = *state == ToggleState::Selected;
+                                this.changed(cx);
+                            })),
+                        ))
                         .child(row(
                             t("studio.row_size"),
                             self.slider(Knob::CursorSize, (self.project.cursor_size - 0.5) / (MAX_CURSOR - 0.5), crate::i18n::decimal(format!("×{:.1}", self.project.cursor_size)), cx).into_any_element(),

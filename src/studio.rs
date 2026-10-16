@@ -112,6 +112,8 @@ pub struct Project {
     pub cursor_size: f64,
     /// 0 follows the pointer exactly, 1 glides.
     pub cursor_smooth: f64,
+    /// The cursor grows and tilts while it moves.
+    pub cursor_motion: bool,
     /// Index into `MOTION_BLUR`.
     pub motion_blur: usize,
     /// The camera recorded alongside (studio mode), laid over a corner.
@@ -256,6 +258,7 @@ impl Project {
             cursor_style: index("cursor_style", d.cursor_style, CURSOR_STYLES.len()),
             cursor_size: v["cursor_size"].as_f64().unwrap_or(d.cursor_size).clamp(0.5, MAX_CURSOR),
             cursor_smooth: v["cursor_smooth"].as_f64().unwrap_or(d.cursor_smooth).clamp(0., 1.),
+            cursor_motion: v["cursor_motion"].as_bool().unwrap_or(d.cursor_motion),
             motion_blur: index("motion_blur", d.motion_blur, MOTION_BLUR.len()),
             cam: v["cam"].as_bool().unwrap_or(d.cam),
             cam_round: v["cam_round"].as_f64().unwrap_or(d.cam_round).clamp(0., 1.),
@@ -301,6 +304,7 @@ impl Project {
             "cursor_style": self.cursor_style,
             "cursor_size": self.cursor_size,
             "cursor_smooth": self.cursor_smooth,
+            "cursor_motion": self.cursor_motion,
             "motion_blur": self.motion_blur,
             "cam": self.cam,
             "cam_round": self.cam_round,
@@ -387,6 +391,7 @@ impl Project {
             cursor_style: 0,
             cursor_size: 1.5,
             cursor_smooth: 0.5,
+            cursor_motion: true,
             motion_blur: 1,
             cam: true,
             cam_round: 1.,
@@ -573,6 +578,28 @@ pub fn cursor_path(track: &Track, p: &Probe, smooth: f64) -> Vec<(f64, f64, f64)
     out
 }
 
+/// How the drawn cursor tilts and grows along its path, as (t, angle in
+/// radians, scale): it leans toward where it's going and swells with speed,
+/// both eased so they settle rather than snap.
+pub fn cursor_motion(path: &[(f64, f64, f64)], p: &Probe) -> Vec<(f64, f64, f64)> {
+    let (mut angle, mut scale) = (0., 1.);
+    // About 90 ms to follow a change.
+    let follow = 1. - (-1. / (CURSOR_RATE * 0.09)).exp();
+    let mut out = Vec::with_capacity(path.len());
+    for (i, &(t, x, y)) in path.iter().enumerate() {
+        let (px0, py0) = if i > 0 { (path[i - 1].1, path[i - 1].2) } else { (x, y) };
+        // Speed in screen heights per second, so it means the same at any size.
+        let (vx, vy) = ((x - px0) * CURSOR_RATE / p.h.max(1.), (y - py0) * CURSOR_RATE / p.h.max(1.));
+        let speed = vx.hypot(vy);
+        let target_angle = (vx * 0.35).clamp(-0.32, 0.32);
+        let target_scale = 1. + 0.3 * (speed / 1.2).min(1.);
+        angle += (target_angle - angle) * follow;
+        scale += (target_scale - scale) * follow;
+        out.push((t, angle, scale));
+    }
+    out
+}
+
 /// The drawn cursor's height in video pixels.
 pub fn cursor_height(track: &Track, p: &Probe, size: f64) -> f64 {
     CURSOR_BASE * size * p.h / track.rect.3.max(1.)
@@ -734,19 +761,30 @@ fn simplify(points: &[(f64, f64)], eps: f64) -> Curve {
     points.iter().zip(keep).filter(|(_, k)| *k).map(|(p, _)| *p).collect()
 }
 
-/// Piecewise-linear curve as an ffmpeg expression in `t`: a sum of clipped ramps.
+/// Piecewise-linear curve as an ffmpeg expression in `t`: a sum of clipped
+/// ramps. The sum is nested as a balanced tree: ffmpeg 9 refuses expressions
+/// nested deeper than about 60 levels, and a flat chain of terms nests one
+/// level per term.
 fn expr(curve: &[(f64, f64)], precision: usize) -> String {
     let Some(&(_, v0)) = curve.first() else { return "0".into() };
-    let mut out = format!("{v0:.precision$}");
+    let mut terms = vec![format!("{v0:.precision$}")];
     for w in curve.windows(2) {
         let ((t0, a), (t1, b)) = (w[0], w[1]);
         let delta = b - a;
         if delta.abs() < 10f64.powi(-(precision as i32)) || t1 <= t0 {
             continue;
         }
-        out += &format!("+{delta:.precision$}*clip((t-{t0:.3})/{:.3},0,1)", t1 - t0);
+        terms.push(format!("{delta:.precision$}*clip((t-{t0:.3})/{:.3},0,1)", t1 - t0));
     }
-    out
+    balanced_sum(&terms)
+}
+
+fn balanced_sum(terms: &[String]) -> String {
+    if terms.len() <= 8 {
+        return terms.join("+");
+    }
+    let (left, right) = terms.split_at(terms.len() / 2);
+    format!("({})+({})", balanced_sum(left), balanced_sum(right))
 }
 
 #[derive(Clone)]
@@ -901,9 +939,9 @@ fn motion_ranges(camera: &Camera, cursor: Option<&[(f64, f64, f64)]>, p: &Probe)
 
 /// What a preset or the remembered look carries: everything but the edit
 /// (zooms, trim, cuts).
-const LOOK_KEYS: [&str; 24] = [
+const LOOK_KEYS: [&str; 25] = [
     "backdrop", "wallpaper", "pad", "radius", "shadow", "clicks", "keys", "keys_top", "keys_size", "audio", "aspect", "resolution",
-    "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "motion_blur", "cam", "cam_round",
+    "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "cursor_motion", "motion_blur", "cam", "cam_round",
     "cam_size", "cam_anchor",
 ];
 
@@ -969,7 +1007,10 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         let (png, hot, _) = cursor_image(project.cursor_style, cursor_height(&track, &p, project.cursor_size)).ok_or(t("studio.couldnt_draw_cursor"))?;
         let file = tmp.join("cursor.png");
         std::fs::write(&file, png).map_err(|e| e.to_string())?;
-        Some((file, hot, cursor_path(&track, &p, project.cursor_smooth)))
+        let path = cursor_path(&track, &p, project.cursor_smooth);
+        let motion = project.cursor_motion.then(|| cursor_motion(&path, &p));
+        let size = image::image_dimensions(&file).map(|(w, h)| (w as f64, h as f64)).unwrap_or((32., 32.));
+        Some(overlays::Cursor { png: file, hot, size, path, motion, trail: project.motion_blur > 0 })
     } else {
         None
     };
@@ -978,7 +1019,7 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     // in-between positions; while they move fast those sub-frames are
     // averaged, then the rate comes back down.
     let shutter = MOTION_BLUR[project.motion_blur.min(MOTION_BLUR.len() - 1)].1;
-    let ranges = if shutter > 1 { motion_ranges(&camera, cursor.as_ref().map(|c| c.2.as_slice()), &p) } else { Vec::new() };
+    let ranges = if shutter > 1 { motion_ranges(&camera, cursor.as_ref().map(|c| c.path.as_slice()), &p) } else { Vec::new() };
     let supersample = (!ranges.is_empty()).then(|| format!("{}", p.fps_value() * SUBFRAMES as f64));
     let blur = supersample.as_ref().map(|_| {
         let weights = vec!["1"; shutter].join(" ");
@@ -1147,14 +1188,24 @@ mod overlays {
         pub last: String,
     }
 
+    /// The drawn cursor: its picture, hotspot and size, its path in video
+    /// pixels, how it tilts and grows, and whether it leaves a blur trail.
+    pub struct Cursor {
+        pub png: std::path::PathBuf,
+        pub hot: (f64, f64),
+        pub size: (f64, f64),
+        pub path: Vec<(f64, f64, f64)>,
+        pub motion: Option<Vec<(f64, f64, f64)>>,
+        pub trail: bool,
+    }
+
     pub struct Style {
         pub clicks: bool,
         pub keys: bool,
         pub keys_top: bool,
         /// Pill text height as a share of the output's short side.
         pub keys_size: f64,
-        /// The drawn cursor: its picture, hotspot and path in video pixels.
-        pub cursor: Option<(std::path::PathBuf, (f64, f64), Vec<(f64, f64, f64)>)>,
+        pub cursor: Option<Cursor>,
         /// Frame rate to render the moving picture at, for motion blur.
         pub supersample: Option<String>,
     }
@@ -1192,14 +1243,53 @@ mod overlays {
         }
 
         // The cursor goes over the click rings and moves with the camera.
-        if let Some((png, (hx, hy), path)) = &style.cursor {
-            let xs: Vec<(f64, f64)> = path.iter().map(|&(t, x, _)| (t, x)).collect();
-            let ys: Vec<(f64, f64)> = path.iter().map(|&(t, _, y)| (t, y)).collect();
-            let (xe, ye) = (super::expr(&super::simplify(&xs, 0.6), 1), super::expr(&super::simplify(&ys, 0.6), 1));
-            o.inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), p.fps.clone().into(), "-i".into(), png.clone().into()]);
+        if let Some(c) = &style.cursor {
+            let (hx, hy) = c.hot;
+            let (w0, h0) = c.size;
+            // A square box around the hotspot, big enough for the cursor at
+            // its largest and turned: it grows and tilts around its tip.
+            let reach = (hx.max(w0 - hx)).hypot(hy.max(h0 - hy)) * 1.35;
+            let boxed = (2. * reach).ceil() as u32 / 2 * 2 + 2;
+            let half = boxed as f64 / 2.;
+            let position = |lag: f64| {
+                let xs: Vec<(f64, f64)> = c.path.iter().map(|&(t, x, _)| (t + lag, x)).collect();
+                let ys: Vec<(f64, f64)> = c.path.iter().map(|&(t, _, y)| (t + lag, y)).collect();
+                (super::expr(&super::simplify(&xs, 0.6), 1), super::expr(&super::simplify(&ys, 0.6), 1))
+            };
+            o.inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), p.fps.clone().into(), "-i".into(), c.png.clone().into()]);
+            let shape = match &c.motion {
+                Some(motion) => {
+                    let angles: Vec<(f64, f64)> = motion.iter().map(|&(t, a, _)| (t, a)).collect();
+                    let scales: Vec<(f64, f64)> = motion.iter().map(|&(t, _, s)| (t, s)).collect();
+                    let (ae, se) = (super::expr(&super::simplify(&angles, 0.004), 4), super::expr(&super::simplify(&scales, 0.004), 4));
+                    format!(
+                        "format=rgba,scale=w='trunc({w0}*({se})/2)*2':h='trunc({h0}*({se})/2)*2':eval=frame,\
+                         pad=w={boxed}:h={boxed}:x='{half}-{hx}*iw/{w0}':y='{half}-{hy}*ih/{h0}':color=black@0:eval=frame,\
+                         rotate=a='{ae}':ow={boxed}:oh={boxed}:c=none"
+                    )
+                }
+                None => format!("format=rgba,pad=w={boxed}:h={boxed}:x={:.1}:y={:.1}:color=black@0", half - hx, half - hy),
+            };
             let from = o.src.clone();
-            let _ = write!(o.pre, "[{from}][{next_input}:v]overlay=x='{xe}-{hx:.1}':y='{ye}-{hy:.1}':eval=frame:shortest=1[cur];");
-            o.src = "cur".into();
+            if c.trail {
+                // A cursor-only motion blur: two faint copies a moment behind.
+                // Within one frame, so the copies blur together instead of
+                // reading as a second cursor.
+                let lag = 1. / p.fps_value().max(1.) / 4.;
+                let _ = write!(o.pre, "[{next_input}:v]{shape},split=3[cur0][cur1][cur2];[cur1]colorchannelmixer=aa=0.3[trail1];[cur2]colorchannelmixer=aa=0.15[trail2];");
+                let mut base = from;
+                for (i, (label, lag)) in [("trail2", 2. * lag), ("trail1", lag), ("cur0", 0.)].into_iter().enumerate() {
+                    let (xe, ye) = position(lag);
+                    let out = format!("curl{i}");
+                    let _ = write!(o.pre, "[{base}][{label}]overlay=x='{xe}-{half}':y='{ye}-{half}':eval=frame:shortest=1[{out}];");
+                    base = out;
+                }
+                o.src = base;
+            } else {
+                let (xe, ye) = position(0.);
+                let _ = write!(o.pre, "[{next_input}:v]{shape}[curs];[{from}][curs]overlay=x='{xe}-{half}':y='{ye}-{half}':eval=frame:shortest=1[cur];");
+                o.src = "cur".into();
+            }
             next_input += 1;
         }
         if o.src != "0:v" {
@@ -1335,6 +1425,19 @@ mod tests {
         assert_eq!(moved.trim, (1., 9.), "the edit stays");
         assert!(moved.cuts.is_empty(), "cuts aren't part of a look");
         assert_eq!(moved.look(), source.look());
+    }
+
+    #[test]
+    fn long_curves_stay_shallow() {
+        let curve: Vec<(f64, f64)> = (0..500).map(|i| (i as f64 * 0.1, (i % 7) as f64)).collect();
+        let e = expr(&curve, 1);
+        // Never more than a handful of nested parentheses, however long.
+        let (mut depth, mut deepest) = (0i32, 0i32);
+        for c in e.chars() {
+            depth += match c { '(' => 1, ')' => -1, _ => 0 };
+            deepest = deepest.max(depth);
+        }
+        assert!(deepest < 20, "nested {deepest} deep");
     }
 
     #[test]

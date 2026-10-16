@@ -476,11 +476,13 @@ impl Render for History {
             .gap_3()
             .text_size(crate::ui::rems_from_px(19.))
             .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Large).color(Color::Muted))
-            .child(if self.query.is_empty() {
+            .child(div().flex_1().child(if self.query.is_empty() {
                 div().text_color(cx.theme().colors().text_placeholder).child(t("history.search_by_name_date")).into_any_element()
             } else {
                 div().child(format!("{}▏", self.query)).into_any_element()
-            });
+            }))
+            // The count sits with the search, so the filters don't move.
+            .child(div().pr_2().child(Label::new(format!("{}", visible.len())).size(LabelSize::Small).color(Color::Muted)));
 
         let grid: Vec<AnyElement> = visible.iter().enumerate().map(|(pos, &i)| self.render_item(i, pos, cx)).collect();
         let empty = grid.is_empty();
@@ -508,8 +510,8 @@ impl Render for History {
                 )
             });
 
-        // The key, then what it does, on one line at one size.
-        let hint = |keys: &str, label: &'static str| h_flex().gap_1p5().child(kit::keys(keys)).child(Label::new(label).size(LabelSize::Small));
+        // What it does, then the key, like everywhere else in kadr.
+        let hint = |keys: &str, label: &'static str| h_flex().gap_1p5().child(Label::new(label).size(LabelSize::Small)).child(kit::keys(keys));
 
         kit::root(cx)
             .bg(cx.theme().colors().panel_background)
@@ -530,7 +532,6 @@ impl Render for History {
                             .border_color(cx.theme().colors().border_variant)
                             .child(search)
                             .child(h_flex().gap_0p5().children(filters))
-                            .child(Label::new(format!("{}", visible.len())).size(LabelSize::Small).color(Color::Muted))
                             .child(
                                 IconButton::new("settings", IconName::Settings)
                                     .shape(IconButtonShape::Square)
