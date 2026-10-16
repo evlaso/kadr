@@ -77,6 +77,46 @@ impl Default for Frame {
 }
 
 impl Frame {
+    fn to_json(&self) -> serde_json::Value {
+        let backdrop = match &self.backdrop {
+            Backdrop::None => serde_json::json!("none"),
+            Backdrop::Gradient(i) => serde_json::json!({ "gradient": i }),
+            Backdrop::Wallpaper(path) => serde_json::json!({ "wallpaper": path.display().to_string() }),
+        };
+        serde_json::json!({ "backdrop": backdrop, "padding": self.padding, "radius": self.radius, "shadow": self.shadow, "aspect": self.aspect })
+    }
+
+    fn from_json(v: &serde_json::Value) -> Frame {
+        let d = Frame::default();
+        let b = &v["backdrop"];
+        let backdrop = if let Some(i) = b["gradient"].as_u64() {
+            Backdrop::Gradient(i as usize)
+        } else if let Some(path) = b["wallpaper"].as_str().map(PathBuf::from).filter(|p| p.exists()) {
+            Backdrop::Wallpaper(path)
+        } else {
+            Backdrop::None
+        };
+        let num = |k: &str, d: f32, max: f32| v[k].as_f64().map_or(d, |x| x as f32).clamp(0., max);
+        Frame {
+            backdrop,
+            padding: num("padding", d.padding, MAX_PAD),
+            radius: num("radius", d.radius, MAX_ROUND),
+            shadow: num("shadow", d.shadow, 1.),
+            aspect: v["aspect"].as_u64().map_or(d.aspect, |a| (a as usize).min(ASPECTS.len() - 1)),
+        }
+    }
+
+    /// The background last used, for the next screenshot.
+    fn last() -> Frame {
+        let saved = std::fs::read_to_string(util::config_dir().join("editor-frame.json")).ok().and_then(|t| serde_json::from_str(&t).ok());
+        saved.map(|v| Frame::from_json(&v)).unwrap_or_default()
+    }
+
+    fn remember(&self) {
+        let _ = std::fs::create_dir_all(util::config_dir());
+        let _ = std::fs::write(util::config_dir().join("editor-frame.json"), self.to_json().to_string());
+    }
+
     fn on(&self) -> bool {
         self.backdrop != Backdrop::None
     }
@@ -437,6 +477,10 @@ pub struct Editor {
     frame: Frame,
     /// The background panel is open.
     panel: bool,
+    /// The background as last written to disk.
+    remembered: serde_json::Value,
+    /// Saved backgrounds, by name.
+    presets: Vec<(String, serde_json::Value)>,
     walls: Vec<(PathBuf, Arc<Image>)>,
     /// The picture's largest on-screen size; `disp` shrinks from it to make
     /// room for the background.
@@ -517,7 +561,9 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 text_style: TextStyle::Plain,
                 zoom: 1.,
                 real: natural,
-                frame: Frame::default(),
+                frame: Frame::last(),
+                presets: frame_presets(),
+                remembered: Frame::last().to_json(),
                 panel: false,
                 walls: Vec::new(),
                 natural: disp,
@@ -1347,6 +1393,55 @@ impl Editor {
             .into_any_element()
     }
 
+    fn render_presets(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chip = |id: SharedString, label: &str, on: bool| {
+            ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label.to_owned()).size(LabelSize::Small)))
+        };
+        let current = self.frame.to_json();
+        let active = self.presets.iter().position(|(_, look)| *look == current);
+        let chips = self
+            .presets
+            .iter()
+            .enumerate()
+            .map(|(i, (name, look))| {
+                let look = look.clone();
+                chip(SharedString::from(format!("frame-preset-{i}")), name, active == Some(i)).on_click(cx.listener(move |this, _, _, cx| {
+                    this.frame = Frame::from_json(&look);
+                    cx.notify();
+                }))
+            })
+            .collect::<Vec<_>>();
+        v_flex()
+            .w_full()
+            .gap_2()
+            .pb_2()
+            .child(Label::new("Пресеты").size(LabelSize::Small).color(Color::Muted))
+            .when(self.presets.is_empty(), |s| s.child(Label::new("Сохрани текущий фон, чтобы включать его одним кликом").size(LabelSize::XSmall).color(Color::Muted)))
+            .child(h_flex().flex_wrap().gap_1().children(chips))
+            .child(match active {
+                None => Button::new("save-frame-preset", "Сохранить как пресет")
+                    .style(ButtonStyle::Subtle)
+                    .start_icon(Icon::new(IconName::Plus).size(IconSize::Small))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let next = this.presets.iter().filter_map(|(name, _)| name.strip_prefix("Пресет ")?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
+                        this.presets.push((format!("Пресет {next}"), this.frame.to_json()));
+                        save_frame_presets(&this.presets);
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+                Some(i) => Button::new("delete-frame-preset", "Удалить пресет")
+                    .style(ButtonStyle::Subtle)
+                    .color(Color::Muted)
+                    .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Muted))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.presets.remove(i);
+                        save_frame_presets(&this.presets);
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            })
+    }
+
     /// The background tool, like CleanShot's: what's behind the picture, its
     /// margins, corners, shadow and the output's shape.
     fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1444,6 +1539,7 @@ impl Editor {
                         cx.notify();
                     }))),
             )
+            .child(self.render_presets(cx))
             .child(
                 section("Подложка")
                     .child(h_flex().flex_wrap().gap_1().children(gradients))
@@ -1690,6 +1786,12 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The next screenshot starts with this background.
+        let frame = self.frame.to_json();
+        if frame != self.remembered {
+            self.frame.remember();
+            self.remembered = frame;
+        }
         // One CleanShot-like window: tools on top, the picture on a stage
         // (with the background panel beside it when open), actions at the
         // bottom. The picture shrinks to make room for its background.
@@ -1825,6 +1927,17 @@ fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
     let mut png = Vec::new();
     out.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
     Some(png)
+}
+
+fn frame_presets() -> Vec<(String, serde_json::Value)> {
+    let saved = std::fs::read_to_string(util::config_dir().join("editor-presets.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    saved.as_ref().and_then(|v| v.as_array()).into_iter().flatten().filter_map(|p| Some((p["name"].as_str()?.to_owned(), p["look"].clone()))).collect()
+}
+
+fn save_frame_presets(presets: &[(String, serde_json::Value)]) {
+    let v: Vec<_> = presets.iter().map(|(name, look)| serde_json::json!({ "name": name, "look": look })).collect();
+    let _ = std::fs::create_dir_all(util::config_dir());
+    let _ = std::fs::write(util::config_dir().join("editor-presets.json"), serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 /// The backdrop picture at `w`×`h`: the wallpaper cropped to fill, or the
@@ -2455,6 +2568,14 @@ mod tests {
         let ratio = (wr - wl) / (pr - pl);
         assert!(ratio > 2.6 && ratio <= 3. && (wb - pb).abs() < 0.5, "freehand stretches one way: {ratio}");
         let _ = pt;
+    }
+
+    #[test]
+    fn background_round_trips_through_json() {
+        let frame = Frame { backdrop: Backdrop::Gradient(2), padding: 0.03, radius: 0.02, shadow: 0.7, aspect: 3 };
+        let back = Frame::from_json(&frame.to_json());
+        assert!(back.backdrop == frame.backdrop && back.padding == frame.padding && back.radius == frame.radius && back.shadow == frame.shadow && back.aspect == frame.aspect);
+        assert!(!Frame::from_json(&Frame::default().to_json()).on());
     }
 
     #[test]
