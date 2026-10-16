@@ -660,14 +660,26 @@ impl StudioEditor {
             })
             .bg(gpui::black())
             .when(self.placing, |d| d.cursor(CursorStyle::Crosshair))
-            .children(self.frame.clone().map(|f| {
-                img(f)
-                    .absolute()
-                    .left(px(-left * scale))
-                    .top(px(-top * scale))
-                    .w(px(vw * scale))
-                    .h(px(vh * scale))
-                    .object_fit(ObjectFit::Fill)
+            .children(self.frame.clone().map(|frame| {
+                // The zoomed frame is bigger than the box, and GPUI clips
+                // children to rectangles; painting it ourselves rounds the
+                // visible part to the box's corners.
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, cx| {
+                        let data = match frame.clone() {
+                            ImageSource::Render(data) => Some(data),
+                            ImageSource::Image(image) => image.use_render_image(window, cx),
+                            _ => None,
+                        };
+                        let Some(data) = data else { return };
+                        let shown = Bounds::new(point(bounds.origin.x - px(left * scale), bounds.origin.y - px(top * scale)), size(px(vw * scale), px(vh * scale)));
+                        let _ = window.paint_image(bounds, shown, px(radius).into(), 0., data, 0, false);
+                    },
+                )
+                .absolute()
+                .inset_0()
+                .size_full()
             }))
             .children(self.render_cursor(left, top, scale))
             .child(tracker)
