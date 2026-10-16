@@ -1,5 +1,6 @@
 mod capture;
 mod cards;
+mod palette;
 mod panel;
 mod pin;
 mod record;

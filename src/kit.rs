@@ -100,6 +100,8 @@ pub fn init(cx: &mut App) {
     // Zed's built-in dark theme; no theme files or settings needed.
     theme::init(LoadThemes::JustBase, cx);
     theme::set_theme_settings_provider(Box::new(Settings { font: font(UI_FONT) }), cx);
+    // The user's Omarchy theme colors on top of Zed's component styling.
+    crate::palette::apply(cx);
     cx.set_global(Busy::default());
 }
 
