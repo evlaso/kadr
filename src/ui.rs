@@ -89,7 +89,6 @@ pub struct Colors {
     pub elevated_surface_background: Hsla,
     pub border: Hsla,
     pub border_variant: Hsla,
-    pub border_focused: Hsla,
     pub element_background: Hsla,
     pub element_hover: Hsla,
     pub element_active: Hsla,

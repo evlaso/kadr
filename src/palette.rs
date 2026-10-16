@@ -65,7 +65,6 @@ fn soft(light: bool, bg: Hsla, fg: Hsla, surface: Hsla, accent: Hsla, muted: Hsl
             elevated_surface_background: surface,
             border: tint(if light { 0.12 } else { 0.1 }),
             border_variant: tint(0.07),
-            border_focused: accent,
             element_background: tint(0.07),
             element_hover: tint(0.1),
             element_active: tint(0.14),

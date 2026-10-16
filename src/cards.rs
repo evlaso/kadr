@@ -289,7 +289,7 @@ impl CardStack {
                     .h(px(26. * kit::SCALE))
                     .px_2()
                     .child(Label::new("GIF").size(LabelSize::XSmall).color(Color::Custom(ink)))
-                    .tooltip(Tooltip::text("card.save_as_gif_720px_15"))
+                    .tooltip(Tooltip::text(t("card.save_as_gif_720px_15")))
                     .on_click(act(|_, path, _, _, cx| trim::quick_gif(path.to_owned(), cx)))
                     .into_any_element()
             })

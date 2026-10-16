@@ -193,7 +193,7 @@ impl Render for Toast {
                             IconButton::new("close", IconName::Close)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("common.close"))
+                                .tooltip(Tooltip::text(t("common.close")))
                                 .on_click(|_, window, _| window.remove_window()),
                         ),
                 )

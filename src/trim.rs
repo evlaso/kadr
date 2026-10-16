@@ -380,7 +380,7 @@ impl Trimmer {
                         Button::new("save", t("common.save"))
                             .style(ButtonStyle::Accent)
                             .disabled(!self.trimmed())
-                            .tooltip(Tooltip::text("trim.as_new_file_original_stays"))
+                            .tooltip(Tooltip::text(t("trim.as_new_file_original_stays")))
                             .key_binding(kit::keys("ctrl-s"))
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),
@@ -444,7 +444,7 @@ fn with_suffix(path: &Path, suffix: &str, ext: &str) -> PathBuf {
 /// Cut `start..end` into a new "-trim" file, re-encoded so the cut is frame
 /// exact (stream copy can only cut at keyframes).
 pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
-    let running = job::start("trim.trimming_video", IconName::Scissors, cx);
+    let running = job::start(t("trim.trimming_video"), IconName::Scissors, cx);
     cx.spawn(async move |cx| {
         let out = with_suffix(&path, "-trim", "mp4");
         let (ss, t) = (format!("{start:.3}"), format!("{:.3}", end - start));
@@ -479,7 +479,7 @@ pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
 
 /// GIF of `start..end` with a palette built for the clip, so it isn't muddy.
 pub fn export_gif(path: PathBuf, start: f64, end: f64, width: u32, fps: u32, cx: &mut App) {
-    let running = job::start("trim.making_gif", IconName::Image, cx);
+    let running = job::start(t("trim.making_gif"), IconName::Image, cx);
     cx.spawn(async move |cx| {
         let whole = start <= 0.01 && probe(&path).await.is_some_and(|p| end >= p.duration - 0.01);
         let out = with_suffix(&path, if whole { "" } else { "-trim" }, "gif");

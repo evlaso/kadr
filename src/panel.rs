@@ -268,7 +268,7 @@ impl Render for Panel {
                         IconButton::new("mic-menu", IconName::ChevronDown)
                             .size(ButtonSize::Large)
                             .icon_size(IconSize::XSmall)
-                            .tooltip(Tooltip::text("record_bar.choose_microphone")),
+                            .tooltip(Tooltip::text(t("record_bar.choose_microphone"))),
                     ),
             );
 

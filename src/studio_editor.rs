@@ -34,6 +34,8 @@ const FILMSTRIP: f32 = 52.;
 const RULER: f32 = 18.;
 const LANE: f32 = 40.;
 const SIDEBAR: f32 = 320. * kit::SCALE;
+/// Width of the labels in front of sidebar controls.
+const ROW_LABEL: f32 = 74.;
 /// Air around the preview inside the window.
 const STAGE_PAD: f32 = 24.;
 /// Edge grab width on segments, in pixels.
@@ -1073,7 +1075,7 @@ impl StudioEditor {
                         Button::new("preview", t("studio.preview"))
                             .style(ButtonStyle::Filled)
                             .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text("studio.build_720p_preview_with_all"))
+                            .tooltip(Tooltip::text(t("studio.build_720p_preview_with_all")))
                             .on_click(cx.listener(|this, _, _, cx| studio::export(this.video.clone(), this.project.clone(), true, cx))),
                     )
                     .child(div().px_1().child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small).color(Color::Muted)))
@@ -1105,7 +1107,7 @@ impl StudioEditor {
                         IconButton::new("back", IconName::ChevronLeft)
                             .shape(IconButtonShape::Square)
                             .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text("studio.back_half_second"))
+                            .tooltip(Tooltip::text(t("studio.back_half_second")))
                             .on_click(cx.listener(|this, _, _, cx| this.seek(this.playhead - 0.5, cx))),
                     )
                     .child(
@@ -1119,7 +1121,7 @@ impl StudioEditor {
                         IconButton::new("forward", IconName::ChevronRight)
                             .shape(IconButtonShape::Square)
                             .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text("studio.forward_half_second"))
+                            .tooltip(Tooltip::text(t("studio.forward_half_second")))
                             .on_click(cx.listener(|this, _, _, cx| this.seek(this.playhead + 0.5, cx))),
                     ),
             )
@@ -1177,29 +1179,38 @@ impl StudioEditor {
     /// Settings on the right, like CleanShot's studio: the selected zoom or
     /// cut first, then the look of the whole video and the export.
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let chip = |id: SharedString, label: String, on: bool| {
-            ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
+        let colors = cx.theme().colors();
+        let (card_bg, track_bg, thumb_bg, ring, edge) = (colors.element_background, colors.element_hover, colors.elevated_surface_background, colors.text, colors.border_variant);
+        let (accent, line) = (colors.text_accent, colors.border);
+        // An inset group, like System Settings: a soft card, rows inside.
+        let card = || v_flex().w_full().p_3().gap_3().rounded(px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
+        let label = |text: &'static str| div().w(px(ROW_LABEL)).flex_none().child(Label::new(text).size(LabelSize::Small).color(Color::Muted));
+        let row = |text: &'static str, control: AnyElement| h_flex().w_full().gap_2().child(label(text)).child(div().flex_1().min_w_0().child(control));
+        let toggle = |text: &'static str, switch: Switch| h_flex().w_full().justify_between().child(Label::new(text).size(LabelSize::Small)).child(switch);
+        // A macOS segmented control: options share a track, the chosen one lifts.
+        let segment = |id: SharedString, text: String, on: bool| {
+            div()
+                .id(id)
+                .flex_1()
+                .min_w_0()
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .when(on, |d| d.bg(thumb_bg).shadow(vec![BoxShadow { color: gpui::hsla(0., 0., 0., 0.18).into(), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false }]))
+                .child(Label::new(text).size(LabelSize::Small).color(if on { Color::Default } else { Color::Muted }).truncate())
         };
-        // Groups stand apart: a hairline and a title above each.
-        let line = cx.theme().colors().border_variant;
-        let section = move |title: &'static str| {
-            v_flex()
-                .w_full()
-                .gap_2()
-                .pt_3()
-                .border_t_1()
-                .border_color(line)
-                .child(div().pb_0p5().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
-        };
-        let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
+        let segmented = |items: Vec<AnyElement>| h_flex().w_full().p(px(2.)).gap(px(2.)).rounded(px(8.)).bg(track_bg).children(items).into_any_element();
 
+        // What's selected on the timeline, or the timeline's own tools.
         let context = if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
-            section(t("studio.cut_section"))
+            card()
                 .child(Label::new(tr!("studio.removing", seconds((b - a).abs()), clock(a.min(b)), clock(a.max(b)))).size(LabelSize::Small))
-                .child(Label::new(t("studio.drag_edges_on_filmstrip_change")).size(LabelSize::XSmall).color(Color::Muted))
                 .child(
                     Button::new("delete-cut", t("studio.restore_piece"))
-                        .style(ButtonStyle::Subtle)
+                        .style(ButtonStyle::Filled)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .key_binding(kit::keys("delete"))
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1209,285 +1220,308 @@ impl StudioEditor {
                         })),
                 )
         } else if let Some((index, seg)) = self.selected.and_then(|i| self.project.segments.get(i).map(|s| (i, s.clone()))) {
-            section(t("studio.zoom"))
-                .child(caption(t("studio.magnification")))
-                .child(h_flex().flex_wrap().gap_1().children(ZOOMS.iter().map(|&z| {
-                    chip(SharedString::from(format!("zoom-{z}")), format!("×{z}"), (seg.zoom - z).abs() < 0.01).on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.segments[index].zoom = z;
+            let zooms = ZOOMS
+                .iter()
+                .map(|&z| {
+                    segment(SharedString::from(format!("zoom-{z}")), format!("×{z}"), (seg.zoom - z).abs() < 0.01)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.project.segments[index].zoom = z;
+                            this.changed(cx);
+                        }))
+                        .into_any_element()
+                })
+                .collect();
+            let toward = vec![
+                segment("focus-cursor".into(), t("studio.follow_cursor").into(), seg.focus.is_none() && !self.placing)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.placing = false;
+                        this.project.segments[index].focus = None;
                         this.changed(cx);
                     }))
-                })))
-                .child(caption(t("studio.zoom_toward")))
+                    .into_any_element(),
+                segment("focus-point".into(), t("studio.point").into(), seg.focus.is_some() || self.placing)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.placing = true;
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            ];
+            card()
                 .child(
                     h_flex()
-                        .gap_1()
-                        .child(chip("focus-cursor".into(), t("studio.follow_cursor").into(), seg.focus.is_none() && !self.placing).on_click(cx.listener(move |this, _, _, cx| {
-                            this.placing = false;
-                            this.project.segments[index].focus = None;
-                            this.changed(cx);
-                        })))
-                        .child(chip("focus-point".into(), t("studio.point").into(), seg.focus.is_some() || self.placing).on_click(cx.listener(|this, _, _, cx| {
-                            this.placing = true;
-                            cx.notify();
-                        }))),
+                        .justify_between()
+                        .child(Label::new(t("studio.zoom")).size(LabelSize::Small))
+                        .child(
+                            IconButton::new("delete", IconName::Trash)
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Error)
+                                .tooltip(Tooltip::text(t("studio.delete_zoom")))
+                                .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
+                        ),
                 )
+                .child(segmented(zooms))
+                .child(segmented(toward))
                 .when(self.placing, |s| s.child(Label::new(t("studio.click_video_where_zoom")).size(LabelSize::XSmall).color(Color::Accent)))
-                .child(
-                    Button::new("delete", t("studio.delete_zoom"))
-                        .style(ButtonStyle::Subtle)
-                        .color(Color::Error)
-                        .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Error))
-                        .key_binding(kit::keys("delete"))
-                        .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
-                )
         } else {
             let edited = self.project.trim != (0., self.probe.duration) || !self.project.cuts.is_empty();
-            section(t("studio.edit"))
-                .child(
-                    Label::new(match self.project.segments.len() {
-                        0 => t("studio.no_zooms_click_lower_track").to_string(),
-                        n => tr!("studio.zooms_pick_one_on_timeline", n),
-                    })
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(Label::new(t("studio.filmstrips_yellow_edges_trim_start")).size(LabelSize::XSmall).color(Color::Muted))
-                .child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_1()
-                        .child(
-                            Button::new("auto", t("studio.zooms_on_clicks"))
-                                .style(ButtonStyle::Outlined)
-                                .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                                .disabled(self.track.clicks.is_empty())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    let auto = Project::auto(&this.track, &this.probe);
-                                    this.project.segments = auto.segments;
-                                    this.select_zoom(None);
-                                    this.changed(cx);
-                                })),
-                        )
-                        .when(edited, |row| {
-                            row.child(Button::new("uncut", t("studio.restore_whole_video")).style(ButtonStyle::Subtle).on_click(cx.listener(|this, _, _, cx| {
-                                this.project.trim = (0., this.probe.duration);
-                                this.project.cuts.clear();
-                                this.select_cut(None);
-                                this.changed(cx);
-                            })))
-                        }),
-                )
-        };
-
-        // Presets: the current look is one when it matches exactly.
-        let current = self.project.look();
-        let active = self.presets.iter().position(|(_, look)| *look == current);
-        let preset_chips = self
-            .presets
-            .iter()
-            .enumerate()
-            .map(|(i, (name, look))| {
-                let look = look.clone();
-                chip(SharedString::from(format!("preset-{i}")), name.clone(), active == Some(i)).on_click(cx.listener(move |this, _, _, cx| {
-                    this.project = this.project.with_look(&look, &this.probe);
-                    this.changed(cx);
-                }))
-            })
-            .collect::<Vec<_>>();
-        let presets = section(t("common.presets"))
-            .when(self.presets.is_empty(), |s| {
-                s.child(Label::new(t("studio.save_current_look_background_padding")).size(LabelSize::XSmall).color(Color::Muted))
-            })
-            .child(h_flex().flex_wrap().gap_1().children(preset_chips))
-            .child(
+            card().child(
                 h_flex()
                     .gap_1()
-                    .when(active.is_none(), |row| {
-                        row.child(
-                            Button::new("save-preset", t("common.save_as_preset"))
-                                .style(ButtonStyle::Subtle)
-                                .start_icon(Icon::new(IconName::Plus).size(IconSize::Small))
-                                .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
-                        )
-                    })
-                    .when_some(active, |row, i| {
-                        row.child(
-                            Button::new("delete-preset", t("common.delete_preset"))
-                                .style(ButtonStyle::Subtle)
-                                .color(Color::Muted)
-                                .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Muted))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.presets.remove(i);
-                                    studio::save_presets(&this.presets);
-                                    cx.notify();
-                                })),
-                        )
+                    .child(
+                        Button::new("auto", t("studio.zooms_on_clicks"))
+                            .style(ButtonStyle::Filled)
+                            .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
+                            .disabled(self.track.clicks.is_empty())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let auto = Project::auto(&this.track, &this.probe);
+                                this.project.segments = auto.segments;
+                                this.select_zoom(None);
+                                this.changed(cx);
+                            })),
+                    )
+                    .when(edited, |row| {
+                        row.child(Button::new("uncut", t("studio.restore_whole_video")).style(ButtonStyle::Subtle).on_click(cx.listener(|this, _, _, cx| {
+                            this.project.trim = (0., this.probe.duration);
+                            this.project.cuts.clear();
+                            this.select_cut(None);
+                            this.changed(cx);
+                        })))
                     }),
-            );
-
-        let aspects = ASPECTS.iter().enumerate().map(|(i, (label, _))| {
-            chip(SharedString::from(format!("aspect-{i}")), t(label).into(), self.project.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
-                this.project.aspect = i;
-                this.changed(cx);
-            }))
-        })
-        .collect::<Vec<_>>();
-
-        let ring = cx.theme().colors().text;
-        let swatch = |id: SharedString, selected: bool| {
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(10.))
-                .border_2()
-                .border_color(if selected { ring } else { gpui::transparent_black() })
-                .cursor_pointer()
+            )
         };
-        let edge = cx.theme().colors().border_variant;
-        let tile = |i: usize, c0: gpui::Hsla, c1: gpui::Hsla, cx: &mut Context<Self>| {
-            swatch(SharedString::from(format!("backdrop-{i}")), self.project.wallpaper.is_none() && i == self.project.backdrop)
-                .size(px(40.))
-                .child(div().size(px(30.)).rounded(px(7.)).border_1().border_color(edge).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.project.backdrop = i;
-                    this.project.wallpaper = None;
-                    this.changed(cx);
-                }))
-        };
-        let all = palette::backdrops();
-        // Gradients, then plain colours on their own row.
-        let gradients = all.iter().enumerate().filter(|(_, (c0, c1))| c0 != c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)).collect::<Vec<_>>();
-        let solids = all.iter().enumerate().filter(|(_, (c0, c1))| c0 == c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)).collect::<Vec<_>>();
-        let walls = self.walls.iter().enumerate().map(|(i, (path, thumb))| {
-            let path = path.clone();
-            swatch(SharedString::from(format!("wall-{i}")), self.project.wallpaper.as_ref() == Some(&path))
-                .w(px(64.))
-                .h(px(44.))
-                .child(img(thumb.clone()).w(px(56.)).h(px(36.)).rounded(px(6.)).object_fit(ObjectFit::Cover))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.project.wallpaper = Some(path.clone());
-                    this.changed(cx);
-                }))
-        })
-        .collect::<Vec<_>>();
-        let custom = self.project.wallpaper.as_ref().filter(|w| !self.walls.iter().any(|(p, _)| p == *w)).map(|w| {
-            Label::new(tr!("studio.custom", w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).size(LabelSize::XSmall).color(Color::Muted).truncate()
-        });
 
-        let has_clicks = !self.track.clicks.is_empty();
-        let has_keys = !self.track.keystrokes.is_empty();
-        let toggle_row = |title: &'static str, hint: &'static str, switch: Switch| {
-            h_flex()
-                .w_full()
-                .justify_between()
-                .gap_3()
-                .child(v_flex().min_w_0().child(caption(title)).child(Label::new(hint).size(LabelSize::XSmall).color(Color::Muted)))
-                .child(div().flex_none().child(switch))
-        };
-        let keys_on = self.project.keys && has_keys;
-        let key_style = h_flex()
+        // Presets: chips, and one button to keep or drop the current look.
+        let current = self.project.look();
+        let active = self.presets.iter().position(|(_, look)| *look == current);
+        let presets = h_flex()
+            .w_full()
+            .flex_wrap()
             .gap_1()
-            .child(chip("keys-bottom".into(), t("studio.bottom").into(), !self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
-                this.project.keys_top = false;
-                this.changed(cx);
-            })))
-            .child(chip("keys-top".into(), t("studio.top").into(), self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
-                this.project.keys_top = true;
-                this.changed(cx);
-            })))
-            .child(div().w_2())
-            .children(KEY_SIZES.iter().enumerate().map(|(i, (label, _))| {
-                chip(SharedString::from(format!("keys-size-{i}")), (*label).into(), self.project.keys_size == i).on_click(cx.listener(move |this, _, _, cx| {
-                    this.project.keys_size = i;
-                    this.changed(cx);
-                }))
-            }));
-
-        let gif = self.project.format == Format::Gif;
-        let formats = [(Format::Mp4, "MP4"), (Format::Gif, "GIF")].map(|(format, label)| {
-            chip(SharedString::from(format!("format-{label}")), label.into(), self.project.format == format).on_click(cx.listener(move |this, _, _, cx| {
-                this.project.format = format;
-                this.changed(cx);
-            }))
-        });
-        let resolutions = RESOLUTIONS.iter().enumerate().map(|(i, (label, _))| {
-            chip(SharedString::from(format!("res-{i}")), (*label).into(), self.project.resolution == i).on_click(cx.listener(move |this, _, _, cx| {
-                this.project.resolution = i;
-                this.changed(cx);
-            }))
-        })
-        .collect::<Vec<_>>();
-        let rates = FRAME_RATES.iter().enumerate().map(|(i, (label, _))| {
-            chip(SharedString::from(format!("fps-{i}")), t(label).into(), self.project.frame_rate == i).on_click(cx.listener(move |this, _, _, cx| {
-                this.project.frame_rate = i;
-                this.changed(cx);
-            }))
-        })
-        .collect::<Vec<_>>();
-        let out = studio::layout(&self.probe, &self.project, false);
-        let blurs = MOTION_BLUR
-            .iter()
-            .enumerate()
-            .map(|(i, (label, _))| {
-                chip(SharedString::from(format!("blur-{i}")), t(label).into(), self.project.motion_blur == i).on_click(cx.listener(move |this, _, _, cx| {
-                    this.project.motion_blur = i;
-                    this.changed(cx);
-                }))
-            })
-            .collect::<Vec<_>>();
-        let qualities = QUALITIES
-            .iter()
-            .enumerate()
-            .map(|(i, (label, _))| {
-                chip(SharedString::from(format!("quality-{i}")), t(label).into(), self.project.quality == i).on_click(cx.listener(move |this, _, _, cx| {
-                    this.project.quality = i;
-                    this.changed(cx);
-                }))
-            })
-            .collect::<Vec<_>>();
-        let estimate = size_label(&self.project, &self.probe);
-
-        let cursor = if self.track.cursor_hidden {
-            let styles = CURSOR_STYLES
-                .iter()
-                .enumerate()
-                .map(|(i, label)| {
-                    chip(SharedString::from(format!("cursor-style-{i}")), t(label).into(), self.project.cursor_style == i).on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.cursor_style = i;
+            .children(self.presets.iter().enumerate().map(|(i, (name, look))| {
+                let look = look.clone();
+                ButtonLike::new(SharedString::from(format!("preset-{i}")))
+                    .style(if active == Some(i) { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .toggle_state(active == Some(i))
+                    .child(div().px_1p5().child(Label::new(name.clone()).size(LabelSize::Small)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.project = this.project.with_look(&look, &this.probe);
                         this.changed(cx);
                     }))
-                })
-                .collect::<Vec<_>>();
-            section(t("studio.cursor"))
-                .child(toggle_row(
-                    t("studio.show_cursor"),
-                    t("studio.cursor_recorded_separately"),
+            }))
+            .child(match active {
+                None => Button::new("save-preset", t("common.save_as_preset"))
+                    .style(ButtonStyle::Subtle)
+                    .color(Color::Muted)
+                    .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
+                    .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx)))
+                    .into_any_element(),
+                Some(i) => IconButton::new("delete-preset", IconName::Trash)
+                    .shape(IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text(t("common.delete_preset")))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.presets.remove(i);
+                        studio::save_presets(&this.presets);
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            });
+
+        // The backdrop: colours and gradients, then wallpapers.
+        let swatch = |id: SharedString, selected: bool| {
+            div().id(id).flex().items_center().justify_center().rounded(px(9.)).border_2().border_color(if selected { ring } else { gpui::transparent_black() }).cursor_pointer()
+        };
+        let tiles = palette::backdrops()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (c0, c1))| {
+                swatch(SharedString::from(format!("backdrop-{i}")), self.project.wallpaper.is_none() && i == self.project.backdrop)
+                    .size(px(32.))
+                    .child(div().size(px(24.)).rounded(px(6.)).border_1().border_color(edge).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.backdrop = i;
+                        this.project.wallpaper = None;
+                        this.changed(cx);
+                    }))
+            })
+            .collect::<Vec<_>>();
+        let walls = self
+            .walls
+            .iter()
+            .enumerate()
+            .map(|(i, (path, thumb))| {
+                let path = path.clone();
+                swatch(SharedString::from(format!("wall-{i}")), self.project.wallpaper.as_ref() == Some(&path))
+                    .w(px(52.))
+                    .h(px(36.))
+                    .child(img(thumb.clone()).w(px(44.)).h(px(28.)).rounded(px(5.)).object_fit(ObjectFit::Cover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.wallpaper = Some(path.clone());
+                        this.changed(cx);
+                    }))
+                    .into_any_element()
+            })
+            .chain(std::iter::once(
+                swatch("own-wallpaper".into(), self.project.wallpaper.as_ref().is_some_and(|w| !self.walls.iter().any(|(p, _)| p == w)))
+                    .w(px(52.))
+                    .h(px(36.))
+                    .child(div().w(px(44.)).h(px(28.)).rounded(px(5.)).border_1().border_color(edge).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
+                    .tooltip(Tooltip::text(t("common.your_own_image")))
+                    .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
+                    .into_any_element(),
+            ))
+            .collect::<Vec<_>>();
+
+        let pick = |items: &[&'static str], selected: usize, id: &'static str, set: fn(&mut Project, usize), cx: &mut Context<Self>| -> AnyElement {
+            segmented(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, text)| {
+                        segment(SharedString::from(format!("{id}-{i}")), t(text).to_string(), selected == i)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                set(&mut this.project, i);
+                                this.changed(cx);
+                            }))
+                            .into_any_element()
+                    })
+                    .collect(),
+            )
+        };
+        let aspect_names: Vec<&'static str> = ASPECTS.iter().map(|a| a.0).collect();
+        let blur_names: Vec<&'static str> = MOTION_BLUR.iter().map(|a| a.0).collect();
+        let look = card()
+            .child(pick(&aspect_names, self.project.aspect, "aspect", |p, i| p.aspect = i, cx))
+            .child(h_flex().flex_wrap().gap(px(2.)).children(tiles))
+            .child(h_flex().flex_wrap().gap(px(2.)).children(walls))
+            .child(row(t("studio.row_padding"), self.slider(Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), cx).into_any_element()))
+            .child(row(t("studio.row_corners"), self.slider(Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), cx).into_any_element()))
+            .child(row(t("studio.row_shadow"), self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx).into_any_element()))
+            .child(row(t("studio.row_blur"), pick(&blur_names, self.project.motion_blur, "blur", |p, i| p.motion_blur = i, cx)));
+
+        // The drawn cursor: only recordings made in studio mode have one to change.
+        let cursor = self.track.cursor_hidden.then(|| {
+            let styles: Vec<&'static str> = CURSOR_STYLES.to_vec();
+            card()
+                .child(toggle(
+                    t("studio.cursor"),
                     Switch::new("cursor", ToggleState::from(self.project.cursor)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
                         this.project.cursor = *state == ToggleState::Selected;
                         this.changed(cx);
                     })),
                 ))
                 .when(self.project.cursor, |s| {
-                    s.child(h_flex().gap_1().children(styles))
-                        .child(caption(t("common.size")))
-                        .child(self.slider(
-                            Knob::CursorSize,
-                            (self.project.cursor_size - 0.5) / (MAX_CURSOR - 0.5),
-                            crate::i18n::decimal(format!("×{:.1}", self.project.cursor_size)),
-                            cx,
+                    s.child(pick(&styles, self.project.cursor_style, "cursor-style", |p, i| p.cursor_style = i, cx))
+                        .child(row(
+                            t("studio.row_size"),
+                            self.slider(Knob::CursorSize, (self.project.cursor_size - 0.5) / (MAX_CURSOR - 0.5), crate::i18n::decimal(format!("×{:.1}", self.project.cursor_size)), cx).into_any_element(),
                         ))
-                        .child(caption(t("studio.smoothness")))
-                        .child(self.slider(Knob::CursorSmooth, self.project.cursor_smooth, format!("{}%", (self.project.cursor_smooth * 100.).round()), cx))
+                        .child(row(
+                            t("studio.row_smooth"),
+                            self.slider(Knob::CursorSmooth, self.project.cursor_smooth, format!("{}%", (self.project.cursor_smooth * 100.).round()), cx).into_any_element(),
+                        ))
                 })
-        } else {
-            section(t("studio.cursor")).child(
-                Label::new(t("studio.change_cursors_size_smoothness_record"))
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
-        };
+        });
+
+        let camera = self.cam_file.as_ref().map(|_| {
+            // A 3×3 grid without the middle: the spots the camera snaps to.
+            let spot = |i: usize, cx: &mut Context<Self>| {
+                let on = self.project.cam_anchor == i;
+                div()
+                    .id(SharedString::from(format!("cam-anchor-{i}")))
+                    .size(px(14.))
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(if on { accent } else { line })
+                    .when(on, |d| d.bg(accent))
+                    .cursor_pointer()
+                    .hover(|d| d.border_color(accent))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.cam_anchor = i;
+                        this.changed(cx);
+                    }))
+                    .into_any_element()
+            };
+            let mut grid = v_flex().gap(px(3.));
+            for cells in [[Some(0), Some(1), Some(2)], [Some(7), None, Some(3)], [Some(6), Some(5), Some(4)]] {
+                let cells: Vec<AnyElement> = cells.iter().map(|c| c.map(|i| spot(i, cx)).unwrap_or_else(|| div().size(px(14.)).into_any_element())).collect();
+                grid = grid.child(h_flex().gap(px(3.)).children(cells));
+            }
+            card()
+                .child(toggle(
+                    t("common.camera"),
+                    Switch::new("cam", ToggleState::from(self.project.cam)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                        this.project.cam = *state == ToggleState::Selected;
+                        this.changed(cx);
+                    })),
+                ))
+                .when(self.project.cam, |s| {
+                    s.child(row(
+                        t("studio.row_size"),
+                        self.slider(Knob::CamSize, (self.project.cam_size - studio::MIN_CAM) / (studio::MAX_CAM - studio::MIN_CAM), format!("{}%", (self.project.cam_size * 100.).round()), cx).into_any_element(),
+                    ))
+                    .child(row(t("studio.rounding"), self.slider(Knob::CamRound, self.project.cam_round, format!("{}%", (self.project.cam_round * 100.).round()), cx).into_any_element()))
+                    .child(row(t("studio.row_position"), grid.into_any_element()))
+                })
+        });
+
+        // Over the video: click rings and shortcut badges.
+        let has_clicks = !self.track.clicks.is_empty();
+        let has_keys = !self.track.keystrokes.is_empty();
+        let keys_on = self.project.keys && has_keys;
+        let key_sides: [&'static str; 2] = ["studio.bottom", "studio.top"];
+        let key_sizes: Vec<&'static str> = KEY_SIZES.iter().map(|k| k.0).collect();
+        let overlays = card()
+            .child(toggle(
+                t("studio.clicks"),
+                Switch::new("clicks", ToggleState::from(self.project.clicks && has_clicks)).disabled(!has_clicks).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                    this.project.clicks = *state == ToggleState::Selected;
+                    this.changed(cx);
+                })),
+            ))
+            .child(toggle(
+                t("common.keyboard_shortcuts"),
+                Switch::new("keys", ToggleState::from(keys_on)).disabled(!has_keys).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                    this.project.keys = *state == ToggleState::Selected;
+                    this.changed(cx);
+                })),
+            ))
+            .when(keys_on, |s| {
+                s.child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().flex_1().child(pick(&key_sides, self.project.keys_top as usize, "keys-side", |p, i| p.keys_top = i == 1, cx)))
+                        .child(div().flex_1().child(pick(&key_sizes, self.project.keys_size, "keys-size", |p, i| p.keys_size = i, cx))),
+                )
+            });
+
+        // Export: file, size, rate, compression, sound; what comes out.
+        let gif = self.project.format == Format::Gif;
+        let files: [&'static str; 2] = ["MP4", "GIF"];
+        let resolutions: Vec<&'static str> = RESOLUTIONS.iter().map(|r| r.0).collect();
+        let rates: Vec<&'static str> = FRAME_RATES.iter().map(|r| r.0).collect();
+        let qualities: Vec<&'static str> = QUALITIES.iter().map(|q| q.0).collect();
+        let out = studio::layout(&self.probe, &self.project, false);
+        let export = card()
+            .child(pick(&files, gif as usize, "format", |p, i| p.format = if i == 1 { Format::Gif } else { Format::Mp4 }, cx))
+            .child(pick(&resolutions, self.project.resolution, "res", |p, i| p.resolution = i, cx))
+            .child(row(t("studio.row_fps"), pick(&rates, self.project.frame_rate, "fps", |p, i| p.frame_rate = i, cx)))
+            .when(!gif, |s| s.child(row(t("studio.row_quality"), pick(&qualities, self.project.quality, "quality", |p, i| p.quality = i, cx))))
+            .when(self.probe.audio && !gif, |s| {
+                s.child(toggle(
+                    t("studio.audio"),
+                    Switch::new("audio", ToggleState::from(self.project.audio)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                        this.project.audio = *state == ToggleState::Selected;
+                        this.changed(cx);
+                    })),
+                ))
+            })
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Label::new(format!("{}×{} · {}", out.ow, out.oh, clock(self.project.kept_duration()))).size(LabelSize::XSmall).color(Color::Muted))
+                    .child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small)),
+            );
 
         v_flex()
             .id("sidebar")
@@ -1495,145 +1529,15 @@ impl StudioEditor {
             .w(px(SIDEBAR))
             .h_full()
             .overflow_y_scroll()
-            .gap_3()
-            .px_4()
-            .pb_4()
-                        .child(context)
+            .gap_2()
+            .p_3()
+            .child(context)
             .child(presets)
-            .child(section(t("common.format")).child(h_flex().flex_wrap().gap_1().children(aspects)))
-            .child(
-                section(t("common.background"))
-                    .child(h_flex().flex_wrap().gap_1().children(gradients))
-                    .child(h_flex().flex_wrap().gap_1().children(solids))
-                    .child(h_flex().flex_wrap().gap_1().children(walls))
-                    .children(custom)
-                    .child(
-                        Button::new("own-wallpaper", t("common.your_own_image"))
-                            .style(ButtonStyle::Subtle)
-                            .start_icon(Icon::new(IconName::Image).size(IconSize::Small))
-                            .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx))),
-                    ),
-            )
-            .child(
-                section(t("common.appearance"))
-                    .child(caption(t("common.padding")))
-                    .child(self.slider(Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), cx))
-                    .child(caption(t("common.corner_radius")))
-                    .child(self.slider(Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), cx))
-                    .child(caption(t("common.shadow")))
-                    .child(self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx))
-                    .child(caption(t("studio.motion_blur")))
-                    .child(h_flex().gap_1().children(blurs))
-                    .child(Label::new(t("studio.on_zooms_camera_moves_fast")).size(LabelSize::XSmall).color(Color::Muted)),
-            )
-            .child(cursor)
-            .children(self.cam_file.as_ref().map(|_| {
-                // A 3×3 grid without the middle: the spots the camera snaps to.
-                let (accent, edge) = (cx.theme().colors().text_accent, cx.theme().colors().border);
-                let spot = |i: usize, cx: &mut Context<Self>| {
-                    let on = self.project.cam_anchor == i;
-                    div()
-                        .id(SharedString::from(format!("cam-anchor-{i}")))
-                        .size(px(18.))
-                        .rounded(px(5.))
-                        .border_1()
-                        .border_color(if on { accent } else { edge })
-                        .when(on, |d| d.bg(accent))
-                        .cursor_pointer()
-                        .hover(|d| d.border_color(accent))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.project.cam_anchor = i;
-                            this.changed(cx);
-                        }))
-                        .into_any_element()
-                };
-                let rows = [[Some(0), Some(1), Some(2)], [Some(7), None, Some(3)], [Some(6), Some(5), Some(4)]];
-                let mut grid = v_flex().gap_1();
-                for row in rows {
-                    let cells: Vec<AnyElement> = row.iter().map(|cell| match cell {
-                        Some(i) => spot(*i, cx),
-                        None => div().size(px(18.)).into_any_element(),
-                    }).collect();
-                    grid = grid.child(h_flex().gap_1().children(cells));
-                }
-                section(t("common.camera"))
-                    .child(toggle_row(
-                        t("studio.show_camera"),
-                        t("studio.camera_recorded_separately"),
-                        Switch::new("cam", ToggleState::from(self.project.cam)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                            this.project.cam = *state == ToggleState::Selected;
-                            this.changed(cx);
-                        })),
-                    ))
-                    .when(self.project.cam, |s| {
-                        s.child(caption(t("common.size")))
-                            .child(self.slider(
-                                Knob::CamSize,
-                                (self.project.cam_size - studio::MIN_CAM) / (studio::MAX_CAM - studio::MIN_CAM),
-                                format!("{}%", (self.project.cam_size * 100.).round()),
-                                cx,
-                            ))
-                            .child(caption(t("studio.rounding")))
-                            .child(self.slider(Knob::CamRound, self.project.cam_round, format!("{}%", (self.project.cam_round * 100.).round()), cx))
-                            .child(caption(t("studio.where")))
-                            .child(grid)
-                    })
-            }))
-            .child(
-                section(t("studio.over_video"))
-                    .child(toggle_row(
-                        t("studio.clicks"),
-                        if has_clicks { t("studio.rings_where_you_clicked") } else { t("studio.no_clicks_in_recording") },
-                        Switch::new("clicks", ToggleState::from(self.project.clicks && has_clicks)).disabled(!has_clicks).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                            this.project.clicks = *state == ToggleState::Selected;
-                            this.changed(cx);
-                        })),
-                    ))
-                    .child(toggle_row(
-                        t("common.keyboard_shortcuts"),
-                        if has_keys { t("studio.badge_with_shortcuts_pressed") } else { t("studio.record_with_shortcuts_on") },
-                        Switch::new("keys", ToggleState::from(keys_on)).disabled(!has_keys).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                            this.project.keys = *state == ToggleState::Selected;
-                            this.changed(cx);
-                        })),
-                    ))
-                    .when(keys_on, |s| s.child(key_style)),
-            )
-            .child(
-                section(t("studio.audio")).child(toggle_row(
-                    t("studio.recording_audio"),
-                    if !self.probe.audio {
-                        t("studio.no_audio_in_recording")
-                    } else if gif {
-                        t("studio.gifs_have_no_audio")
-                    } else {
-                        t("studio.microphone_system_as_recorded")
-                    },
-                    Switch::new("audio", ToggleState::from(self.project.audio && self.probe.audio && !gif)).disabled(!self.probe.audio || gif).on_click(cx.listener(
-                        |this, state: &ToggleState, _, cx| {
-                            this.project.audio = *state == ToggleState::Selected;
-                            this.changed(cx);
-                        },
-                    )),
-                )),
-            )
-            .child(
-                section(t("studio.export"))
-                    .child(caption(t("studio.file")))
-                    .child(h_flex().gap_1().children(formats))
-                    .child(caption(t("common.size")))
-                    .child(h_flex().flex_wrap().gap_1().children(resolutions))
-                    .child(caption(t("studio.frames_per_second")))
-                    .child(h_flex().flex_wrap().gap_1().children(rates))
-                    .when(!gif, |s| s.child(caption(t("studio.compression"))).child(h_flex().flex_wrap().gap_1().children(qualities)))
-                    .child(
-                        h_flex()
-                            .mt_1()
-                            .justify_between()
-                            .child(Label::new(format!("{}×{}, {}", out.ow, out.oh, clock(self.project.kept_duration()))).size(LabelSize::XSmall).color(Color::Muted))
-                            .child(Label::new(estimate).size(LabelSize::Small).color(Color::Default)),
-                    ),
-            )
+            .child(look)
+            .children(cursor)
+            .children(camera)
+            .child(overlays)
+            .child(export)
     }
 }
 

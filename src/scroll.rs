@@ -319,7 +319,7 @@ impl Render for ScrollBar {
                             Button::new("done", t("scroll.done"))
                                 .style(ButtonStyle::Accent)
                                 .size(ButtonSize::Large)
-                                .tooltip(Tooltip::text("scroll.press_hotkey_again"))
+                                .tooltip(Tooltip::text(t("scroll.press_hotkey_again")))
                                 .on_click(move |_, _, _| stop.stop.store(true, Ordering::Relaxed)),
                         )
                         .child(self.region.mark()),

@@ -143,7 +143,7 @@ impl Render for ProgressView {
                             IconButton::new("cancel", IconName::Close)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("job.cancel"))
+                                .tooltip(Tooltip::text(t("job.cancel")))
                                 .on_click(move |_, _, _| {
                                     state.cancelled.set(true);
                                     if let Some(pid) = state.pid.get() {

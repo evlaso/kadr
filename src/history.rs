@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     AnyElement, App, BackgroundExecutor, ClickEvent, Context, FocusHandle, Image, ImageFormat, KeyDownEvent, MouseButton,
     MouseDownEvent, ObjectFit, ScrollHandle, SharedString, Window, div, img, px,
@@ -14,7 +13,7 @@ use gpui::{
 };
 use crate::ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
 
-use crate::kit::{self, LayerSpec};
+use crate::kit;
 use crate::{editor, pin, trim, util};
 use crate::i18n::t;
 
@@ -140,17 +139,13 @@ fn crop_thumb(bytes: &[u8]) -> Option<Vec<u8>> {
 }
 
 pub fn open(cx: &mut App) {
-    let Some(mon) = util::focused_monitor() else { return };
-    let spec = LayerSpec {
-        namespace: "kadr-history",
-        anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-        margin: (0., 0., 0., 0.),
-        size: (mon.w as f32, mon.h as f32),
-        keyboard: KeyboardInteractivity::Exclusive,
-        ignore_zones: true,
-        monitor: Some(mon),
-    };
-    kit::open_layer(cx, spec, |window, cx| {
+    // One history window at a time.
+    if let Some(window) = cx.windows().into_iter().find_map(|w| w.downcast::<History>()) {
+        let _ = window.update(cx, |_, window, _| window.activate());
+        return;
+    }
+    let mon = util::focused_monitor();
+    kit::open_window(cx, "kadr-history", mon.as_ref(), (1100., 760.), |window, cx| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
@@ -341,6 +336,7 @@ impl History {
             .w(px(THUMB.0 as f32))
             .h(px(THUMB.1 as f32))
             .rounded_md()
+            .overflow_hidden()
             .bg(colors.element_background)
             .children(item.thumb.clone().map(|t| img(t).size_full().object_fit(ObjectFit::Fill).rounded_md()))
             .when(item.kind != Kind::Shot, |t| {
@@ -359,18 +355,20 @@ impl History {
             })
             .child(actions);
 
+        // The selected thumbnail gets an accent ring, like Finder's.
+        let ring = div()
+            .p(px(3.))
+            .rounded(px(11.))
+            .border_2()
+            .border_color(if selected { colors.text_accent } else { gpui::transparent_black() })
+            .child(thumb);
         v_flex()
             .id(("item", index))
             .group(group)
-            .w(px(ITEM_WIDTH))
+            .w(px(ITEM_WIDTH + 10.))
             .gap_1()
-            .p_1()
-            .rounded_lg()
-            .border_2()
-            .border_color(if selected { colors.border_focused } else { gpui::transparent_black() })
-            .hover(|s| s.bg(colors.ghost_element_hover))
             .cursor_pointer()
-            .child(thumb)
+            .child(ring)
             .child(
                 h_flex()
                     .px_0p5()
@@ -396,8 +394,7 @@ impl History {
 impl Render for History {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
-        let width = (f32::from(viewport.width) * 0.8).min(1180.);
-        let height = f32::from(viewport.height) * 0.78;
+        let width = f32::from(viewport.width);
         self.columns = (((width - 24.) + GAP) / (ITEM_WIDTH + GAP)).floor().max(1.) as usize;
 
         let visible = self.visible();
@@ -450,22 +447,14 @@ impl Render for History {
         let hint = |keys: &str, label: &'static str| h_flex().gap_1().child(kit::keys(keys)).child(Label::new(label).size(LabelSize::XSmall).color(Color::Muted));
 
         kit::root(cx)
-            .bg(rgba(0x00000099))
+            .bg(cx.theme().colors().panel_background)
             .flex()
-            .items_center()
-            .justify_center()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.remove_window())
             .child(
                 v_flex()
                     .id("history")
-                    .w(px(width))
-                    .h(px(height))
-                    .elevation_3(cx)
-                    .overflow_hidden()
-                    // Clicks inside don't reach the backdrop's close handler.
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .size_full()
                     .child(
                         h_flex()
                             .gap_2()
@@ -477,7 +466,7 @@ impl Render for History {
                             .child(
                                 IconButton::new("settings", IconName::Settings)
                                     .shape(IconButtonShape::Square)
-                                    .tooltip(Tooltip::text("common.settings"))
+                                    .tooltip(Tooltip::text(t("common.settings")))
                                     .on_click(|_, window, cx| {
                                         window.remove_window();
                                         crate::settings_view::open(cx);

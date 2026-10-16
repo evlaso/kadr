@@ -108,7 +108,7 @@ impl Render for Pin {
                     IconButton::new("close", IconName::Close)
                         .style(ButtonStyle::Filled)
                         .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text("pin.close_esc"))
+                        .tooltip(Tooltip::text(t("pin.close_esc")))
                         .on_click(|_, window, _| window.remove_window()),
                 ),
             )

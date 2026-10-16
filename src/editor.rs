@@ -1253,7 +1253,7 @@ impl Editor {
                         .child(div().size(px(16.)).rounded_full().bg(current).border_1().border_color(cx.theme().colors().border))
                         .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)),
                 )
-                .tooltip(Tooltip::text("editor.color_1_7"))
+                .tooltip(Tooltip::text(t("editor.color_1_7")))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.colors_open = !this.colors_open;
                     cx.notify();
@@ -1282,7 +1282,7 @@ impl Editor {
             .gap_1()
             .child(div().w(px(18.)).flex().justify_center().child(div().size(px(dot_size)).rounded_full().bg(current)))
             .child(self.slider(Knob::Weight, self.weight, String::new(), cx))
-            .tooltip(Tooltip::text("common.size"));
+            .tooltip(Tooltip::text(t("common.size")));
         let background = ButtonLike::new("background")
             .style(if self.panel { ButtonStyle::Filled } else { ButtonStyle::Subtle })
             .size(ButtonSize::Large)
@@ -1294,7 +1294,7 @@ impl Editor {
                     .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(if self.frame.on() { Color::Accent } else { Color::Default }))
                     .child(Label::new(t("common.background"))),
             )
-            .tooltip(Tooltip::text("editor.background_padding_corners_shadow_format"))
+            .tooltip(Tooltip::text(t("editor.background_padding_corners_shadow_format")))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.panel = !this.panel;
                 cx.notify();
@@ -1307,7 +1307,7 @@ impl Editor {
                     .shape(IconButtonShape::Square)
                     .size(ButtonSize::Large)
                     .disabled(self.history.is_empty())
-                    .tooltip(Tooltip::text("editor.undo_ctrl_z"))
+                    .tooltip(Tooltip::text(t("editor.undo_ctrl_z")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.undo();
                         cx.notify();
@@ -1319,7 +1319,7 @@ impl Editor {
                     .size(ButtonSize::Large)
                     .disabled(self.future.is_empty())
                     .child(div().px_1().child(Icon::from_path("icons/kadr/redo.svg").size(IconSize::Small).color(if self.future.is_empty() { Color::Disabled } else { Color::Default })))
-                    .tooltip(Tooltip::text("editor.redo_ctrl_shift_z"))
+                    .tooltip(Tooltip::text(t("editor.redo_ctrl_shift_z")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.redo();
                         cx.notify();
@@ -1429,7 +1429,7 @@ impl Editor {
             .cursor_grab()
             .child(Icon::from_path("icons/kadr/grip.svg").size(IconSize::Small).color(Color::Muted))
             .child(Label::new(t("editor.drag")).color(Color::Muted))
-            .tooltip(Tooltip::text("editor.drag_annotated_image_into_chat"))
+            .tooltip(Tooltip::text(t("editor.drag_annotated_image_into_chat")))
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
                 let (src, doc, frame, path) = drag_state.as_ref()?;
@@ -1447,7 +1447,7 @@ impl Editor {
                     .shape(IconButtonShape::Square)
                     .size(ButtonSize::Large)
                     .icon_size(IconSize::XSmall)
-                    .tooltip(Tooltip::text("editor.zoom_out_ctrl"))
+                    .tooltip(Tooltip::text(t("editor.zoom_out_ctrl")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.zoom_by(0.8);
                         cx.notify();
@@ -1469,7 +1469,7 @@ impl Editor {
                     .shape(IconButtonShape::Square)
                     .size(ButtonSize::Large)
                     .icon_size(IconSize::XSmall)
-                    .tooltip(Tooltip::text("editor.zoom_in_ctrl_ctrl_wheel"))
+                    .tooltip(Tooltip::text(t("editor.zoom_in_ctrl_ctrl_wheel")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.zoom_by(1.25);
                         cx.notify();
@@ -1517,7 +1517,7 @@ impl Editor {
                         IconButton::new("ocr", IconName::CaseSensitive)
                             .shape(IconButtonShape::Square)
                             .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text("common.recognize_text"))
+                            .tooltip(Tooltip::text(t("common.recognize_text")))
                             .on_click(cx.listener(|this, _, _, cx| this.read_text(cx))),
                     )
                     .child(div().w(px(8.)))
