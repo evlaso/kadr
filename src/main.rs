@@ -1,5 +1,6 @@
 mod capture;
 mod cards;
+mod editor;
 mod palette;
 mod panel;
 mod pin;
@@ -31,6 +32,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
                                                  начать запись сразу (повторный вызов — стоп)
   kadr record stop                               остановить запись
   kadr studio <видео>                            автозум к кликам, фон, тень и скругления
+  kadr edit <картинка>                           редактор: стрелки, текст, маркер, размытие…
 ";
 
 const MODES: [&str; 4] = ["smart", "region", "windows", "fullscreen"];
@@ -42,6 +44,7 @@ enum Command {
     Record(Option<String>, Option<record::Opts>),
     RecordStop,
     Studio(PathBuf),
+    Edit(PathBuf),
 }
 
 impl Command {
@@ -63,6 +66,7 @@ impl Command {
             Some("open") => file(1).map(Command::Open),
             Some("pin") => file(1).map(Command::Pin),
             Some("studio") => file(1).map(Command::Studio),
+            Some("edit") => file(1).map(Command::Edit),
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
@@ -96,6 +100,7 @@ impl Command {
             Command::Record(mode, opts) => record::command(mode, opts, cx),
             Command::RecordStop => record::command_stop(cx),
             Command::Studio(path) => studio::render(path, cx),
+            Command::Edit(path) => editor::open(path, cx),
         }
     }
 }
@@ -144,6 +149,7 @@ fn main() {
         Command::Open(p) => vec!["open".into(), p.display().to_string()],
         Command::Pin(p) => vec!["pin".into(), p.display().to_string()],
         Command::Studio(p) => vec!["studio".into(), p.display().to_string()],
+        Command::Edit(p) => vec!["edit".into(), p.display().to_string()],
         _ => args.clone(),
     };
     if send_to_running(&resolved) {

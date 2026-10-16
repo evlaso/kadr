@@ -44,6 +44,18 @@ assets![
     "icons/check.svg" => "../data/zed/icons/check.svg",
     "icons/chevron_down.svg" => "../data/zed/icons/chevron_down.svg",
     "icons/sparkle.svg" => "../data/zed/icons/sparkle.svg",
+    "icons/arrow_up_right.svg" => "../data/zed/icons/arrow_up_right.svg",
+    "icons/slash.svg" => "../data/zed/icons/slash.svg",
+    "icons/case_sensitive.svg" => "../data/zed/icons/case_sensitive.svg",
+    "icons/undo.svg" => "../data/zed/icons/undo.svg",
+    "icons/download.svg" => "../data/zed/icons/download.svg",
+    // Editor tools Zed's set lacks, drawn in the same style.
+    "icons/kadr/rect.svg" => "../data/icons/editor/rect.svg",
+    "icons/kadr/ellipse.svg" => "../data/icons/editor/ellipse.svg",
+    "icons/kadr/marker.svg" => "../data/icons/editor/marker.svg",
+    "icons/kadr/counter.svg" => "../data/icons/editor/counter.svg",
+    "icons/kadr/pixelate.svg" => "../data/icons/editor/pixelate.svg",
+    "icons/kadr/redo.svg" => "../data/icons/editor/redo.svg",
     // Zed has no camera icon.
     "icons/kadr/camera.svg" => "../data/icons/kadr-camera-symbolic.svg",
 ];

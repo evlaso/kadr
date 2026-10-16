@@ -14,7 +14,7 @@ use gpui::{
 use ui::{IconButtonShape, TintColor, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
-use crate::{pin, studio, track, util};
+use crate::{editor, pin, studio, track, util};
 
 const CARD_WIDTH: f32 = 320.;
 /// Inner padding of the card panel.
@@ -337,23 +337,12 @@ impl Render for DragPreview {
     }
 }
 
-/// Screenshots open in Tensaku (Omarchy's annotator), recordings in the player.
+/// Screenshots open in kadr's editor, recordings in the player.
 fn edit(path: PathBuf, cx: &mut App) {
     if is_video(&path) {
         return util::open_file(&path);
     }
-    let before = util::mtime(&path);
-    let hold = kit::hold(cx);
-    cx.spawn(async move |cx| {
-        let _hold = hold;
-        let _ = async_process::Command::new("tensaku-edit").arg(&path).status().await;
-        // The editor saves in place; bring the result back if it changed.
-        if util::mtime(&path) != before {
-            util::copy_image(&path);
-            let _ = cx.update(|cx| show(path, cx));
-        }
-    })
-    .detach();
+    editor::open(path, cx);
 }
 
 pub fn is_video(path: &Path) -> bool {

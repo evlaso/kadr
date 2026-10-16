@@ -108,3 +108,18 @@ pub fn apply(cx: &mut App) {
 
     GlobalTheme::update_theme(cx, Arc::new(theme));
 }
+
+/// Annotation colors for the editor: the theme's accents when it has them,
+/// Flexoki's (Sumi Dark's) otherwise — Sumi Light is monochrome, and grey
+/// arrows don't stand out on a screenshot. Plus white and black.
+pub fn annotation_colors() -> Vec<Hsla> {
+    let theme = read_palette().map(|(_, p)| p).unwrap_or_default();
+    let defaults = [("red", 0xD14D41), ("orange", 0xDA702C), ("yellow", 0xD0A215), ("green", 0x879A39), ("blue", 0x4385BE), ("magenta", 0xCE5D97)];
+    let mut colors: Vec<Hsla> = defaults
+        .iter()
+        .map(|&(key, fallback)| theme.get(key).copied().filter(|c| c.s > 0.25).unwrap_or_else(|| rgb(fallback).into()))
+        .collect();
+    colors.push(gpui::white());
+    colors.push(rgb(0x100F0F).into());
+    colors
+}

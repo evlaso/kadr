@@ -84,10 +84,6 @@ fn file_uri(path: &Path) -> String {
     uri
 }
 
-pub fn mtime(path: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
-}
-
 pub fn format_duration(seconds: f64) -> String {
     let s = seconds.max(0.0) as u64;
     format!("{}:{:02}", s / 60, s % 60)
