@@ -234,27 +234,31 @@ impl Render for Panel {
 
         self.sync_meter(cx);
         self.region.reset();
-        // The mic button shows how loud the microphone is while it's on.
+        // While the microphone is on, its button fills from the bottom with
+        // how loud it is, like in call apps.
         let level = self.level;
-        let (lit, dim) = (cx.theme().colors().text, cx.theme().colors().text_muted);
-        let bars = self.opts.mic.then(|| {
-            h_flex().h(px(14.)).items_center().gap(px(2.)).children([0.55f32, 1., 0.75, 0.45].into_iter().map(move |k| {
-                let h = 3. + 11. * (level * k).min(1.);
-                div().w(px(2.)).h(px(h)).rounded_full().bg(if level > 0.05 { lit } else { dim })
-            }))
-        });
+        let mut fill = cx.theme().colors().text_accent;
+        fill.alpha = 0.45;
+        let height = 32. * (level.clamp(0., 1.));
         let mic = h_flex()
             .child(
-                ButtonLike::new("mic")
-                    .style(if self.opts.mic { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                    .size(ButtonSize::Large)
-                    .toggle_state(self.opts.mic)
-                    .child(h_flex().px_1().gap_1p5().child(Icon::new(IconName::Mic).size(IconSize::Small)).children(bars))
-                    .tooltip(tip(t("record_bar.microphone"), if self.opts.mic { mic_desc } else { on_off(false) }, None))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.opts.mic = !this.opts.mic;
-                        cx.notify();
-                    })),
+                div()
+                    .relative()
+                    .when(self.opts.mic && height > 1., |d| {
+                        d.child(div().absolute().left_0().right_0().bottom_0().h(px(height)).rounded_b(px(9.)).when(height > 23., |d| d.rounded_t(px(9. - (32. - height)))).bg(fill))
+                    })
+                    .child(
+                        ButtonLike::new("mic")
+                            .style(if self.opts.mic { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                            .size(ButtonSize::Large)
+                            .toggle_state(self.opts.mic)
+                            .child(div().px_1().child(Icon::new(IconName::Mic).size(IconSize::Small)))
+                            .tooltip(tip(t("record_bar.microphone"), if self.opts.mic { mic_desc } else { on_off(false) }, None))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.opts.mic = !this.opts.mic;
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(
                 // Opened on mouse-down: a grabbing popup must be requested

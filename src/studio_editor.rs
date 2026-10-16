@@ -894,6 +894,7 @@ impl StudioEditor {
         let colors = cx.theme().colors();
         let status = cx.theme().status();
         let (accent, lane_bg, text, tick) = (colors.text_accent, colors.element_background, colors.text, colors.border);
+        let line = colors.border_variant;
         let (handle_color, cut_color) = (status.warning, status.error);
         let thumbs = self.thumbs.iter().map(|t| img(t.clone()).flex_1().h_full().object_fit(ObjectFit::Cover));
         let d = self.probe.duration.max(0.001);
@@ -1013,7 +1014,8 @@ impl StudioEditor {
             div().absolute().top_0().left(relative((t / d) as f32)).ml_1().child(Label::new(ruler_label(t, step)).size(LabelSize::XSmall).color(Color::Muted))
         });
 
-        div().w_full().px_4().pt_2().pb_3().child(
+        // A hairline sets the timeline apart from the preview above.
+        div().w_full().px_4().pt_2().pb_3().border_t_1().border_color(line).child(
             div()
                 .id("timeline")
                 .relative()
@@ -1059,6 +1061,8 @@ impl StudioEditor {
             // An even inset keeps corner buttons concentric with the window.
             .p_1()
             .bg(cx.theme().colors().title_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
                     .min_w_0()
@@ -1181,6 +1185,7 @@ impl StudioEditor {
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let (card_bg, track_bg, thumb_bg, ring, edge) = (colors.element_background, colors.element_hover, colors.elevated_surface_background, colors.text, colors.border_variant);
+        let (sidebar_bg, divider) = (colors.editor_background, colors.border_variant);
         let (accent, line) = (colors.text_accent, colors.border);
         // An inset group, like System Settings: a soft card, rows inside.
         let card = || v_flex().w_full().p_3().gap_3().rounded(px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
@@ -1191,8 +1196,9 @@ impl StudioEditor {
         let segment = |id: SharedString, text: String, on: bool| {
             div()
                 .id(id)
-                .flex_1()
-                .min_w_0()
+                // Wide enough for its text; spare room is shared out.
+                .flex_grow(1.)
+                .px_2()
                 .h(px(24.))
                 .flex()
                 .items_center()
@@ -1266,6 +1272,7 @@ impl StudioEditor {
             let edited = self.project.trim != (0., self.probe.duration) || !self.project.cuts.is_empty();
             card().child(
                 h_flex()
+                    .flex_wrap()
                     .gap_1()
                     .child(
                         Button::new("auto", t("studio.zooms_on_clicks"))
@@ -1392,8 +1399,8 @@ impl StudioEditor {
         let blur_names: Vec<&'static str> = MOTION_BLUR.iter().map(|a| a.0).collect();
         let look = card()
             .child(pick(&aspect_names, self.project.aspect, "aspect", |p, i| p.aspect = i, cx))
-            .child(h_flex().flex_wrap().gap(px(2.)).children(tiles))
-            .child(h_flex().flex_wrap().gap(px(2.)).children(walls))
+            .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(tiles))
+            .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(walls))
             .child(row(t("studio.row_padding"), self.slider(Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), cx).into_any_element()))
             .child(row(t("studio.row_corners"), self.slider(Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), cx).into_any_element()))
             .child(row(t("studio.row_shadow"), self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx).into_any_element()))
@@ -1528,6 +1535,9 @@ impl StudioEditor {
             .flex_none()
             .w(px(SIDEBAR))
             .h_full()
+            .bg(sidebar_bg)
+            .border_l_1()
+            .border_color(divider)
             .overflow_y_scroll()
             .gap_2()
             .p_3()

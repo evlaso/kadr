@@ -1401,6 +1401,8 @@ impl Editor {
             // An even inset keeps corner buttons concentric with the window.
             .p_1()
             .bg(cx.theme().colors().title_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
             .when(!self.windowed, |d| d.rounded_t(px(kit::WINDOW_RADIUS - 1.)))
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
@@ -1483,6 +1485,8 @@ impl Editor {
             .gap_2()
             .p_1()
             .bg(cx.theme().colors().status_bar_background)
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
             .when(!self.windowed, |d| d.rounded_b(px(kit::WINDOW_RADIUS - 1.)))
             .rounded_smoothing(crate::ui::SMOOTHING)
             .child(
@@ -1577,35 +1581,30 @@ impl Editor {
             .into_any_element()
     }
 
+    /// Saved backgrounds as chips, and one button to keep or drop the current one.
     fn render_presets(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let chip = |id: SharedString, label: &str, on: bool| {
-            ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label.to_owned()).size(LabelSize::Small)))
-        };
         let current = self.frame.to_json();
         let active = self.presets.iter().position(|(_, look)| *look == current);
-        let chips = self
-            .presets
-            .iter()
-            .enumerate()
-            .map(|(i, (name, look))| {
-                let look = look.clone();
-                chip(SharedString::from(format!("frame-preset-{i}")), name, active == Some(i)).on_click(cx.listener(move |this, _, _, cx| {
-                    this.frame = Frame::from_json(&look);
-                    cx.notify();
-                }))
-            })
-            .collect::<Vec<_>>();
-        v_flex()
+        h_flex()
             .w_full()
-            .gap_2()
-            .pb_2()
-            .child(Label::new(t("common.presets")).size(LabelSize::Small).color(Color::Muted))
-            .when(self.presets.is_empty(), |s| s.child(Label::new(t("editor.save_current_background_apply_in")).size(LabelSize::XSmall).color(Color::Muted)))
-            .child(h_flex().flex_wrap().gap_1().children(chips))
+            .flex_wrap()
+            .gap_1()
+            .children(self.presets.iter().enumerate().map(|(i, (name, look))| {
+                let look = look.clone();
+                ButtonLike::new(SharedString::from(format!("frame-preset-{i}")))
+                    .style(if active == Some(i) { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .toggle_state(active == Some(i))
+                    .child(div().px_1p5().child(Label::new(name.clone()).size(LabelSize::Small)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.frame = Frame::from_json(&look);
+                        cx.notify();
+                    }))
+            }))
             .child(match active {
                 None => Button::new("save-frame-preset", t("common.save_as_preset"))
                     .style(ButtonStyle::Subtle)
-                    .start_icon(Icon::new(IconName::Plus).size(IconSize::Small))
+                    .color(Color::Muted)
+                    .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
                     .on_click(cx.listener(|this, _, _, cx| {
                         let next = this.presets.iter().filter_map(|(name, _)| name.strip_prefix(t("common.preset_prefix"))?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
                         this.presets.push((tr!("common.preset_n", next), this.frame.to_json()));
@@ -1613,10 +1612,10 @@ impl Editor {
                         cx.notify();
                     }))
                     .into_any_element(),
-                Some(i) => Button::new("delete-frame-preset", t("common.delete_preset"))
-                    .style(ButtonStyle::Subtle)
-                    .color(Color::Muted)
-                    .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Muted))
+                Some(i) => IconButton::new("delete-frame-preset", IconName::Trash)
+                    .shape(IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text(t("common.delete_preset")))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.presets.remove(i);
                         save_frame_presets(&this.presets);
@@ -1629,75 +1628,96 @@ impl Editor {
     /// The background tool, like CleanShot's: what's behind the picture, its
     /// margins, corners, shadow and the output's shape.
     fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        let ring = cx.theme().colors().text;
-        let section = |title: &'static str| v_flex().w_full().gap_2().pb_2().child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
-        let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
-        let chip = |id: SharedString, label: &str, on: bool| {
-            ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label.to_owned()).size(LabelSize::Small)))
+        let colors = cx.theme().colors();
+        let (card_bg, track_bg, thumb_bg, ring, edge, panel_bg, divider) =
+            (colors.element_background, colors.element_hover, colors.elevated_surface_background, colors.text, colors.border_variant, colors.editor_background, colors.border_variant);
+        // The same language as the studio's sidebar: soft cards, a label and
+        // its control on one line, segmented choices.
+        let card = || v_flex().w_full().p_3().gap_3().rounded(px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
+        let row = |text: &'static str, control: AnyElement| {
+            h_flex().w_full().gap_2().child(div().w(px(70.)).flex_none().child(Label::new(text).size(LabelSize::Small).color(Color::Muted))).child(div().flex_1().min_w_0().child(control))
         };
         let swatch = |id: SharedString, selected: bool| {
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(10.))
-                .border_2()
-                .border_color(if selected { ring } else { gpui::transparent_black() })
-                .cursor_pointer()
+            div().id(id).flex().items_center().justify_center().rounded(px(9.)).border_2().border_color(if selected { ring } else { gpui::transparent_black() }).cursor_pointer()
         };
-        let tile = |i: usize, c0: Hsla, c1: Hsla, cx: &mut Context<Self>| {
-            swatch(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
-                .size(px(40.))
-                .child(div().size(px(30.)).rounded(px(7.)).border_1().border_color(cx.theme().colors().border_variant).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.frame.backdrop = Backdrop::Gradient(i);
-                    cx.notify();
-                }))
-                .into_any_element()
-        };
-        let all = self.backdrops();
-        let gradients = all.iter().enumerate().filter(|(_, (c0, c1))| c0 != c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)).collect::<Vec<_>>();
-        // Plain colours, after a "transparent" tile.
-        let mut solids = vec![swatch("transparent".into(), self.frame.backdrop == Backdrop::Transparent)
-            .size(px(40.))
-            .child(checker_tile(30., 7.))
+
+        // Transparent, then the colours and gradients.
+        let mut tiles = vec![swatch("transparent".into(), self.frame.backdrop == Backdrop::Transparent)
+            .size(px(32.))
+            .child(checker_tile(24., 6.))
             .tooltip(Tooltip::text(t("editor.transparent")))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.frame.backdrop = Backdrop::Transparent;
                 cx.notify();
             }))
             .into_any_element()];
-        solids.extend(all.iter().enumerate().filter(|(_, (c0, c1))| c0 == c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)));
-        let walls = self
+        tiles.extend(self.backdrops().into_iter().enumerate().map(|(i, (c0, c1))| {
+            swatch(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
+                .size(px(32.))
+                .child(div().size(px(24.)).rounded(px(6.)).border_1().border_color(edge).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.frame.backdrop = Backdrop::Gradient(i);
+                    cx.notify();
+                }))
+                .into_any_element()
+        }));
+        // Wallpapers, and a tile for one's own picture.
+        let mut walls: Vec<AnyElement> = self
             .walls
             .iter()
             .enumerate()
             .map(|(i, (path, thumb))| {
                 let path = path.clone();
                 swatch(SharedString::from(format!("wall-{i}")), self.frame.backdrop == Backdrop::Wallpaper(path.clone()))
-                    .w(px(64.))
-                    .h(px(44.))
-                    .child(img(thumb.clone()).w(px(56.)).h(px(36.)).rounded(px(6.)).object_fit(ObjectFit::Cover))
+                    .w(px(52.))
+                    .h(px(36.))
+                    .child(img(thumb.clone()).w(px(44.)).h(px(28.)).rounded(px(5.)).object_fit(ObjectFit::Cover))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.frame.backdrop = Backdrop::Wallpaper(path.clone());
                         cx.notify();
                     }))
+                    .into_any_element()
             })
-            .collect::<Vec<_>>();
-        let aspects = ASPECTS
+            .collect();
+        let own = matches!(&self.frame.backdrop, Backdrop::Wallpaper(p) if !self.walls.iter().any(|(w, _)| w == p));
+        walls.push(
+            swatch("own-wallpaper".into(), own)
+                .w(px(52.))
+                .h(px(36.))
+                .child(div().w(px(44.)).h(px(28.)).rounded(px(5.)).border_1().border_color(edge).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
+                .tooltip(Tooltip::text(t("common.your_own_image")))
+                .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
+                .into_any_element(),
+        );
+
+        // The output's shape, as a segmented control.
+        let aspects: Vec<AnyElement> = ASPECTS
             .iter()
             .enumerate()
             .map(|(i, (label, _))| {
-                chip(SharedString::from(format!("aspect-{i}")), t(label), self.frame.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
-                    this.frame.aspect = i;
-                    if !this.frame.on() {
-                        this.frame.backdrop = Backdrop::Gradient(0);
-                    }
-                    cx.notify();
-                }))
+                let on = self.frame.aspect == i;
+                div()
+                    .id(SharedString::from(format!("aspect-{i}")))
+                    .flex_grow(1.)
+                    .px_2()
+                    .h(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .when(on, |d| d.bg(thumb_bg).shadow(vec![BoxShadow { color: gpui::hsla(0., 0., 0., 0.18).into(), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false }]))
+                    .child(Label::new(t(label)).size(LabelSize::Small).color(if on { Color::Default } else { Color::Muted }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.frame.aspect = i;
+                        if !this.frame.on() {
+                            this.frame.backdrop = Backdrop::Gradient(0);
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element()
             })
-            .collect::<Vec<_>>();
+            .collect();
         let padding = self.slider(Knob::Padding, self.frame.padding / MAX_PAD, format!("{}%", (self.frame.padding * 100.).round()), cx);
         let radius = self.slider(Knob::Radius, self.frame.radius / MAX_ROUND, format!("{}", (self.frame.radius / MAX_ROUND * 100.).round()), cx);
         let shadow = self.slider(Knob::Shadow, self.frame.shadow, format!("{}%", (self.frame.shadow * 100.).round()), cx);
@@ -1710,7 +1730,7 @@ impl Editor {
                 None => (src.width() as f32, src.height() as f32),
             };
             let ((ow, oh), _) = self.frame.layout(w.round(), h.round());
-            tr!("editor.output_size", ow, oh)
+            format!("{ow}×{oh}")
         });
 
         v_flex()
@@ -1719,48 +1739,35 @@ impl Editor {
             .w(px(PANEL))
             .h(px(height))
             .overflow_y_scroll()
-            .gap_4()
-            .p_4()
-                        .bg(cx.theme().colors().panel_background)
+            .gap_2()
+            .p_3()
+            .bg(panel_bg)
+            .border_l_1()
+            .border_color(divider)
             .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .child(Label::new(t("common.background")))
-                    .child(Switch::new("frame-on", ToggleState::from(self.frame.on())).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                        this.frame.backdrop = if *state == ToggleState::Selected { Backdrop::Gradient(0) } else { Backdrop::None };
-                        cx.notify();
-                    }))),
+                card().child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .child(Label::new(t("common.background")).size(LabelSize::Small))
+                        .child(Switch::new("frame-on", ToggleState::from(self.frame.on())).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                            this.frame.backdrop = if *state == ToggleState::Selected { Backdrop::Gradient(0) } else { Backdrop::None };
+                            cx.notify();
+                        }))),
+                ),
             )
             .child(self.render_presets(cx))
             .child(
-                section(t("editor.backdrop"))
-                    .child(h_flex().flex_wrap().gap_1().children(gradients))
-                    .child(h_flex().flex_wrap().gap_1().children(solids))
-                    .child(h_flex().flex_wrap().gap_1().children(walls))
-                    .child(
-                        Button::new("own-wallpaper", t("common.your_own_image"))
-                            .style(ButtonStyle::Subtle)
-                            .start_icon(Icon::new(IconName::Image).size(IconSize::Small))
-                            .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx))),
-                    ),
-            )
-            .child(
-                section(t("common.appearance"))
-                    .child(caption(t("common.padding")))
-                    .child(padding)
-                    .child(caption(t("common.corner_radius")))
-                    .child(radius)
-                    .child(caption(t("common.shadow")))
-                    .child(shadow),
-            )
-            .child(
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(Label::new(t("common.format")).size(LabelSize::Small).color(Color::Muted))
-                    .child(h_flex().flex_wrap().gap_1().children(aspects))
-                    .children(size.filter(|_| self.frame.on()).map(|s| Label::new(s).size(LabelSize::XSmall).color(Color::Muted))),
+                card()
+                    .child(h_flex().w_full().p(px(2.)).gap(px(2.)).rounded(px(8.)).bg(track_bg).children(aspects))
+                    .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(tiles))
+                    .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(walls))
+                    .child(row(t("studio.row_padding"), padding))
+                    .child(row(t("studio.row_corners"), radius))
+                    .child(row(t("studio.row_shadow"), shadow))
+                    .children(size.filter(|_| self.frame.on()).map(|s| {
+                        h_flex().justify_end().child(Label::new(s).size(LabelSize::XSmall).color(Color::Muted))
+                    })),
             )
     }
 
