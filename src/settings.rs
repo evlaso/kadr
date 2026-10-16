@@ -41,6 +41,8 @@ pub struct Settings {
     /// The screenshot editor opens as an ordinary window; false puts it over
     /// everything (a layer) on Linux, the old way.
     pub editor_window: bool,
+    /// Delete kadr's captures older than this many days; 0 keeps them.
+    pub cleanup_days: u32,
     pub studio_zoom: f64,
     pub studio_backdrop: usize,
     pub studio_padding: usize,
@@ -61,6 +63,7 @@ impl Default for Settings {
             quality: 2,
             region_frame: true,
             editor_window: true,
+            cleanup_days: 0,
             studio_zoom: 1.8,
             studio_backdrop: 0,
             studio_padding: 2,
@@ -94,6 +97,7 @@ impl Settings {
             quality: (num_or("quality", d.quality as u64) as usize).min(QUALITIES.len() - 1),
             region_frame: bool_or("region_frame", d.region_frame),
             editor_window: bool_or("editor_window", d.editor_window),
+            cleanup_days: num_or("cleanup_days", d.cleanup_days as u64) as u32,
             studio_zoom: v["studio_zoom"].as_f64().unwrap_or(d.studio_zoom).clamp(1.0, 4.0),
             studio_backdrop: num_or("studio_backdrop", d.studio_backdrop as u64) as usize,
             studio_padding: num_or("studio_padding", d.studio_padding as u64) as usize,
@@ -115,6 +119,7 @@ impl Settings {
             "quality": self.quality,
             "region_frame": self.region_frame,
             "editor_window": self.editor_window,
+            "cleanup_days": self.cleanup_days,
             "studio_zoom": self.studio_zoom,
             "studio_backdrop": self.studio_backdrop,
             "studio_padding": self.studio_padding,

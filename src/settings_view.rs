@@ -12,7 +12,7 @@ use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 use crate::kit;
 use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
 use crate::studio::{PADDINGS, ZOOMS};
-use crate::{ocr, palette, tray, util, hotkeys};
+use crate::{hotkeys, ocr, palette, storage, tray, util};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -22,11 +22,12 @@ enum Tab {
     Studio,
     Text,
     Shortcuts,
+    Storage,
     About,
 }
 
 impl Tab {
-    const ALL: [Tab; 7] = [Tab::General, Tab::Screenshots, Tab::Recording, Tab::Studio, Tab::Text, Tab::Shortcuts, Tab::About];
+    const ALL: [Tab; 8] = [Tab::General, Tab::Screenshots, Tab::Recording, Tab::Studio, Tab::Text, Tab::Shortcuts, Tab::Storage, Tab::About];
 
     fn label(self) -> &'static str {
         match self {
@@ -36,6 +37,7 @@ impl Tab {
             Tab::Studio => "Студия",
             Tab::Text => "Текст",
             Tab::Shortcuts => "Клавиши",
+            Tab::Storage => "Хранилище",
             Tab::About => "О kadr",
         }
     }
@@ -48,6 +50,7 @@ impl Tab {
             Tab::Studio => Icon::new(IconName::Sparkle),
             Tab::Text => Icon::new(IconName::CaseSensitive),
             Tab::Shortcuts => Icon::new(IconName::Keyboard),
+            Tab::Storage => Icon::new(IconName::Folder),
             Tab::About => Icon::from_path("icons/kadr/camera.svg"),
         }
     }
@@ -63,6 +66,8 @@ pub struct SettingsView {
     keys: Vec<Vec<String>>,
     /// The action a new shortcut is being recorded for; binds are paused.
     recording: Option<usize>,
+    /// Space kadr's captures take, measured when the window opens.
+    usage: storage::Usage,
     focus: FocusHandle,
 }
 
@@ -77,7 +82,7 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, focus }
+            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, usage: storage::usage(&Settings::load()), focus }
         })
     });
 }
@@ -256,6 +261,26 @@ impl SettingsView {
             }
             Tab::Shortcuts if cfg!(target_os = "linux") => hotkeys::ACTIONS.iter().enumerate().map(|(i, action)| row(action.title, "", self.render_keys(i, cx))).collect(),
             Tab::Shortcuts => vec![row("Сочетания клавиш", "Пока настраиваются только в Hyprland", div().into_any_element())],
+            Tab::Storage => vec![
+                self.render_usage(cx),
+                row("Удалять старые снимки и записи",
+                    "Насовсем, раз в день. Только файлы kadr, остальное в папках не трогается",
+                    chips(cx, "cleanup", storage::CLEANUP_DAYS.iter().map(|&d| if d == 0 { "Никогда".into() } else { format!("{d} дн.") }).collect(), storage::CLEANUP_DAYS.iter().position(|&d| d == s.cleanup_days), |s, i| s.cleanup_days = storage::CLEANUP_DAYS[i]),
+                ),
+                row("Очистить сейчас",
+                    if s.cleanup_days == 0 { "Выбери срок выше" } else { "Удалить то, что старше выбранного срока" },
+                    Button::new("clean-now", "Очистить")
+                        .style(ButtonStyle::Subtle)
+                        .disabled(s.cleanup_days == 0)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let freed = storage::clean(&this.settings, this.settings.cleanup_days);
+                            this.usage = storage::usage(&this.settings);
+                            util::notify("Хранилище очищено", &format!("Освобождено {} ({} файлов)", crate::studio::human_size(freed.bytes as f64), freed.files));
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ),
+            ],
             Tab::About => vec![
                 row("kadr", "Скриншоты и запись экрана", Label::new(format!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
                 row("Интерфейс", "GPUI CE и свои компоненты, цвета из темы Omarchy", Label::new("GPUI CE").color(Color::Muted).into_any_element()),
@@ -351,6 +376,46 @@ fn folder(cx: &mut Context<SettingsView>, dir: PathBuf, custom: bool, screenshot
 }
 
 impl SettingsView {
+    /// Total size and a bar split into screenshots, recordings and cache.
+    fn render_usage(&self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        let u = self.usage;
+        let total = u.total().max(1) as f32;
+        let parts = [
+            ("Скриншоты", u.screenshots, colors.text_accent),
+            ("Записи", u.recordings, cx.theme().status().warning),
+            ("Кэш студии", u.cache, colors.text_muted),
+        ];
+        let size = |b: u64| crate::studio::human_size(b as f64);
+        let bar = h_flex()
+            .w_full()
+            .h(px(8.))
+            .rounded_full()
+            .overflow_hidden()
+            .bg(colors.element_background)
+            .children(parts.iter().filter(|p| p.1.bytes > 0).map(|&(_, part, color)| div().h_full().w(gpui::relative(part.bytes as f32 / total)).bg(color)));
+        let legend = h_flex().gap_4().children(parts.iter().map(|&(name, part, color)| {
+            h_flex()
+                .gap_1p5()
+                .child(div().size(px(8.)).rounded_full().bg(color))
+                .child(Label::new(format!("{name} {}", size(part.bytes))).size(LabelSize::Small))
+                .child(Label::new(format!("· {}", part.files)).size(LabelSize::Small).color(Color::Muted))
+        }));
+        v_flex()
+            .w_full()
+            .gap_2()
+            .py_3()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Label::new("Занято"))
+                    .child(div().text_size(crate::ui::rems_from_px(18.)).font_weight(gpui::FontWeight::SEMIBOLD).child(size(u.total()))),
+            )
+            .child(bar)
+            .child(legend)
+            .into_any_element()
+    }
+
     /// An action's shortcuts: click one to remove it, "+" records another.
     fn render_keys(&self, i: usize, cx: &mut Context<Self>) -> AnyElement {
         let chips = self.keys[i].iter().enumerate().map(|(k, spec)| {

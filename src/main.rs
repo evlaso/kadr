@@ -11,6 +11,7 @@ mod pin;
 mod record;
 mod scroll;
 mod settings;
+mod storage;
 mod settings_view;
 mod studio;
 mod studio_editor;
@@ -249,6 +250,7 @@ fn main() {
     application().with_assets(kit::Assets).with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
         kit::init(cx);
         record::init(cx);
+        storage::auto();
         command.run(cx);
 
         cx.spawn(async move |cx| {
