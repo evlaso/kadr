@@ -61,6 +61,7 @@ mod sni {
             vec![
                 item("Снимок области", &["shot", "region"]),
                 item("Снимок экрана", &["shot", "fullscreen"]),
+                item("Снимок с прокруткой", &["shot", "scroll"]),
                 item("Запись экрана", &["record"]),
                 item("Распознать текст", &["text"]),
                 MenuItem::Separator,

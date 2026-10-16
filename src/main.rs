@@ -7,6 +7,7 @@ mod platform;
 mod panel;
 mod pin;
 mod record;
+mod scroll;
 mod settings;
 mod settings_view;
 mod studio;
@@ -33,6 +34,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
 
 Использование:
   kadr shot [smart|region|windows|fullscreen]   снять скриншот (по умолчанию smart)
+  kadr shot scroll [\"X,Y WxH\"]                  скриншот с прокруткой (повторный вызов — готово)
   kadr open <файл>                               показать карточку для готовой картинки
   kadr pin <файл>                                закрепить картинку поверх окон
 
@@ -55,6 +57,8 @@ const MODES: [&str; 4] = ["smart", "region", "windows", "fullscreen"];
 
 enum Command {
     Shot(String),
+    /// Scrolling screenshot, optionally of a given "X,Y WxH" area.
+    Scroll(Option<String>),
     Open(PathBuf),
     Pin(PathBuf),
     Record(Option<String>, Option<record::Opts>),
@@ -77,6 +81,7 @@ impl Command {
         };
         match args.first().map(String::as_str) {
             None => Ok(Command::Shot("smart".into())),
+            Some("shot") if args.get(1).map(String::as_str) == Some("scroll") => Ok(Command::Scroll(args.get(2).cloned())),
             Some("shot") => {
                 let mode = args.get(1).map(String::as_str).unwrap_or("smart");
                 if MODES.contains(&mode) {
@@ -139,6 +144,7 @@ impl Command {
 
     fn run(self, cx: &mut App) {
         match self {
+            Command::Scroll(area) => scroll::start(area, cx),
             Command::Shot(mode) => capture::shot(mode, cx),
             Command::Open(path) => cards::show(path, cx),
             Command::Pin(path) => pin::open(path, cx),

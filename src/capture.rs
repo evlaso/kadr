@@ -20,21 +20,23 @@ pub fn shot(mode: String, cx: &mut App) {
         let result = take(&mode, &settings).await;
         let _ = cx.update(|cx| {
             cards::set_hidden(false, cx);
-            match result {
-                Some(path) => {
-                    if settings.copy_screenshot {
-                        util::copy_image(&path);
-                    }
-                    if settings.show_card {
-                        cards::show(path, cx);
-                    }
-                }
-                // A cancelled pick prints nothing.
-                None => {}
+            // A cancelled pick gives nothing.
+            if let Some(path) = result {
+                deliver(path, &settings, cx);
             }
         });
     })
     .detach();
+}
+
+/// What happens to a fresh screenshot: copied and shown in a card, as set.
+pub fn deliver(path: PathBuf, settings: &Settings, cx: &mut App) {
+    if settings.copy_screenshot {
+        util::copy_image(&path);
+    }
+    if settings.show_card {
+        cards::show(path, cx);
+    }
 }
 
 async fn take(mode: &str, settings: &Settings) -> Option<PathBuf> {
