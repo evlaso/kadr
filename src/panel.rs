@@ -27,7 +27,19 @@ pub struct Panel {
     mon: Mon,
     /// The area in this monitor's coordinates.
     rect: (f32, f32, f32, f32),
+    /// The microphone's level 0..1 while it's on, and the `parec` reading it
+    /// (with the device it reads).
+    level: f32,
+    meter: Option<(String, u32)>,
     focus: FocusHandle,
+}
+
+impl Drop for Panel {
+    fn drop(&mut self) {
+        if let Some((_, pid)) = self.meter.take() {
+            util::signal(pid, util::Signal::Terminate);
+        }
+    }
 }
 
 /// Show the bar for an area that's already been picked.
@@ -86,7 +98,60 @@ impl Panel {
             .unwrap_or_else(|| "системный".into());
         let mut mics = vec![(String::new(), format!("По умолчанию — {default_desc}"))];
         mics.extend(found);
-        Panel { opts, mics, target, mon, rect, focus }
+        Panel { opts, mics, target, mon, rect, level: 0., meter: None, focus }
+    }
+
+    /// Keep a level meter on the chosen microphone while it's on.
+    fn sync_meter(&mut self, cx: &mut Context<Self>) {
+        let want = self.opts.mic.then(|| self.opts.mic_device.clone());
+        if self.meter.as_ref().map(|(d, _)| d) == want.as_ref() {
+            return;
+        }
+        if let Some((_, pid)) = self.meter.take() {
+            util::signal(pid, util::Signal::Terminate);
+        }
+        self.level = 0.;
+        let Some(device) = want else { return };
+        let source = if device.is_empty() { "@DEFAULT_SOURCE@".to_owned() } else { device.clone() };
+        let Ok(mut child) = std::process::Command::new("parec")
+            .args([format!("--device={source}"), "--format=s16le".into(), "--rate=16000".into(), "--channels=1".into(), "--latency-msec=40".into()])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            return;
+        };
+        self.meter = Some((device, child.id()));
+        let (mut tx, mut rx) = futures::channel::mpsc::channel::<f32>(4);
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let Some(mut out) = child.stdout.take() else { return };
+            // 50 ms of samples per reading.
+            let mut buf = [0u8; 1600];
+            while out.read_exact(&mut buf).is_ok() {
+                let sum: f64 = buf.chunks_exact(2).map(|b| (i16::from_le_bytes([b[0], b[1]]) as f64 / 32768.).powi(2)).sum();
+                let rms = (sum / 800.).sqrt().max(1e-6);
+                let level = ((20. * rms.log10() + 55.) / 50.).clamp(0., 1.) as f32;
+                if futures::executor::block_on(futures::SinkExt::send(&mut tx, level)).is_err() {
+                    break;
+                }
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        });
+        cx.spawn(async move |this, cx| {
+            while let Some(level) = futures::StreamExt::next(&mut rx).await {
+                let alive = this.update(cx, |panel, cx| {
+                    // Up at once, down slowly, like a VU meter.
+                    panel.level = level.max(panel.level * 0.75);
+                    cx.notify();
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn choose(&mut self, choice: PanelChoice, window: &mut Window, cx: &mut Context<Self>) {
@@ -163,9 +228,23 @@ impl Render for Panel {
         let (mw, mh) = (self.mon.w as f32, self.mon.h as f32);
         let on_off = |on: bool| Some(SharedString::from(if on { "Включено" } else { "Выключено" }));
 
+        self.sync_meter(cx);
+        // The mic button shows how loud the microphone is while it's on.
+        let level = self.level;
+        let (lit, dim) = (cx.theme().colors().text, cx.theme().colors().text_muted);
+        let bars = self.opts.mic.then(|| {
+            h_flex().h(px(14.)).items_center().gap(px(2.)).children([0.55f32, 1., 0.75, 0.45].into_iter().map(move |k| {
+                let h = 3. + 11. * (level * k).min(1.);
+                div().w(px(2.)).h(px(h)).rounded_full().bg(if level > 0.05 { lit } else { dim })
+            }))
+        });
         let mic = h_flex()
             .child(
-                toggle("mic", Icon::new(IconName::Mic), self.opts.mic)
+                ButtonLike::new("mic")
+                    .style(if self.opts.mic { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(self.opts.mic)
+                    .child(h_flex().px_1().gap_1p5().child(Icon::new(IconName::Mic).size(IconSize::Small)).children(bars))
                     .tooltip(tip("Микрофон", if self.opts.mic { mic_desc } else { on_off(false) }, None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.mic = !this.opts.mic;
