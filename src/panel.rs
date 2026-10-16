@@ -4,11 +4,11 @@
 //! monitor is dimmed so the area stays obvious.
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, WeakEntity, Window,
+    AnyView, App, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, WeakEntity, Window,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
     layer_shell::*, point, popup::*, px, rgba, size,
 };
-use ui::{Divider, Tooltip, prelude::*};
+use ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::record::{self, Opts, PanelChoice, Target};
@@ -16,7 +16,7 @@ use crate::util::{self, Mon};
 
 /// Height of the bar, for placing it around the area.
 const BAR_HEIGHT: f32 = 56. * kit::SCALE;
-const BAR_ROOM: f32 = 1300. * kit::SCALE;
+const BAR_ROOM: f32 = 760. * kit::SCALE;
 
 pub struct Panel {
     opts: Opts,
@@ -124,23 +124,39 @@ impl Panel {
 
 impl Render for Panel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let toggle = |id: &'static str, icon: Icon, label: &'static str, on: bool| {
-            Button::new(id, label)
-                .style(ButtonStyle::Subtle)
-                .size(ButtonSize::Large)
-                .start_icon(icon.size(IconSize::Small).color(if on { Color::Default } else { Color::Muted }))
-                .color(if on { Color::Default } else { Color::Muted })
-                .toggle_state(on)
+        // CleanShot-style: icons only, names and shortcuts in tooltips.
+        let tip = |title: &'static str, meta: Option<SharedString>, keys: Option<&'static str>| {
+            move |_: &mut Window, cx: &mut App| -> AnyView {
+                cx.new(|_| {
+                    let tip = Tooltip::new(title).key_binding(keys.map(kit::keys));
+                    match meta.clone() {
+                        Some(meta) => tip.meta(meta),
+                        None => tip,
+                    }
+                })
+                .into()
+            }
         };
-        let mic_desc = self.mics.iter().find(|(n, _)| *n == self.opts.mic_device).map(|(_, d)| d.clone()).unwrap_or_default();
+        let toggle = |id: &'static str, icon: Icon, on: bool| {
+            ButtonLike::new(id)
+                .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                .size(ButtonSize::Large)
+                .toggle_state(on)
+                .child(div().px_1().child(icon.size(IconSize::Small).color(if on { Color::Default } else { Color::Muted })))
+        };
+        let action = |id: &'static str, icon: Icon| {
+            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(icon.size(IconSize::Small).color(Color::Muted)))
+        };
+        let mic_desc = self.mics.iter().find(|(n, _)| *n == self.opts.mic_device).map(|(_, d)| SharedString::from(d.clone()));
         let is_region = matches!(self.target, Target::Region { .. });
         let (x, y, w, h) = self.rect;
         let (mw, mh) = (self.mon.w as f32, self.mon.h as f32);
+        let on_off = |on: bool| Some(SharedString::from(if on { "Включено" } else { "Выключено" }));
 
         let mic = h_flex()
             .child(
-                toggle("mic", Icon::new(IconName::Mic), "Микрофон", self.opts.mic)
-                    .tooltip(Tooltip::text(mic_desc))
+                toggle("mic", Icon::new(IconName::Mic), self.opts.mic)
+                    .tooltip(tip("Микрофон", if self.opts.mic { mic_desc } else { on_off(false) }, None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.mic = !this.opts.mic;
                         cx.notify();
@@ -156,16 +172,22 @@ impl Render for Panel {
                     }))
                     .child(
                         IconButton::new("mic-menu", IconName::ChevronDown)
-                            .size(ButtonSize::Large)
-                            .icon_size(IconSize::Small)
+                            .size(ButtonSize::Compact)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Выбрать микрофон")),
                     ),
             );
 
         let bar = h_flex()
-            .gap_1()
+            .gap_0p5()
             .p_1()
             .elevation_3(cx)
+            .child(
+                action("cancel", Icon::new(IconName::Close))
+                    .tooltip(tip("Отмена", None, Some("escape")))
+                    .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Cancel, window, cx))),
+            )
             .child(
                 div()
                     .px_2()
@@ -176,23 +198,39 @@ impl Render for Panel {
             )
             .child(Divider::vertical().h_5().mx_1())
             .child(mic)
-            .child(toggle("audio", Icon::new(IconName::AudioOn), "Звук", self.opts.audio).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("audio", Icon::new(IconName::AudioOn), self.opts.audio).tooltip(tip("Звук системы", on_off(self.opts.audio), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.audio = !this.opts.audio;
                 cx.notify();
             })))
-            .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), "Камера", self.opts.webcam).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), self.opts.webcam).tooltip(tip("Камера", on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.webcam = !this.opts.webcam;
                 cx.notify();
             })))
             .child(
-                toggle("keys", Icon::new(IconName::Keyboard), "Клавиши", self.opts.keys)
-                    .tooltip(Tooltip::text("Показать сочетания клавиш в студии. Обычный набор текста не записывается"))
+                toggle("keys", Icon::new(IconName::Keyboard), self.opts.keys)
+                    .tooltip(tip("Сочетания клавиш", Some("Покажутся в студии. Обычный набор текста не записывается".into()), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.keys = !this.opts.keys;
                         cx.notify();
                     })),
             )
             .child(Divider::vertical().h_5().mx_1())
+            .child(
+                action("repick", Icon::new(IconName::Crosshair))
+                    .tooltip(tip("Другая область", None, Some("r")))
+                    .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Repick, window, cx))),
+            )
+            .when(is_region, |bar| {
+                bar.child(
+                    action("fullscreen", Icon::new(IconName::Screen))
+                        .tooltip(tip("Весь экран", None, Some("f")))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let choice = this.fullscreen();
+                            this.choose(choice, window, cx)
+                        })),
+                )
+            })
+            .child(div().w_1())
             .child(
                 Button::new("record", "Записать")
                     .style(ButtonStyle::Filled)
@@ -203,35 +241,6 @@ impl Render for Panel {
                         let target = this.target.clone();
                         this.choose(PanelChoice::Record(target), window, cx)
                     })),
-            )
-            .child(
-                Button::new("repick", "Другая область")
-                    .style(ButtonStyle::Subtle)
-                    .size(ButtonSize::Large)
-                    .start_icon(Icon::new(IconName::Crosshair).size(IconSize::Small))
-                    .key_binding(kit::keys("r"))
-                    .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Repick, window, cx))),
-            )
-            .when(is_region, |bar| {
-                bar.child(
-                    Button::new("fullscreen", "Весь экран")
-                        .style(ButtonStyle::Subtle)
-                        .size(ButtonSize::Large)
-                        .start_icon(Icon::new(IconName::Screen).size(IconSize::Small))
-                        .key_binding(kit::keys("f"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            let choice = this.fullscreen();
-                            this.choose(choice, window, cx)
-                        })),
-                )
-            })
-            .child(
-                Button::new("cancel", "Отмена")
-                    .style(ButtonStyle::Subtle)
-                    .size(ButtonSize::Large)
-                    .color(Color::Muted)
-                    .key_binding(kit::keys("escape"))
-                    .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Cancel, window, cx))),
             );
 
         // Under the area; above it, or inside its bottom edge, when there's no room.
