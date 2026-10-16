@@ -26,6 +26,11 @@ pub fn copy_image(path: &Path) {
     spawn(&["osascript", "-e", &script]);
 }
 
+pub fn copy_text(text: &str) {
+    let script = format!("set the clipboard to \"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
+    spawn(&["osascript", "-e", &script]);
+}
+
 pub fn copy_file(path: &Path) {
     let script = format!("set the clipboard to (POSIX file \"{}\")", path.display());
     spawn(&["osascript", "-e", &script]);

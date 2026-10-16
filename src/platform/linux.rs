@@ -29,6 +29,10 @@ pub fn copy_image(path: &Path) {
     spawn(&[OsStr::new("sh"), "-c".as_ref(), script.as_ref(), "sh".as_ref(), path.as_os_str()]);
 }
 
+pub fn copy_text(text: &str) {
+    spawn(&["wl-copy", "--", text]);
+}
+
 /// Put a file (not its contents) on the clipboard, for pasting into chats and file managers.
 pub fn copy_file(path: &Path) {
     spawn(&["wl-copy", "--type", "text/uri-list", &format!("{}\r\n", file_uri(path))]);

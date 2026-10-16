@@ -141,7 +141,7 @@ pub fn start(area: Option<String>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let area = match area {
             Some(area) => area,
-            None => match crate::picker::pick(true, cx).await {
+            None => match crate::picker::pick(true, true, cx).await {
                 Some(picked) => picked.geometry(),
                 None => return,
             },

@@ -44,8 +44,8 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     let picked = match mode {
         "fullscreen" => picker::whole_monitor().await?,
         // Free selection; the others also snap to windows.
-        "region" => picker::pick(false, cx).await?,
-        _ => picker::pick(true, cx).await?,
+        "region" => picker::pick(false, true, cx).await?,
+        _ => picker::pick(true, true, cx).await?,
     };
     let dir = settings.screenshot_dir();
     let _ = std::fs::create_dir_all(&dir);

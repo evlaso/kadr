@@ -721,7 +721,7 @@ impl Render for RecBar {
 
 /// Omarchy's picker, so selection works like for screenshots.
 async fn pick_target(cx: &mut AsyncApp) -> Option<Target> {
-    let picked = crate::picker::pick(true, cx).await?;
+    let picked = crate::picker::pick(true, false, cx).await?;
     if picked.whole {
         return Some(Target::Monitor(picked.mon.name));
     }

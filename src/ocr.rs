@@ -43,7 +43,7 @@ pub fn image(path: PathBuf, cx: &mut App) {
 
 /// kadr's picker over the frozen screen; the picked part as a PNG.
 async fn grab_region(cx: &mut AsyncApp) -> Option<PathBuf> {
-    let picked = crate::picker::pick(false, cx).await?;
+    let picked = crate::picker::pick(false, true, cx).await?;
     let png = util::runtime_dir().join(format!("kadr-ocr-{}.png", std::process::id()));
     picked.crop().save(&png).ok()?;
     Some(png)
@@ -124,13 +124,9 @@ async fn recognize(png: &Path, layout: Layout) -> Option<String> {
 
 fn done(text: Option<String>, cx: &mut App) {
     if let Some(text) = &text {
-        copy_text(text);
+        crate::platform::copy_text(text);
     }
     show_toast(text, cx);
-}
-
-fn copy_text(text: &str) {
-    util::spawn(&["wl-copy", "--", text]);
 }
 
 struct Toast {
@@ -216,7 +212,7 @@ impl Render for Toast {
                                 .style(ButtonStyle::Subtle)
                                 .start_icon(Icon::new(IconName::Copy).size(IconSize::Small))
                                 .on_click(move |_, window, _| {
-                                    copy_text(&text);
+                                    crate::platform::copy_text(&text);
                                     window.remove_window();
                                 }),
                         ),

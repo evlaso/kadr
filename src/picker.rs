@@ -47,8 +47,9 @@ impl Picked {
 
 /// Freeze the monitor under the pointer and let the user pick an area on it.
 /// With `snap`, hovering highlights windows and a plain click takes one.
-/// None when cancelled.
-pub async fn pick(snap: bool, cx: &mut AsyncApp) -> Option<Picked> {
+/// A click on nothing takes the whole monitor, or with `color` copies the
+/// colour under the pointer instead. None when cancelled.
+pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> {
     let mon = util::focused_monitor()?;
     let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
     let windows = if snap { windows_on(&mon) } else { Vec::new() };
@@ -70,7 +71,7 @@ pub async fn pick(snap: bool, cx: &mut AsyncApp) -> Option<Picked> {
                 let focus = cx.focus_handle();
                 window.focus(&focus, cx);
                 let picture = Arc::new(RenderImage::new([image::Frame::new(bgra(&shown))]));
-                Picker { picture, frozen: shown, scale, windows, snap, cursor: None, start: None, selection: None, moving: false, last: None, done: Some(tx), focus }
+                Picker { picture, frozen: shown, scale, windows, snap, color, cursor: None, start: None, selection: None, moving: false, last: None, done: Some(tx), focus }
             })
         })
     });
@@ -120,6 +121,8 @@ struct Picker {
     scale: f32,
     windows: Vec<Rect>,
     snap: bool,
+    /// A click on nothing copies the colour under it.
+    color: bool,
     cursor: Option<(f32, f32)>,
     /// Where the drag began.
     start: Option<(f32, f32)>,
@@ -181,11 +184,21 @@ impl Picker {
         self.start = None;
         let picked = match self.selection {
             Some(sel) if sel.2 >= 4. && sel.3 >= 4. => Some(sel),
-            // A click: the window under it, or the whole monitor.
-            _ => {
-                let screen = window.viewport_size();
-                Some(self.hovered_window().filter(|_| self.snap).unwrap_or((0., 0., f32::from(screen.width), f32::from(screen.height))))
-            }
+            // A click: the window under it, else the colour or the whole monitor.
+            _ => match self.hovered_window().filter(|_| self.snap) {
+                Some(win) => Some(win),
+                None if self.color => {
+                    if let Some(hex) = self.color_at(local(e.position)) {
+                        crate::platform::copy_text(&hex);
+                        crate::platform::notify("Цвет скопирован", &hex);
+                    }
+                    None
+                }
+                None => {
+                    let screen = window.viewport_size();
+                    Some((0., 0., f32::from(screen.width), f32::from(screen.height)))
+                }
+            },
         };
         self.finish(picked, window);
         cx.notify();

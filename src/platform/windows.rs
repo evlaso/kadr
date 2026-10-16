@@ -26,6 +26,10 @@ pub fn copy_image(path: &Path) {
     ));
 }
 
+pub fn copy_text(text: &str) {
+    powershell(&format!("Set-Clipboard -Value '{}'", text.replace('\'', "''")));
+}
+
 pub fn copy_file(path: &Path) {
     powershell(&format!("Set-Clipboard -Path '{}'", path.display()));
 }
