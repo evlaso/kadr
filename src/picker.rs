@@ -78,7 +78,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                 let focus = cx.focus_handle();
                 window.focus(&focus, cx);
                 let picture = Arc::new(RenderImage::new([image::Frame::new(bgra(&shown))]));
-                Picker { picture, frozen: shown, scale, windows, snap, color, cursor: None, start: None, selection: None, moving: false, last: None, done: Some(tx), focus }
+                Picker { picture, lens: None, frozen: shown, scale, windows, snap, color, cursor: None, start: None, selection: None, moving: false, last: None, done: Some(tx), focus }
             })
         })
     });
@@ -135,6 +135,9 @@ fn windows_on(mon: &Mon) -> Vec<Rect> {
 
 struct Picker {
     picture: Arc<RenderImage>,
+    /// The magnifier's picture: whole screen pixels as squares with a grid,
+    /// for the pointer position it was made at.
+    lens: Option<((f32, f32), Arc<RenderImage>)>,
     frozen: Arc<image::RgbaImage>,
     scale: f32,
     windows: Vec<Rect>,
@@ -223,6 +226,30 @@ impl Picker {
     }
 
     /// The picked colour under the pointer, as "#rrggbb".
+    /// The magnifier around (x, y): each screen pixel a sharp CELL square,
+    /// a light blue grid along their edges. Made by hand, since a scaled
+    /// image would come out smoothed.
+    fn lens_at(&self, (x, y): (f32, f32)) -> Arc<RenderImage> {
+        let side = (LOUPE * self.scale).round() as u32;
+        let cell = CELL * self.scale;
+        let (cx, cy) = (x * self.scale, y * self.scale);
+        let (fw, fh) = self.frozen.dimensions();
+        let grid = [0x9C, 0xD0, 0xFF];
+        let image = image::RgbaImage::from_fn(side, side, |u, v| {
+            let sx = cx + (u as f32 + 0.5 - side as f32 / 2.) / cell;
+            let sy = cy + (v as f32 + 0.5 - side as f32 / 2.) / cell;
+            let mut p = if sx < 0. || sy < 0. || sx >= fw as f32 || sy >= fh as f32 { [0, 0, 0, 255] } else { self.frozen.get_pixel(sx as u32, sy as u32).0 };
+            if sx.rem_euclid(1.) * cell < 1. || sy.rem_euclid(1.) * cell < 1. {
+                for i in 0..3 {
+                    p[i] = (p[i] as f32 * 0.65 + grid[i] as f32 * 0.35) as u8;
+                }
+            }
+            // BGRA for GPUI.
+            image::Rgba([p[2], p[1], p[0], 255])
+        });
+        Arc::new(RenderImage::new([image::Frame::new(image)]))
+    }
+
     fn color_at(&self, (x, y): (f32, f32)) -> Option<String> {
         let (px_x, px_y) = ((x * self.scale) as u32, (y * self.scale) as u32);
         let p = self.frozen.get_pixel_checked(px_x, px_y)?.0;
@@ -230,9 +257,9 @@ impl Picker {
     }
 }
 
-/// Size of the magnifier and how much it enlarges.
+/// Size of the magnifier, and how big one screen pixel is in it.
 const LOUPE: f32 = 132.;
-const ZOOM: f32 = 5.;
+const CELL: f32 = 11.;
 
 impl Render for Picker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -290,17 +317,31 @@ impl Render for Picker {
         });
 
         // The magnifier follows the pointer, flipping away from the edges.
+        if let Some(at) = cursor
+            && self.lens.as_ref().is_none_or(|l| l.0 != at)
+        {
+            let lens = self.lens_at(at);
+            if let Some((_, old)) = self.lens.replace((at, lens)) {
+                let _ = window.drop_image(old);
+            }
+        }
         let loupe = cursor.map(|(x, y)| {
             let (lx, ly) = (if x + 24. + LOUPE < sw { x + 24. } else { x - 24. - LOUPE }, if y + 24. + LOUPE + 40. < sh { y + 24. } else { y - 24. - LOUPE - 40. });
-            let picture = self.picture.clone();
+            let picture = self.lens.as_ref().map(|l| l.1.clone());
+            let scale = self.scale;
             let lens = canvas(
                 |_, _, _| {},
                 move |bounds, _, window, _| {
                     let c = bounds.center();
-                    // The whole frozen screen, enlarged so the pointer sits in the middle.
-                    let image = Bounds::new(point(c.x - px(x * ZOOM), c.y - px(y * ZOOM)), size(px(sw * ZOOM), px(sh * ZOOM)));
-                    let _ = window.paint_image(bounds, image, px(12.).into(), 0., picture.clone(), 0, false);
-                    let pixel = Bounds::new(point(c.x - px(ZOOM / 2.), c.y - px(ZOOM / 2.)), size(px(ZOOM), px(ZOOM)));
+                    if let Some(picture) = picture.clone() {
+                        let _ = window.paint_image(bounds, bounds, px(12.).into(), 0., picture, 0, false);
+                    }
+                    // Where the screen's pixel grid falls in the lens.
+                    let zoom = CELL * scale;
+                    let (ox, oy) = (f32::from(c.x) - x * zoom, f32::from(c.y) - y * zoom);
+                    // The pixel under the pointer, outlined.
+                    let (ix, iy) = ((x * scale).floor(), (y * scale).floor());
+                    let pixel = Bounds::new(point(px(ox + ix * CELL), px(oy + iy * CELL)), size(px(CELL + 1.), px(CELL + 1.)));
                     window.paint_quad(quad(pixel, px(1.), gpui::transparent_black(), px(1.5), gpui::white(), gpui::BorderStyle::Solid));
                 },
             )
