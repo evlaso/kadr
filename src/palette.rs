@@ -93,7 +93,10 @@ pub fn annotation_colors() -> Vec<Hsla> {
 }
 
 /// Gradient backdrops shared by the screenshot editor and the studio.
+/// Gradients first, then plain colours (a gradient from a colour to itself).
 pub fn backdrops() -> Vec<(Hsla, Hsla)> {
     let c = annotation_colors();
-    vec![(c[4], c[5]), (c[1], c[0]), (c[3], c[4]), (gpui::hsla(0., 0., 0.22, 1.), gpui::hsla(0., 0., 0.08, 1.))]
+    let mut all = vec![(c[4], c[5]), (c[1], c[0]), (c[3], c[4]), (gpui::hsla(0., 0., 0.22, 1.), gpui::hsla(0., 0., 0.08, 1.))];
+    all.extend([0xFFFFFF, 0x000000, 0xE5E5EA, 0x8E8E93, 0x007AFF, 0x34C759, 0xFFCC00, 0xFF3B30, 0xAF52DE].map(|hex| (from_hex(hex), from_hex(hex))));
+    all
 }

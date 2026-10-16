@@ -65,6 +65,8 @@ enum Backdrop {
     /// Index into `palette::backdrops()`.
     Gradient(usize),
     Wallpaper(PathBuf),
+    /// Nothing behind the picture: a PNG with transparency around it.
+    Transparent,
 }
 
 /// The background the picture is put on, like CleanShot's background tool.
@@ -91,6 +93,7 @@ impl Frame {
     fn to_json(&self) -> serde_json::Value {
         let backdrop = match &self.backdrop {
             Backdrop::None => serde_json::json!("none"),
+            Backdrop::Transparent => serde_json::json!("transparent"),
             Backdrop::Gradient(i) => serde_json::json!({ "gradient": i }),
             Backdrop::Wallpaper(path) => serde_json::json!({ "wallpaper": path.display().to_string() }),
         };
@@ -104,6 +107,8 @@ impl Frame {
             Backdrop::Gradient(i as usize)
         } else if let Some(path) = b["wallpaper"].as_str().map(PathBuf::from).filter(|p| p.exists()) {
             Backdrop::Wallpaper(path)
+        } else if b.as_str() == Some("transparent") {
+            Backdrop::Transparent
         } else {
             Backdrop::None
         };
@@ -1641,20 +1646,29 @@ impl Editor {
                 .border_color(if selected { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
         };
-        let gradients = self
-            .backdrops()
-            .into_iter()
-            .enumerate()
-            .map(|(i, (c0, c1))| {
-                swatch(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
-                    .size(px(40.))
-                    .child(div().size(px(30.)).rounded(px(7.)).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.frame.backdrop = Backdrop::Gradient(i);
-                        cx.notify();
-                    }))
-            })
-            .collect::<Vec<_>>();
+        let tile = |i: usize, c0: Hsla, c1: Hsla, cx: &mut Context<Self>| {
+            swatch(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
+                .size(px(40.))
+                .child(div().size(px(30.)).rounded(px(7.)).border_1().border_color(cx.theme().colors().border_variant).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.frame.backdrop = Backdrop::Gradient(i);
+                    cx.notify();
+                }))
+                .into_any_element()
+        };
+        let all = self.backdrops();
+        let gradients = all.iter().enumerate().filter(|(_, (c0, c1))| c0 != c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)).collect::<Vec<_>>();
+        // Plain colours, after a "transparent" tile.
+        let mut solids = vec![swatch("transparent".into(), self.frame.backdrop == Backdrop::Transparent)
+            .size(px(40.))
+            .child(checker_tile(30., 7.))
+            .tooltip(Tooltip::text(t("Прозрачный")))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.frame.backdrop = Backdrop::Transparent;
+                cx.notify();
+            }))
+            .into_any_element()];
+        solids.extend(all.iter().enumerate().filter(|(_, (c0, c1))| c0 == c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)));
         let walls = self
             .walls
             .iter()
@@ -1722,6 +1736,7 @@ impl Editor {
             .child(
                 section(t("Подложка"))
                     .child(h_flex().flex_wrap().gap_1().children(gradients))
+                    .child(h_flex().flex_wrap().gap_1().children(solids))
                     .child(h_flex().flex_wrap().gap_1().children(walls))
                     .child(
                         Button::new("own-wallpaper", t("Своя картинка…"))
@@ -1941,6 +1956,7 @@ impl Editor {
         let ((ow, oh), _) = self.frame.layout(self.disp.0, self.disp.1);
         let backdrop = match &self.frame.backdrop {
             Backdrop::None => None,
+            Backdrop::Transparent => Some(checkerboard(10.).absolute().inset_0().size_full().into_any_element()),
             Backdrop::Gradient(i) => {
                 let (c0, c1) = self.backdrops()[(*i).min(self.backdrops().len() - 1)];
                 Some(div().absolute().inset_0().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))).into_any_element())
@@ -2214,7 +2230,8 @@ fn framed(img: &RgbaImage, frame: &Frame) -> RgbaImage {
     let radius = w.max(h) * frame.radius;
     let blur = (w.max(h) * frame.padding * 0.45).max(w.max(h) * 0.02);
     let strength = frame.shadow.clamp(0., 1.);
-    let mut out = backdrop_pixels(&frame.backdrop, ow as u32, oh as u32);
+    let clear = frame.backdrop == Backdrop::Transparent;
+    let mut out = if clear { RgbaImage::new(ow as u32, oh as u32) } else { backdrop_pixels(&frame.backdrop, ow as u32, oh as u32) };
     // Signed distance to a rounded rectangle centered at (cx, cy).
     let sdf = |x: f32, y: f32, cx: f32, cy: f32| {
         let qx = (x - cx).abs() - (w / 2. - radius);
@@ -2224,13 +2241,17 @@ fn framed(img: &RgbaImage, frame: &Frame) -> RgbaImage {
     let (cx, cy) = (left + w / 2., top + h / 2.);
     for (x, y, px) in out.enumerate_pixels_mut() {
         let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-        let mut c = [px.0[0] as f32 / 255., px.0[1] as f32 / 255., px.0[2] as f32 / 255.];
+        // Premultiplied colour and coverage: an opaque background stays
+        // opaque, a transparent one picks up the shadow as dark alpha.
+        let mut a = if clear { 0. } else { 1. };
+        let mut c = [px.0[0] as f32 / 255. * a, px.0[1] as f32 / 255. * a, px.0[2] as f32 / 255. * a];
         if strength > 0. {
             let d = sdf(fx, fy, cx, cy + blur * 0.35);
             let u = ((d + blur * 0.4) / (blur * 1.4)).clamp(0., 1.);
             let k = u * u * (3. - 2. * u);
-            let shade = 1. - 0.9 * strength * (1. - k);
-            c.iter_mut().for_each(|v| *v *= shade);
+            let dark = 0.9 * strength * (1. - k);
+            c.iter_mut().for_each(|v| *v *= 1. - dark);
+            a = a * (1. - dark) + dark;
         }
         // The picture itself, antialiased along its rounded edge.
         let cover = (0.5 - sdf(fx, fy, cx, cy)).clamp(0., 1.);
@@ -2241,10 +2262,52 @@ fn framed(img: &RgbaImage, frame: &Frame) -> RgbaImage {
             for (v, s) in c.iter_mut().zip(p) {
                 *v = *v * (1. - k) + s as f32 / 255. * k;
             }
+            a = a * (1. - k) + k;
         }
-        *px = image::Rgba([(c[0] * 255.) as u8, (c[1] * 255.) as u8, (c[2] * 255.) as u8, 255]);
+        let un = |v: f32| if a > 0. { (v / a * 255.).round().clamp(0., 255.) as u8 } else { 0 };
+        *px = image::Rgba([un(c[0]), un(c[1]), un(c[2]), (a * 255.).round() as u8]);
     }
     out
+}
+
+/// A small rounded checkerboard for the "transparent" swatch: 3×3 cells,
+/// the corner ones rounded (GPUI clips children to rectangles only).
+pub(crate) fn checker_tile(side: f32, radius: f32) -> gpui::Div {
+    let cell = side / 3.;
+    let (light, dark) = (gpui::hsla(0., 0., 0.92, 1.), gpui::hsla(0., 0., 0.72, 1.));
+    v_flex().size(px(side)).children((0..3).map(|r| {
+        h_flex().children((0..3).map(move |c| {
+            let d = div().size(px(cell)).bg(if (r + c) % 2 == 0 { light } else { dark });
+            match (r, c) {
+                (0, 0) => d.rounded_tl(px(radius)),
+                (0, 2) => d.rounded_tr(px(radius)),
+                (2, 0) => d.rounded_bl(px(radius)),
+                (2, 2) => d.rounded_br(px(radius)),
+                _ => d,
+            }
+        }))
+    }))
+}
+
+/// Light and dark squares, the usual sign of transparency.
+fn checkerboard(cell: f32) -> gpui::Canvas<()> {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let (light, dark) = (gpui::hsla(0., 0., 0.92, 1.), gpui::hsla(0., 0., 0.78, 1.));
+            window.paint_quad(fill(bounds, light));
+            let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            let (cols, rows) = ((w / cell).ceil() as i32, (h / cell).ceil() as i32);
+            for r in 0..rows {
+                for c in (r % 2..cols).step_by(2) {
+                    let x = c as f32 * cell;
+                    let y = r as f32 * cell;
+                    let cell_bounds = Bounds::new(point(bounds.origin.x + px(x), bounds.origin.y + px(y)), size(px(cell.min(w - x)), px(cell.min(h - y))));
+                    window.paint_quad(fill(cell_bounds, dark));
+                }
+            }
+        },
+    )
 }
 
 fn push_text(shape: &mut Shape, s: &str) {
@@ -2750,6 +2813,16 @@ mod tests {
 
     fn red() -> Hsla {
         gpui::hsla(0.01, 0.6, 0.54, 1.)
+    }
+
+    #[test]
+    fn a_transparent_background_leaves_the_margin_clear() {
+        let src = RgbaImage::from_pixel(100, 80, image::Rgba([200, 30, 30, 255]));
+        let frame = Frame { backdrop: Backdrop::Transparent, padding: 0.1, radius: 0., shadow: 0., aspect: 0 };
+        let out = framed(&src, &frame);
+        assert_eq!(out.get_pixel(0, 0).0[3], 0, "the margin is see-through");
+        let (w, h) = out.dimensions();
+        assert_eq!(out.get_pixel(w / 2, h / 2).0, [200, 30, 30, 255], "the picture stays as it was");
     }
 
     #[test]

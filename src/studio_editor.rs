@@ -1345,17 +1345,21 @@ impl StudioEditor {
                 .border_color(if selected { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
         };
-        let gradients = palette::backdrops().into_iter().enumerate().map(|(i, (c0, c1))| {
+        let edge = cx.theme().colors().border_variant;
+        let tile = |i: usize, c0: gpui::Hsla, c1: gpui::Hsla, cx: &mut Context<Self>| {
             swatch(SharedString::from(format!("backdrop-{i}")), self.project.wallpaper.is_none() && i == self.project.backdrop)
                 .size(px(40.))
-                .child(div().size(px(30.)).rounded(px(7.)).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                .child(div().size(px(30.)).rounded(px(7.)).border_1().border_color(edge).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.project.backdrop = i;
                     this.project.wallpaper = None;
                     this.changed(cx);
                 }))
-        })
-        .collect::<Vec<_>>();
+        };
+        let all = palette::backdrops();
+        // Gradients, then plain colours on their own row.
+        let gradients = all.iter().enumerate().filter(|(_, (c0, c1))| c0 != c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)).collect::<Vec<_>>();
+        let solids = all.iter().enumerate().filter(|(_, (c0, c1))| c0 == c1).map(|(i, &(c0, c1))| tile(i, c0, c1, cx)).collect::<Vec<_>>();
         let walls = self.walls.iter().enumerate().map(|(i, (path, thumb))| {
             let path = path.clone();
             swatch(SharedString::from(format!("wall-{i}")), self.project.wallpaper.as_ref() == Some(&path))
@@ -1500,6 +1504,7 @@ impl StudioEditor {
             .child(
                 section(t("Фон"))
                     .child(h_flex().flex_wrap().gap_1().children(gradients))
+                    .child(h_flex().flex_wrap().gap_1().children(solids))
                     .child(h_flex().flex_wrap().gap_1().children(walls))
                     .children(custom)
                     .child(
