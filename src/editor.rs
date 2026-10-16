@@ -12,6 +12,7 @@ use std::sync::{Arc, OnceLock};
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use gpui::{
+    FillOptions, PathStyle,
     App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
     Window, canvas, div, fill, img, layer_shell::*, linear_color_stop, linear_gradient, outline,
@@ -1321,15 +1322,34 @@ fn arrow_geometry(a: P, b: P, w: f32) -> (P, [P; 3]) {
 }
 
 fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Point<gpui::Pixels>) {
+    // Outline the stroke the way the export does (round caps and joins) and
+    // fill it with the nonzero rule: GPUI's own stroke overlaps itself at sharp
+    // turns, which shows as dark knots in translucent marker lines.
     let stroke = |window: &mut Window, points: &[P], closed: bool, color: Hsla, width: f32| {
         let Some((first, rest)) = points.split_first() else { return };
-        let mut b = PathBuilder::stroke(px(width * s));
-        b.move_to(pt(*first));
+        let mut line = tiny_skia::PathBuilder::new();
+        line.move_to(first.0 * s, first.1 * s);
         for p in rest {
-            b.line_to(pt(*p));
+            line.line_to(p.0 * s, p.1 * s);
+        }
+        if rest.is_empty() {
+            line.line_to(first.0 * s + 0.01, first.1 * s);
         }
         if closed {
-            b.close();
+            line.close();
+        }
+        let style = tiny_skia::Stroke { width: width * s, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+        let Some(outline) = line.finish().and_then(|path| path.stroke(&style, 1.)) else { return };
+        let at = |p: tiny_skia::Point| pt((p.x / s, p.y / s));
+        let mut b = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::non_zero()));
+        for segment in outline.segments() {
+            match segment {
+                tiny_skia::PathSegment::MoveTo(p) => b.move_to(at(p)),
+                tiny_skia::PathSegment::LineTo(p) => b.line_to(at(p)),
+                tiny_skia::PathSegment::QuadTo(c, p) => b.curve_to(at(p), at(c)),
+                tiny_skia::PathSegment::CubicTo(c1, c2, p) => b.cubic_bezier_to(at(p), at(c1), at(c2)),
+                tiny_skia::PathSegment::Close => b.close(),
+            }
         }
         if let Ok(path) = b.build() {
             window.paint_path(path, color);
