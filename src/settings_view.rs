@@ -1,5 +1,5 @@
-//! Settings, laid out like CleanShot's preferences (tabs along the top, one
-//! topic each) in Zed's components. Every change is saved on the spot.
+//! Settings, laid out like System Settings: sections in a list on the left,
+//! the chosen one's rows on the right. Every change is saved on the spot.
 
 use std::path::PathBuf;
 
@@ -42,13 +42,13 @@ impl Tab {
 
     fn icon(self) -> Icon {
         match self {
-            Tab::General => Icon::new(IconName::Copy),
+            Tab::General => Icon::new(IconName::Settings),
             Tab::Screenshots => Icon::new(IconName::Image),
             Tab::Recording => Icon::new(IconName::Circle),
             Tab::Studio => Icon::new(IconName::Sparkle),
             Tab::Text => Icon::new(IconName::CaseSensitive),
             Tab::Shortcuts => Icon::new(IconName::Keyboard),
-            Tab::About => Icon::new(IconName::Screen),
+            Tab::About => Icon::from_path("icons/kadr/camera.svg"),
         }
     }
 }
@@ -142,27 +142,51 @@ impl SettingsView {
         .detach();
     }
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The section list on the left, like System Settings: the current one
+    /// highlighted in the accent colour.
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        h_flex().justify_center().gap_1().px_2().pt_2().pb_1().children(Tab::ALL.into_iter().map(|tab| {
-            let on = tab == self.tab;
-            v_flex()
-                .id(SharedString::from(format!("tab-{}", tab.label())))
-                .w(px(96. * kit::SCALE))
-                .py_1p5()
-                .gap_1()
-                .items_center()
-                .rounded_lg()
-                .cursor_pointer()
-                .when(on, |d| d.bg(colors.element_selected))
-                .hover(|d| d.bg(colors.ghost_element_hover))
-                .child(tab.icon().size(IconSize::Medium).color(if on { Color::Accent } else { Color::Muted }))
-                .child(Label::new(tab.label()).size(LabelSize::Small).color(if on { Color::Default } else { Color::Muted }))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.tab = tab;
-                    cx.notify();
-                }))
-        }))
+        let accent = colors.text_accent;
+        let on_accent = crate::ui::on(accent);
+        v_flex()
+            .w(px(210. * kit::SCALE))
+            .h_full()
+            .flex_none()
+            .p_2()
+            .gap_0p5()
+            .bg(colors.editor_background)
+            // The window clips to a rectangle; the sidebar rounds its own corners.
+            .rounded_l(crate::ui::rems_from_px(11.))
+            .rounded_smoothing(crate::ui::SMOOTHING)
+            .child(div().px_2().pt_1().pb_2().child(Label::new("Настройки").size(LabelSize::Small).color(Color::Muted)))
+            .children(Tab::ALL.into_iter().map(|tab| {
+                let on = tab == self.tab;
+                h_flex()
+                    .id(SharedString::from(format!("tab-{}", tab.label())))
+                    .gap_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded(crate::ui::rems_from_px(7.))
+                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .cursor_pointer()
+                    .when(on, |d| d.bg(accent))
+                    .when(!on, |d| d.hover(|d| d.bg(colors.ghost_element_hover)))
+                    .child(tab.icon().size(IconSize::Small).color(if on { Color::Custom(on_accent) } else { Color::Muted }))
+                    .child(Label::new(tab.label()).color(if on { Color::Custom(on_accent) } else { Color::Default }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.tab = tab;
+                        cx.notify();
+                    }))
+            }))
+            .child(div().flex_1())
+            .child(
+                v_flex()
+                    .px_2()
+                    .pb_1()
+                    .gap_1()
+                    .child(Label::new("Изменения сохраняются сразу").size(LabelSize::XSmall).color(Color::Muted))
+                    .child(h_flex().gap_1().child(kit::keys("escape")).child(Label::new("Закрыть").size(LabelSize::XSmall).color(Color::Muted))),
+            )
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -254,11 +278,11 @@ impl SettingsView {
                 rows
             }
             Tab::About => vec![
-                row("kadr", "Скриншоты и запись экрана для Omarchy", Label::new(format!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
-                row("Интерфейс", "GPUI и компоненты Zed v1.24.2, цвета из темы Omarchy", Label::new("Zed UI").color(Color::Muted).into_any_element()),
+                row("kadr", "Скриншоты и запись экрана", Label::new(format!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
+                row("Интерфейс", "GPUI CE и свои компоненты, цвета из темы Omarchy", Label::new("GPUI CE").color(Color::Muted).into_any_element()),
                 row("Исходный код",
-                    "github.com/vlasmn/kadr-linux",
-                    Button::new("repo", "Открыть").style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr-linux"))).into_any_element(),
+                    "github.com/vlasmn/kadr",
+                    Button::new("repo", "Открыть").style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr"))).into_any_element(),
                 ),
                 row("Папка настроек",
                     "~/.config/kadr",
@@ -359,8 +383,8 @@ impl Render for SettingsView {
                 let i = Tab::ALL.iter().position(|t| *t == this.tab).unwrap_or(0);
                 match e.keystroke.key.as_str() {
                     "escape" => window.remove_window(),
-                    "tab" | "right" => this.tab = Tab::ALL[(i + 1) % Tab::ALL.len()],
-                    "left" => this.tab = Tab::ALL[(i + Tab::ALL.len() - 1) % Tab::ALL.len()],
+                    "tab" | "down" => this.tab = Tab::ALL[(i + 1) % Tab::ALL.len()],
+                    "up" => this.tab = Tab::ALL[(i + Tab::ALL.len() - 1) % Tab::ALL.len()],
                     _ => {}
                 }
                 cx.notify();
@@ -374,15 +398,18 @@ impl Render for SettingsView {
                     .elevation_3(cx)
                     .overflow_hidden()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(self.render_tabs(cx))
-                    .child(div().id("body").flex_1().min_h_0().overflow_y_scroll().child(self.render_body(cx)))
                     .child(
                         h_flex()
-                            .justify_between()
-                            .px_3()
-                            .py_1p5()
-                            .child(Label::new("Изменения сохраняются сразу").size(LabelSize::XSmall).color(Color::Muted))
-                            .child(h_flex().gap_1().child(kit::keys("escape")).child(Label::new("Закрыть").size(LabelSize::XSmall).color(Color::Muted))),
+                            .size_full()
+                            .child(self.render_sidebar(cx))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .child(div().px_6().pt_5().pb_1().text_size(crate::ui::rems_from_px(20.)).font_weight(gpui::FontWeight::SEMIBOLD).child(self.tab.label()))
+                                    .child(div().id("body").flex_1().min_h_0().overflow_y_scroll().child(self.render_body(cx))),
+                            ),
                     ),
             )
     }

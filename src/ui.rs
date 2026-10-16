@@ -278,7 +278,6 @@ pub enum IconSize {
     XSmall,
     #[default]
     Small,
-    Medium,
 }
 
 impl IconSize {
@@ -286,7 +285,6 @@ impl IconSize {
         rems_from_px(match self {
             IconSize::XSmall => 12.,
             IconSize::Small => 14.,
-            IconSize::Medium => 16.,
         })
     }
 }
