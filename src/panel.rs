@@ -25,7 +25,7 @@ pub fn open(cx: &mut App) -> Option<WindowHandle<Panel>> {
         namespace: "kadr-panel",
         anchor: Anchor::TOP,
         margin: (40., 0., 0., 0.),
-        size: (1060., 80.),
+        size: (1060. * kit::SCALE, 80. * kit::SCALE),
         keyboard: KeyboardInteractivity::Exclusive,
         ignore_zones: false,
         monitor: util::focused_monitor(),

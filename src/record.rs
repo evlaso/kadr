@@ -386,7 +386,7 @@ impl Recorder {
             namespace: "kadr-recording",
             anchor: Anchor::TOP | Anchor::LEFT,
             margin: (top as f32, 0., 0., left as f32),
-            size: (PILL_WIDTH as f32, PILL_HEIGHT as f32),
+            size: (PILL_WIDTH as f32 * kit::SCALE, PILL_HEIGHT as f32 * kit::SCALE),
             keyboard: KeyboardInteractivity::None,
             // Position relative to the monitor itself, not the bar's reserved area.
             ignore_zones: true,

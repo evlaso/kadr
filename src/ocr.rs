@@ -154,7 +154,7 @@ fn show_toast(text: Option<String>, cx: &mut App) {
         namespace: "kadr-toast",
         anchor: Anchor::BOTTOM,
         margin: (0., 0., 24., 0.),
-        size: (440., 120. + lines * 18.),
+        size: (440. * kit::SCALE, (120. + lines * 18.) * kit::SCALE),
         keyboard: KeyboardInteractivity::None,
         ignore_zones: false,
         monitor: util::focused_monitor(),

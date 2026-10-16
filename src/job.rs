@@ -41,7 +41,7 @@ pub fn start(title: &'static str, icon: IconName, cx: &mut App) -> Running {
         namespace: "kadr-progress",
         anchor: Anchor::BOTTOM,
         margin: (0., 0., 24., 0.),
-        size: (340., 90.),
+        size: (340. * kit::SCALE, 90. * kit::SCALE),
         keyboard: KeyboardInteractivity::None,
         ignore_zones: false,
         monitor: util::focused_monitor(),

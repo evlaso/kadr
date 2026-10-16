@@ -203,15 +203,11 @@ pub fn open_layer<V: Render + 'static>(
     build: impl FnOnce(&mut Window, &mut App) -> gpui::Entity<V>,
 ) -> Option<WindowHandle<V>> {
     let (t, r, b, l) = spec.margin;
-    // Fixed-size overlays grow with the components inside them; full-monitor
-    // and anchored-to-fill ones are sized by the compositor anyway.
-    let fills = spec.anchor.contains(Anchor::LEFT | Anchor::RIGHT) || spec.anchor.contains(Anchor::TOP | Anchor::BOTTOM);
-    let size_scale = if fills { 1. } else { SCALE };
     let options = WindowOptions {
         titlebar: None,
         window_bounds: Some(WindowBounds::Windowed(Bounds {
             origin: point(px(0.), px(0.)),
-            size: size(px(spec.size.0 * size_scale), px(spec.size.1 * size_scale)),
+            size: size(px(spec.size.0), px(spec.size.1)),
         })),
         app_id: Some("kadr".into()),
         window_background: WindowBackgroundAppearance::Transparent,

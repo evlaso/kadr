@@ -9,20 +9,17 @@ use std::time::{Duration, Instant};
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
     MouseButton, MouseDownEvent, ObjectFit, SharedString, Window, WindowHandle, div, ease_out_quint,
-    img, layer_shell::*, px,
+    img, layer_shell::*, px, rgba,
 };
-use ui::{IconButtonShape, TintColor, Tooltip, prelude::*};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::{editor, ocr, pin, studio_editor, track, trim, util};
 
-const CARD_WIDTH: f32 = 320.;
-/// Inner padding of the card panel.
-const INSET: f32 = 6.;
-const THUMB_WIDTH: f32 = CARD_WIDTH - 2. * INSET;
-const THUMB_MAX: f32 = 200.;
-/// Header, footer and gaps around the thumbnail.
-const CHROME: f32 = 74.;
+const CARD_WIDTH: f32 = 300. * kit::SCALE;
+const THUMB_WIDTH: f32 = CARD_WIDTH;
+const THUMB_MAX: f32 = 220. * kit::SCALE;
+const CHROME: f32 = 0.;
 const MAX_CARDS: usize = 4;
 const GAP: f32 = 14.;
 /// Room above and to the right of the stack so card shadows aren't cut off by
@@ -45,8 +42,6 @@ struct Card {
     height: f32,
     /// Clip duration in seconds for recordings.
     video: Option<f64>,
-    /// Pixel size or duration, shown in the header.
-    meta: SharedString,
     deadline: Instant,
     hovered: bool,
 }
@@ -70,11 +65,11 @@ pub fn show(path: PathBuf, cx: &mut App) {
             cx.background_executor()
                 .spawn(async move { card_thumbnail(&std::fs::read(&file).ok()?) })
                 .await
-                .map(|(image, height, (w, h))| (image, height, None, format!("{w}×{h}")))
+                .map(|(image, height, _)| (image, height, None))
         };
         match loaded {
-            Some((image, height, video, meta)) => {
-                let _ = cx.update(|cx| add(path, image, height, video, meta.into(), cx));
+            Some((image, height, video)) => {
+                let _ = cx.update(|cx| add(path, image, height, video, cx));
             }
             None => util::notify("Не удалось открыть файл", &path.display().to_string()),
         }
@@ -95,8 +90,8 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
         .unwrap_or(false)
 }
 
-fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, meta: SharedString, cx: &mut App) {
-    let mut slot = Some(Card { id: 0, path, image, height, video, meta, deadline: Instant::now() + AUTO_DISMISS, hovered: false });
+fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
+    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: Instant::now() + AUTO_DISMISS, hovered: false });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
@@ -178,14 +173,16 @@ impl CardStack {
         }
     }
 
-    /// A Zed-style popover: file name header, the thumbnail (drag it out as a
-    /// file) and a toolbar of icon buttons.
+    /// CleanShot's Quick Access look in Zed's components: just the picture;
+    /// hovering shows the main actions in the middle and the rest in the
+    /// corners. Drag it out as a file; double-click to edit.
     fn render_card(&self, card: &Card, cx: &mut Context<Self>) -> AnyElement {
         let id = card.id;
+        let group: SharedString = format!("card-{id}").into();
         let path = card.path.clone();
         let video = card.video.is_some();
+        let gif = is_gif(&path);
         let has_track = video && track::path_for(&path).exists();
-        let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
 
         let act = |action: fn(&mut CardStack, &Path, usize, &mut Window, &mut Context<CardStack>)| {
             let path = path.clone();
@@ -194,24 +191,116 @@ impl CardStack {
                 action(this, &path, id, window, cx)
             })
         };
-        let tool = |key: &'static str, icon: IconName, tip: &'static str| {
-            IconButton::new((key, id), icon).shape(IconButtonShape::Square).icon_size(IconSize::Small).tooltip(Tooltip::text(tip))
+        let big = |key: &'static str, label: &'static str| {
+            Button::new((key, id), label).style(ButtonStyle::Filled).size(ButtonSize::Large).width(px(150. * kit::SCALE))
+        };
+        let corner = |key: &'static str, icon: IconName, tip: &'static str| {
+            IconButton::new((key, id), icon).style(ButtonStyle::Filled).shape(IconButtonShape::Square).tooltip(Tooltip::text(tip))
         };
 
-        let header = h_flex()
-            .h(px(22.))
-            .pl_1()
-            .gap_1p5()
-            .child(Icon::new(if video { IconName::PlayFilled } else { IconName::Image }).size(IconSize::XSmall).color(Color::Muted))
-            .child(div().flex_1().min_w_0().child(Label::new(name).size(LabelSize::Small).truncate()))
-            .child(Label::new(card.meta.clone()).size(LabelSize::XSmall).color(Color::Muted))
+        let mut center = v_flex().items_center().gap_1p5().child(big("copy", "Копировать").on_click(act(|this, path, id, window, cx| {
+            if is_video(path) {
+                util::copy_file(path)
+            } else {
+                util::copy_image(path)
+            }
+            this.remove(id, window, cx);
+        })));
+        center = if video && !gif {
+            center.child(
+                big("studio", "Студия")
+                    .tooltip(Tooltip::text(if has_track { "Зумы к кликам, фон, клики и клавиши" } else { "Фон, отступы и зумы вручную" }))
+                    .on_click(act(|this, path, id, window, cx| {
+                        this.remove(id, window, cx);
+                        studio_editor::open(path.to_owned(), cx);
+                    })),
+            )
+        } else {
+            center.child(big("edit", if gif { "Открыть" } else { "Редактировать" }).on_click(act(|this, path, id, window, cx| {
+                this.remove(id, window, cx);
+                edit(path.to_owned(), cx);
+            })))
+        };
+
+        // Top right: pin for pictures, trim for recordings.
+        let top_right = if video {
+            (!gif).then(|| {
+                corner("trim", IconName::Scissors, "Обрезать").on_click(act(|this, path, id, window, cx| {
+                    this.remove(id, window, cx);
+                    trim::open(path.to_owned(), cx);
+                }))
+            })
+        } else {
+            Some(corner("pin", IconName::Pin, "Закрепить поверх окон").on_click(act(|this, path, id, window, cx| {
+                pin::open(path.to_owned(), cx);
+                this.remove(id, window, cx);
+            })))
+        };
+        // Bottom right: text recognition for pictures, GIF for recordings, the folder for both.
+        let extra = if video {
+            (!gif).then(|| {
+                Button::new(("gif", id), "GIF")
+                    .style(ButtonStyle::Filled)
+                    .tooltip(Tooltip::text("Сохранить как GIF (720px, 15 к/с)"))
+                    .on_click(act(|_, path, _, _, cx| trim::quick_gif(path.to_owned(), cx)))
+                    .into_any_element()
+            })
+        } else {
+            Some(corner("ocr", IconName::CaseSensitive, "Распознать текст").on_click(act(|_, path, _, _, cx| ocr::image(path.to_owned(), cx))).into_any_element())
+        };
+
+        let at = |el: AnyElement| div().absolute().m_2().child(el);
+        let hover = div()
+            .absolute()
+            .inset_0()
+            .rounded(px(kit::RADIUS))
+            .bg(rgba(0x0000008c))
+            .opacity(0.)
+            .group_hover(group.clone(), |s| s.opacity(1.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(center)
+            .child(at(corner("close", IconName::Close, "Закрыть").on_click(act(|this, _, id, window, cx| this.remove(id, window, cx))).into_any_element()).top_0().left_0())
+            .children(top_right.map(|b| at(b.into_any_element()).top_0().right_0()))
             .child(
-                IconButton::new(("close", id), IconName::Close)
-                    .shape(IconButtonShape::Square)
-                    .icon_size(IconSize::XSmall)
-                    .tooltip(Tooltip::text("Закрыть"))
-                    .on_click(act(|this, _, id, window, cx| this.remove(id, window, cx))),
+                at(corner("trash", IconName::Trash, "Удалить файл")
+                    .on_click(act(|this, path, id, window, cx| {
+                        util::trash(path);
+                        this.remove(id, window, cx);
+                    }))
+                    .into_any_element())
+                .bottom_0()
+                .left_0(),
+            )
+            .child(
+                div().absolute().bottom_0().right_0().m_2().child(
+                    h_flex()
+                        .gap_1()
+                        .children(extra)
+                        .child(corner("folder", IconName::Folder, "Показать в папке").on_click(act(|_, path, _, _, _| util::open_folder(path)))),
+                ),
             );
+
+        let badge = card.video.map(|secs| {
+            h_flex()
+                .absolute()
+                .bottom_2()
+                .left_0()
+                .right_0()
+                .justify_center()
+                .group_hover(group.clone(), |s| s.opacity(0.))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .bg(rgba(0x000000b3))
+                        .child(Icon::new(IconName::PlayFilled).size(IconSize::XSmall).color(Color::Custom(gpui::white())))
+                        .child(Label::new(util::format_duration(secs)).size(LabelSize::Small).color(Color::Custom(gpui::white()))),
+                )
+        });
 
         // Double-click opens the editor (or the player).
         let double_click = {
@@ -223,98 +312,30 @@ impl CardStack {
                 }
             })
         };
-        let thumb = div()
-            .id(("thumb", id))
-            .w_full()
-            .h(px(card.height))
-            .cursor_grab()
-            // GPUI clips children to a rectangle, so the image rounds its own
-            // corners; it is pre-cropped to the card so those are the visible ones.
-            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(8.)))
-            .on_mouse_down(MouseButton::Left, double_click)
-            // Drag the file out to a chat, browser or file manager.
-            .on_drag(path.clone(), |_: &PathBuf, _, _, cx| cx.new(|_| DragPreview))
-            .external_drag_payload(|path: &PathBuf, _, _| {
-                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
-            });
 
-        let mut tools = h_flex()
-            .gap_0p5()
-            .child(tool("copy", IconName::Copy, if video { "Копировать файл" } else { "Копировать" }).on_click(act(|this, path, id, window, cx| {
-                if is_video(path) {
-                    util::copy_file(path)
-                } else {
-                    util::copy_image(path)
-                }
-                this.remove(id, window, cx);
-            })))
-            .child(
-                tool("edit", if video { IconName::PlayFilled } else { IconName::Pencil }, if video { "Открыть" } else { "Редактировать" })
-                    .on_click(act(|this, path, id, window, cx| {
-                        this.remove(id, window, cx);
-                        edit(path.to_owned(), cx);
-                    })),
-            );
-        if !video {
-            tools = tools.child(tool("ocr", IconName::CaseSensitive, "Распознать текст").on_click(act(|_, path, _, _, cx| ocr::image(path.to_owned(), cx))));
-            tools = tools.child(tool("pin", IconName::Pin, "Закрепить поверх окон").on_click(act(|this, path, id, window, cx| {
-                pin::open(path.to_owned(), cx);
-                this.remove(id, window, cx);
-            })));
-        }
-        // Trimming and GIF export are for recordings, not for GIFs themselves.
-        if video && !is_gif(&path) {
-            tools = tools
-                .child(tool("trim", IconName::Scissors, "Обрезать").on_click(act(|this, path, id, window, cx| {
-                    this.remove(id, window, cx);
-                    trim::open(path.to_owned(), cx);
-                })))
-                .child(
-                    Button::new(("gif", id), "GIF")
-                        .style(ButtonStyle::Subtle)
-                        .label_size(LabelSize::Small)
-                        .tooltip(Tooltip::text("Сохранить как GIF (720px, 15 к/с)"))
-                        .on_click(act(|_, path, _, _, cx| trim::quick_gif(path.to_owned(), cx))),
-                );
-        }
-        tools = tools
-            .child(tool("folder", IconName::Folder, "Показать в папке").on_click(act(|_, path, _, _, _| util::open_folder(path))))
-            .child(tool("trash", IconName::Trash, "Удалить файл").on_click(act(|this, path, id, window, cx| {
-                util::trash(path);
-                this.remove(id, window, cx);
-            })));
-
-        let footer = h_flex().justify_between().child(tools).when(video && !is_gif(&path), |footer| {
-            footer.child(
-                Button::new(("studio", id), "Студия")
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                    .tooltip(Tooltip::text(if has_track { "Зумы к кликам, фон, клики и клавиши" } else { "Фон, отступы и зумы вручную" }))
-                    .on_click(act(|this, path, id, window, cx| {
-                        this.remove(id, window, cx);
-                        studio_editor::open(path.to_owned(), cx);
-                    })),
-            )
-        });
-
-        let colors = cx.theme().colors();
-        v_flex()
+        div()
             .id(("card", id))
+            .group(group)
             .relative()
             .flex_none()
             .w(px(CARD_WIDTH))
-            .p(px(INSET))
-            .gap_1p5()
-            .rounded(px(12.))
-            .bg(colors.elevated_surface_background)
-            .border_1()
-            .border_color(colors.border_variant)
+            .h(px(card.height))
+            .rounded(px(kit::RADIUS))
             .shadow(kit::shadow())
-            .child(header)
-            .child(thumb)
-            .child(footer)
+            .bg(cx.theme().colors().elevated_surface_background)
+            // GPUI clips children to a rectangle, so the image rounds its own
+            // corners; it is pre-cropped to the card so those are the visible ones.
+            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
+            .children(badge)
+            .child(hover)
             .child(self.region.mark())
             .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
+            .on_mouse_down(MouseButton::Left, double_click)
+            // Drag the file out to a chat, browser or file manager.
+            .on_drag(path, |_: &PathBuf, _, _, cx| cx.new(|_| DragPreview))
+            .external_drag_payload(|path: &PathBuf, _, _| {
+                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
+            })
             .with_animation(("appear", id), Animation::new(Duration::from_millis(240)).with_easing(ease_out_quint()), |el, d| {
                 el.opacity(d).mb(px((1. - d) * -24.))
             })
@@ -393,7 +414,7 @@ pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
 fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
     let src = image::load_from_memory(bytes).ok()?;
     let (w, h) = (src.width().max(1), src.height().max(1));
-    let height = (THUMB_WIDTH * h as f32 / w as f32).clamp(80., THUMB_MAX);
+    let height = (THUMB_WIDTH * h as f32 / w as f32).clamp(110. * kit::SCALE, THUMB_MAX);
     let aspect = THUMB_WIDTH / height;
     let (cw, ch) = if (w as f32 / h as f32) > aspect {
         ((h as f32 * aspect).round() as u32, h)
@@ -408,7 +429,7 @@ fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
 }
 
 /// First frame (scaled down) and duration in seconds.
-async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>, String)> {
+async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>)> {
     use std::ffi::OsStr;
     let thumb = util::runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
     let (ok, _) = util::output::<&OsStr>(&[
@@ -425,5 +446,5 @@ async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Imag
     .await?;
     let (image, height, _) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
     let seconds: f64 = duration.trim().parse().unwrap_or(0.0);
-    Some((image, height, Some(seconds), util::format_duration(seconds)))
+    Some((image, height, Some(seconds)))
 }
