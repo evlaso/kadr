@@ -1152,6 +1152,9 @@ impl Editor {
             .px_1p5()
             .py_1()
             .bg(cx.theme().colors().title_bar_background)
+            // GPUI clips children to rectangles: the bars round their own
+            // outer corners to stay inside the window's.
+            .rounded_t(px(kit::RADIUS - 1.))
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(history)
@@ -1199,6 +1202,7 @@ impl Editor {
             .pr_1p5()
             .py_1()
             .bg(cx.theme().colors().status_bar_background)
+            .rounded_b(px(kit::RADIUS - 1.))
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(

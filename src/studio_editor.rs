@@ -876,6 +876,7 @@ impl StudioEditor {
             .px_1p5()
             .py_1()
             .bg(cx.theme().colors().title_bar_background)
+            .rounded_t(px(kit::RADIUS - 1.))
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
