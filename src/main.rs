@@ -8,6 +8,7 @@ mod record;
 mod studio;
 mod track;
 mod kit;
+mod ocr;
 mod util;
 
 use std::io::{BufRead, BufReader, Write};
@@ -33,6 +34,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr record stop                               остановить запись
   kadr studio <видео>                            автозум к кликам, фон, тень и скругления
   kadr edit <картинка>                           редактор: стрелки, текст, маркер, размытие…
+  kadr text [картинка]                           распознать текст (в области или на картинке) и скопировать
 ";
 
 const MODES: [&str; 4] = ["smart", "region", "windows", "fullscreen"];
@@ -45,6 +47,7 @@ enum Command {
     RecordStop,
     Studio(PathBuf),
     Edit(PathBuf),
+    Text(Option<PathBuf>),
 }
 
 impl Command {
@@ -67,6 +70,8 @@ impl Command {
             Some("pin") => file(1).map(Command::Pin),
             Some("studio") => file(1).map(Command::Studio),
             Some("edit") => file(1).map(Command::Edit),
+            Some("text") if args.len() > 1 => file(1).map(|p| Command::Text(Some(p))),
+            Some("text") => Ok(Command::Text(None)),
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
@@ -101,6 +106,8 @@ impl Command {
             Command::RecordStop => record::command_stop(cx),
             Command::Studio(path) => studio::render(path, cx),
             Command::Edit(path) => editor::open(path, cx),
+            Command::Text(None) => ocr::region(cx),
+            Command::Text(Some(path)) => ocr::image(path, cx),
         }
     }
 }
@@ -150,6 +157,7 @@ fn main() {
         Command::Pin(p) => vec!["pin".into(), p.display().to_string()],
         Command::Studio(p) => vec!["studio".into(), p.display().to_string()],
         Command::Edit(p) => vec!["edit".into(), p.display().to_string()],
+        Command::Text(Some(p)) => vec!["text".into(), p.display().to_string()],
         _ => args.clone(),
     };
     if send_to_running(&resolved) {

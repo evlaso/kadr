@@ -14,7 +14,7 @@ use gpui::{
 use ui::{IconButtonShape, TintColor, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
-use crate::{editor, pin, studio, track, util};
+use crate::{editor, ocr, pin, studio, track, util};
 
 const CARD_WIDTH: f32 = 320.;
 /// Inner padding of the card panel.
@@ -256,6 +256,7 @@ impl CardStack {
                     })),
             );
         if !video {
+            tools = tools.child(tool("ocr", IconName::CaseSensitive, "Распознать текст").on_click(act(|_, path, _, _, cx| ocr::image(path.to_owned(), cx))));
             tools = tools.child(tool("pin", IconName::Pin, "Закрепить поверх окон").on_click(act(|this, path, id, window, cx| {
                 pin::open(path.to_owned(), cx);
                 this.remove(id, window, cx);

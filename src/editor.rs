@@ -21,7 +21,7 @@ use image::RgbaImage;
 use ui::{ButtonLike, Divider, IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
-use crate::{cards, palette, util};
+use crate::{cards, ocr, palette, util};
 
 /// A point in image pixels.
 type P = (f32, f32);
@@ -683,6 +683,25 @@ impl Editor {
         .detach();
     }
 
+    /// Recognize text in the picture (within the crop, if any).
+    fn read_text(&self, cx: &mut Context<Self>) {
+        let Some(src) = self.source.clone() else { return };
+        let crop = self.doc.crop;
+        let hold = kit::hold(cx);
+        cx.spawn(async move |_, cx| {
+            let _hold = hold;
+            let tmp = util::runtime_dir().join(format!("kadr-ocr-editor-{}.png", std::process::id()));
+            let doc = Doc { shapes: Vec::new(), crop };
+            let png = cx.background_executor().spawn(async move { compose(&src, &doc, None) }).await;
+            if let Some(png) = png
+                && std::fs::write(&tmp, png).is_ok()
+            {
+                let _ = cx.update(|cx| ocr::image(tmp, cx));
+            }
+        })
+        .detach();
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tool_button = |tool: Tool, cx: &mut Context<Self>| {
             ButtonLike::new(SharedString::from(format!("tool-{}", tool.key())))
@@ -836,6 +855,12 @@ impl Editor {
                         )
                     })
                     .child(Divider::vertical().h_5().mx_1())
+                    .child(
+                        IconButton::new("ocr", IconName::CaseSensitive)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Распознать текст"))
+                            .on_click(cx.listener(|this, _, _, cx| this.read_text(cx))),
+                    )
                     .child(
                         Button::new("cancel", "Отмена")
                             .style(ButtonStyle::Subtle)
