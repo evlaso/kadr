@@ -57,6 +57,9 @@ pub struct CardStack {
     next_id: usize,
     hidden: bool,
     region: InputRegion,
+    /// Whether the pointer is over this layer. GPUI keeps the last pointer
+    /// position after it leaves, so hover on its own would stick.
+    inside: bool,
 }
 
 /// Show a card for a screenshot or recording.
@@ -129,7 +132,7 @@ fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &m
     let handle = kit::open_layer(cx, spec, |window, cx| {
         cx.new(|cx| {
             CardStack::start_ticking(window, cx);
-            CardStack { cards: vec![card], settings, next_id: 1, hidden: false, region: InputRegion::default() }
+            CardStack { cards: vec![card], settings, next_id: 1, hidden: false, region: InputRegion::default(), inside: false }
         })
     });
     cx.set_global(CardsWindow(handle));
@@ -144,7 +147,8 @@ impl CardStack {
                 let alive = this.update_in(cx, |stack, window, cx| {
                     let now = Instant::now();
                     let before = stack.cards.len();
-                    stack.cards.retain(|c| c.hovered || now < c.deadline);
+                    let inside = window.is_window_hovered();
+                    stack.cards.retain(|c| (c.hovered && inside) || now < c.deadline);
                     if stack.cards.len() != before {
                         cx.notify();
                     }
@@ -183,9 +187,9 @@ impl CardStack {
     /// CleanShot's Quick Access look in Zed's components: just the picture;
     /// hovering shows the main actions in the middle and the rest in the
     /// corners. Drag it out as a file; double-click to edit.
-    fn render_card(&self, card: &Card, cx: &mut Context<Self>) -> AnyElement {
+    fn render_card(&self, card: &Card, inside: bool, cx: &mut Context<Self>) -> AnyElement {
+        let shown = card.hovered && inside;
         let id = card.id;
-        let group: SharedString = format!("card-{id}").into();
         let path = card.path.clone();
         let video = card.video.is_some();
         let gif = is_gif(&path);
@@ -262,8 +266,7 @@ impl CardStack {
             .inset_0()
             .rounded(px(kit::RADIUS))
             .bg(rgba(0x0000008c))
-            .opacity(0.)
-            .group_hover(group.clone(), |s| s.opacity(1.))
+            .opacity(if shown { 1. } else { 0. })
             .flex()
             .items_center()
             .justify_center()
@@ -296,7 +299,7 @@ impl CardStack {
                 .left_0()
                 .right_0()
                 .justify_center()
-                .group_hover(group.clone(), |s| s.opacity(0.))
+                .when(shown, |s| s.opacity(0.))
                 .child(
                     h_flex()
                         .gap_1()
@@ -322,7 +325,6 @@ impl CardStack {
 
         div()
             .id(("card", id))
-            .group(group)
             .relative()
             .flex_none()
             .w(px(CARD_WIDTH))
@@ -357,7 +359,13 @@ impl Render for CardStack {
             window.set_input_region(Some(&[]));
             return kit::root(cx);
         }
-        let cards: Vec<_> = self.cards.iter().map(|c| self.render_card(c, cx)).collect();
+        let inside = window.is_window_hovered();
+        if self.inside && !inside {
+            let settings = self.settings.clone();
+            self.cards.iter_mut().filter(|c| c.hovered).for_each(|c| c.deadline = dismiss_at(&settings));
+        }
+        self.inside = inside;
+        let cards: Vec<_> = self.cards.iter().map(|c| self.render_card(c, inside, cx)).collect();
         kit::root(cx)
             .flex()
             .flex_col()
