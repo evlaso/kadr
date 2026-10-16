@@ -34,6 +34,10 @@ const FILMSTRIP: f32 = 52.;
 const RULER: f32 = 18.;
 const LANE: f32 = 52.;
 const SIDEBAR: f32 = 320. * kit::SCALE;
+/// The sidebar cards' inset and corners: the 6px segments inside sit
+/// concentric with them.
+pub(crate) const CARD_PAD: f32 = 10.;
+pub(crate) const CARD_RADIUS: f32 = 16.;
 /// Width of the labels in front of sidebar controls.
 const ROW_LABEL: f32 = 74.;
 /// Air around the preview inside the window.
@@ -81,7 +85,10 @@ pub struct StudioEditor {
     thumbs: Vec<Arc<Image>>,
     walls: Vec<(PathBuf, Arc<Image>)>,
     /// Saved looks, by name.
-    presets: Vec<(String, serde_json::Value)>,
+    presets: crate::presets::Presets,
+    /// The side panel's scroll, and its scrollbar's grab.
+    side_scroll: gpui::ScrollHandle,
+    side_grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     frame: Option<ImageSource>,
     /// The camera recorded alongside (studio mode), where its frame 0 sits
     /// on the recording's clock, and its frame at the playhead.
@@ -166,7 +173,9 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         cursor,
                         thumbs,
                         walls,
-                        presets: studio::presets(),
+                        presets: crate::presets::Presets::new(studio::presets(), studio::save_presets, cx),
+                side_scroll: gpui::ScrollHandle::new(),
+                side_grab: Default::default(),
                         frame: frame.map(ImageSource::from),
                         cam_file: Some(studio::camera_file(&video_path)).filter(|f| f.exists()),
                         cam_offset: studio::camera_offset(&video_path),
@@ -263,13 +272,6 @@ impl StudioEditor {
         self.project.save(&self.video);
         // The next recording starts with this look.
         self.project.remember_look();
-        cx.notify();
-    }
-
-    fn save_preset(&mut self, cx: &mut Context<Self>) {
-        let next = self.presets.iter().filter_map(|(name, _)| name.strip_prefix(t("common.preset_prefix"))?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
-        self.presets.push((tr!("common.preset_n", next), self.project.look()));
-        studio::save_presets(&self.presets);
         cx.notify();
     }
 
@@ -1286,7 +1288,7 @@ impl StudioEditor {
         let (sidebar_bg, divider) = (colors.editor_background, colors.border_variant);
         let (accent, line) = (colors.text_accent, colors.border);
         // An inset group, like System Settings: a soft card, rows inside.
-        let card = || v_flex().w_full().p_3().gap_3().rounded(px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
+        let card = || v_flex().w_full().p(px(CARD_PAD)).gap_3().rounded(px(CARD_RADIUS)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
         let label = |text: &'static str| div().w(px(ROW_LABEL)).flex_none().child(Label::new(text).size(LabelSize::Small).color(Color::Muted));
         let row = |text: &'static str, control: AnyElement| h_flex().w_full().gap_2().child(label(text)).child(div().flex_1().min_w_0().child(control));
         let toggle = |text: &'static str, switch: Switch| h_flex().w_full().justify_between().child(Label::new(text).size(LabelSize::Small)).child(switch);
@@ -1397,34 +1399,8 @@ impl StudioEditor {
             )
         };
 
-        // Presets: chips, and one button to keep or drop the current look.
-        let current = self.project.look();
-        let active = self.presets.iter().position(|(_, look)| crate::studio::look_matches(look, &current));
-        let presets = h_flex()
-            .w_full()
-            .flex_wrap()
-            .gap_1()
-            .children(self.presets.iter().enumerate().map(|(i, (name, look))| {
-                let look = look.clone();
-                preset_chip(i, name, active == Some(i), cx)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.project = this.project.with_look(&look, &this.probe);
-                        this.changed(cx);
-                    }))
-                    .child(delete_mark(i).on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.presets.remove(i);
-                        studio::save_presets(&this.presets);
-                        cx.notify();
-                    })))
-            }))
-            .child(
-                    Button::new("save-preset", t("common.save_as_preset"))
-                        .style(ButtonStyle::Subtle)
-                        .color(Color::Muted)
-                        .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
-                        .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
-            );
+        // Presets: a dropdown, with "+" to keep the current look.
+        let presets = crate::presets::render(&self.presets, &self.project.look(), cx);
 
         // The backdrop: colours and gradients, then wallpapers.
         let swatch = |id: SharedString, selected: bool| {
@@ -1609,8 +1585,8 @@ impl StudioEditor {
         let qualities: Vec<&'static str> = QUALITIES.iter().map(|q| q.0).collect();
         let out = studio::layout(&self.probe, &self.project, false);
         let export = card()
-            .child(pick(&files, gif as usize, "format", |p, i| p.format = if i == 1 { Format::Gif } else { Format::Mp4 }, cx))
-            .child(pick(&resolutions, self.project.resolution, "res", |p, i| p.resolution = i, cx))
+            .child(row(t("studio.row_format"), pick(&files, gif as usize, "format", |p, i| p.format = if i == 1 { Format::Gif } else { Format::Mp4 }, cx)))
+            .child(row(t("studio.row_size"), pick(&resolutions, self.project.resolution, "res", |p, i| p.resolution = i, cx)))
             .child(row(t("studio.row_fps"), pick(&rates, self.project.frame_rate, "fps", |p, i| p.frame_rate = i, cx)))
             .when(!gif, |s| s.child(row(t("studio.row_quality"), pick(&qualities, self.project.quality, "quality", |p, i| p.quality = i, cx))))
             .when(self.probe.audio && !gif, |s| {
@@ -1629,60 +1605,31 @@ impl StudioEditor {
                     .child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small)),
             );
 
-        v_flex()
+        let content = v_flex()
             .id("sidebar")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.side_scroll)
+            .gap_2()
+            .p_3()
+            .child(presets)
+            .child(context)
+            .child(look)
+            .children(cursor)
+            .children(camera)
+            .child(overlays)
+            .child(export);
+        div()
+            .relative()
             .flex_none()
             .w(px(SIDEBAR))
             .h_full()
             .bg(sidebar_bg)
             .border_l_1()
             .border_color(divider)
-            .overflow_y_scroll()
-            .gap_2()
-            .p_3()
-            .child(context)
-            .child(presets)
-            .child(look)
-            .children(cursor)
-            .children(camera)
-            .child(overlays)
-            .child(export)
+            .child(content)
+            .child(crate::ui::scrollbar(&self.side_scroll, &self.side_grab, cx))
     }
-}
-
-/// A preset as a chip; its × shows on hover.
-pub(crate) fn preset_chip<T: 'static>(i: usize, name: &str, on: bool, cx: &mut Context<T>) -> gpui::Stateful<Div> {
-    let colors = cx.theme().colors();
-    div()
-        .id(SharedString::from(format!("preset-{i}")))
-        .group(SharedString::from(format!("preset-{i}")))
-        .h(crate::ui::rems_from_px(22.))
-        .flex()
-        .items_center()
-        .gap_1()
-        .pl_2()
-        .pr_1()
-        .rounded(crate::ui::rems_from_px(7.))
-        .cursor_pointer()
-        .when(on, |d| d.bg(colors.element_selected))
-        .hover(|d| d.bg(colors.element_hover))
-        .child(Label::new(name.to_owned()).size(LabelSize::Small))
-}
-
-/// The × inside a preset chip, faint until the chip is hovered.
-pub(crate) fn delete_mark(i: usize) -> gpui::Stateful<Div> {
-    div()
-        .id(SharedString::from(format!("preset-delete-{i}")))
-        .size(px(14.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .opacity(0.)
-        .group_hover(SharedString::from(format!("preset-{i}")), |d| d.opacity(1.))
-        .hover(|d| d.bg(gpui::hsla(0., 0., 0.5, 0.3)))
-        .tooltip(Tooltip::text(t("common.delete_preset")))
-        .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Muted))
 }
 
 impl Render for StudioEditor {
@@ -1771,4 +1718,19 @@ fn size_label(project: &Project, probe: &Probe) -> String {
 /// "1,2 с"
 fn seconds(t: f64) -> String {
     tr!("common.seconds", crate::i18n::decimal(format!("{:.1}", t)))
+}
+
+impl crate::presets::HasPresets for StudioEditor {
+    fn presets(&mut self) -> &mut crate::presets::Presets {
+        &mut self.presets
+    }
+
+    fn current_look(&self) -> serde_json::Value {
+        self.project.look()
+    }
+
+    fn apply_look(&mut self, look: &serde_json::Value, cx: &mut Context<Self>) {
+        self.project = self.project.with_look(look, &self.probe);
+        self.changed(cx);
+    }
 }

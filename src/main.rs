@@ -8,6 +8,7 @@ mod launcher;
 mod hotkeys;
 mod palette;
 mod picker;
+mod presets;
 mod platform;
 mod panel;
 mod pin;

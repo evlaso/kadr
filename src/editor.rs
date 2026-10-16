@@ -56,6 +56,7 @@ const CHROME: f32 = 110. * kit::SCALE;
 const COMPACT_TOOLBAR: f32 = 1000.;
 /// Width of the background panel.
 const PANEL: f32 = 300. * kit::SCALE;
+use crate::studio_editor::{CARD_PAD, CARD_RADIUS};
 /// Slider ranges, as fractions of the picture's longer side.
 const MAX_PAD: f32 = 0.2;
 const MAX_ROUND: f32 = 0.05;
@@ -542,7 +543,10 @@ pub struct Editor {
     /// The background as last written to disk.
     remembered: serde_json::Value,
     /// Saved backgrounds, by name.
-    presets: Vec<(String, serde_json::Value)>,
+    presets: crate::presets::Presets,
+    /// The side panel's scroll, and its scrollbar's grab.
+    side_scroll: gpui::ScrollHandle,
+    side_grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     walls: Vec<(PathBuf, Arc<Image>)>,
     /// The picture's largest on-screen size; `disp` shrinks from it to make
     /// room for the background.
@@ -639,7 +643,9 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 zoom: 1.,
                 real: natural,
                 frame: Frame::last(),
-                presets: frame_presets(),
+                presets: crate::presets::Presets::new(frame_presets(), save_frame_presets, cx),
+                side_scroll: gpui::ScrollHandle::new(),
+                side_grab: Default::default(),
                 remembered: Frame::last().to_json(),
                 panel: false,
                 walls: Vec::new(),
@@ -1636,42 +1642,6 @@ impl Editor {
             .into_any_element()
     }
 
-    /// Saved backgrounds as chips, and one button to keep or drop the current one.
-    fn render_presets(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current = self.frame.to_json();
-        let active = self.presets.iter().position(|(_, look)| crate::studio::look_matches(look, &current));
-        h_flex()
-            .w_full()
-            .flex_wrap()
-            .gap_1()
-            .children(self.presets.iter().enumerate().map(|(i, (name, look))| {
-                let look = look.clone();
-                studio_editor::preset_chip(i, name, active == Some(i), cx)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.frame = Frame::from_json(&look);
-                        cx.notify();
-                    }))
-                    .child(studio_editor::delete_mark(i).on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.presets.remove(i);
-                        save_frame_presets(&this.presets);
-                        cx.notify();
-                    })))
-            }))
-            .child(
-                    Button::new("save-frame-preset", t("common.save_as_preset"))
-                        .style(ButtonStyle::Subtle)
-                        .color(Color::Muted)
-                        .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let next = this.presets.iter().filter_map(|(name, _)| name.strip_prefix(t("common.preset_prefix"))?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
-                            this.presets.push((tr!("common.preset_n", next), this.frame.to_json()));
-                            save_frame_presets(&this.presets);
-                            cx.notify();
-                        })),
-            )
-    }
-
     /// The background tool, like CleanShot's: what's behind the picture, its
     /// margins, corners, shadow and the output's shape.
     fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1680,7 +1650,7 @@ impl Editor {
             (colors.element_background, colors.element_hover, colors.element_selected, colors.text, colors.border_variant, colors.editor_background, colors.border_variant);
         // The same language as the studio's sidebar: soft cards, a label and
         // its control on one line, segmented choices.
-        let card = || v_flex().w_full().p_3().gap_3().rounded(px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
+        let card = || v_flex().w_full().p(px(CARD_PAD)).gap_3().rounded(px(CARD_RADIUS)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
         let row = |text: &'static str, control: AnyElement| {
             h_flex().w_full().gap_2().child(div().w(px(70.)).flex_none().child(Label::new(text).size(LabelSize::Small).color(Color::Muted))).child(div().flex_1().min_w_0().child(control))
         };
@@ -1781,17 +1751,14 @@ impl Editor {
             format!("{ow}×{oh}")
         });
 
-        v_flex()
+        let content = v_flex()
             .id("background-panel")
-            .flex_none()
-            .w(px(PANEL))
-            .h(px(height))
+            .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.side_scroll)
             .gap_2()
             .p_3()
-            .bg(panel_bg)
-            .border_l_1()
-            .border_color(divider)
+            .child(crate::presets::render(&self.presets, &self.frame.to_json(), cx))
             .child(
                 card().child(
                     h_flex()
@@ -1804,7 +1771,6 @@ impl Editor {
                         }))),
                 ),
             )
-            .child(self.render_presets(cx))
             .child(
                 card()
                     .child(h_flex().w_full().gap(px(2.)).children(aspects))
@@ -1816,7 +1782,17 @@ impl Editor {
                     .children(size.filter(|_| self.frame.on()).map(|s| {
                         h_flex().justify_end().child(Label::new(s).size(LabelSize::XSmall).color(Color::Muted))
                     })),
-            )
+            );
+        div()
+            .relative()
+            .flex_none()
+            .w(px(PANEL))
+            .h(px(height))
+            .bg(panel_bg)
+            .border_l_1()
+            .border_color(divider)
+            .child(content)
+            .child(crate::ui::scrollbar(&self.side_scroll, &self.side_grab, cx))
     }
 
     /// Output size after cropping, as shown in the footer.
@@ -3002,5 +2978,20 @@ mod tests {
             let big = Doc { shapes: doc.shapes.clone(), crop: None };
             std::fs::write(out, compose(&src, &big, &frame).unwrap()).unwrap();
         }
+    }
+}
+
+impl crate::presets::HasPresets for Editor {
+    fn presets(&mut self) -> &mut crate::presets::Presets {
+        &mut self.presets
+    }
+
+    fn current_look(&self) -> serde_json::Value {
+        self.frame.to_json()
+    }
+
+    fn apply_look(&mut self, look: &serde_json::Value, cx: &mut Context<Self>) {
+        self.frame = Frame::from_json(look);
+        cx.notify();
     }
 }

@@ -71,6 +71,10 @@ pub struct SettingsView {
     languages_open: bool,
     /// Space kadr's captures take, measured when the window opens.
     usage: storage::Usage,
+    /// Type-to-search over every section, like System Settings.
+    query: String,
+    scroll: gpui::ScrollHandle,
+    grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     focus: FocusHandle,
 }
 
@@ -85,7 +89,7 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, usage: storage::usage(&Settings::load()), focus }
+            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, usage: storage::usage(&Settings::load()), query: String::new(), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
         })
     });
 }
@@ -203,15 +207,31 @@ impl SettingsView {
             .w(px(210. * kit::SCALE))
             .h_full()
             .flex_none()
-            .p_2()
+            // Corners inside are the window's less this inset: concentric.
+            .p(px(kit::WINDOW_RADIUS - 7.))
             .gap_0p5()
             // The same dark as the page, set apart by a hairline, like the
             // editors' side panels.
             .border_r_1()
             .border_color(colors.border_variant)
-            .child(div().px_2().pt_1().pb_2().child(Label::new(t("common.settings")).size(LabelSize::Small).color(Color::Muted)))
+            .child(
+                h_flex()
+                    .mb_2()
+                    .h(px(30.))
+                    .px_2()
+                    .gap_1p5()
+                    .rounded(px(7.))
+                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .bg(colors.element_background)
+                    .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Small).color(Color::Muted))
+                    .child(if self.query.is_empty() {
+                        div().text_color(colors.text_placeholder).child(t("settings.search")).into_any_element()
+                    } else {
+                        div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(format!("{}▏", self.query)).into_any_element()
+                    }),
+            )
             .children(Tab::ALL.into_iter().map(|tab| {
-                let on = tab == self.tab;
+                let on = tab == self.tab && self.query.is_empty();
                 h_flex()
                     .id(SharedString::from(format!("tab-{}", tab.label())))
                     .gap_2()
@@ -226,6 +246,8 @@ impl SettingsView {
                     .child(Label::new(tab.label()).color(if on { Color::Custom(on_accent) } else { Color::Default }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.tab = tab;
+                        this.query.clear();
+                        this.scroll.set_offset(gpui::point(px(0.), px(0.)));
                         cx.notify();
                     }))
             }))
@@ -240,9 +262,10 @@ impl SettingsView {
             )
     }
 
-    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// A section's rows, each with its text for the search.
+    fn tab_rows(&self, tab: Tab, cx: &mut Context<Self>) -> Vec<(String, AnyElement)> {
         let s = self.settings.clone();
-        let rows: Vec<AnyElement> = match self.tab {
+        match tab {
             Tab::General => vec![
                 row(t("settings.language"),
                     "",
@@ -350,7 +373,7 @@ impl SettingsView {
             Tab::Shortcuts if cfg!(target_os = "linux") => hotkeys::ACTIONS.iter().enumerate().map(|(i, action)| row(t(action.title), "", self.render_keys(i, cx))).collect(),
             Tab::Shortcuts => vec![row(t("common.keyboard_shortcuts"), t("settings.only_set_up_in_hyprland"), div().into_any_element())],
             Tab::Storage => vec![
-                self.render_usage(cx),
+                (format!("{} {} {}", t("settings.used"), t("common.screenshots"), t("common.recordings")), self.render_usage(cx)),
                 row(t("settings.delete_old_captures"),
                     t("settings.for_good_once_day_only"),
                     chips(cx, "cleanup", storage::CLEANUP_DAYS.iter().map(|&d| if d == 0 { t("settings.never").into() } else { tr!("settings.days", d) }).collect(), storage::CLEANUP_DAYS.iter().position(|&d| d == s.cleanup_days), |s, i| s.cleanup_days = storage::CLEANUP_DAYS[i]),
@@ -388,26 +411,50 @@ impl SettingsView {
                     Button::new("config", t("common.open")).style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(&util::config_dir())).into_any_element(),
                 ),
             ],
-        };
-        // An inset group, like System Settings: rows on a soft rounded card,
-        // hairlines between them.
-        let colors = cx.theme().colors();
-        let count = rows.len();
-        let group = rows.into_iter().enumerate().flat_map(|(i, row)| {
-            let line = (i + 1 < count).then(|| div().h(px(1.)).bg(colors.border_variant).into_any_element());
-            std::iter::once(row).chain(line)
-        });
-        v_flex()
-            .px_6()
-            .py_4()
-            .child(v_flex().px_4().rounded(crate::ui::rems_from_px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(colors.element_background).children(group.collect::<Vec<_>>()))
-            .into_any_element()
+        }
+    }
+
+    /// The chosen section; while searching, the matching rows of every
+    /// section under their names.
+    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        let query = self.query.to_lowercase();
+        let searching = !query.is_empty();
+        let tabs: Vec<Tab> = if searching { Tab::ALL.to_vec() } else { vec![self.tab] };
+        let (line_color, group_bg) = (cx.theme().colors().border_variant, cx.theme().colors().element_background);
+        let mut body = v_flex().px_6().pt_5().pb_4();
+        let mut found = false;
+        for tab in tabs {
+            let whole = tab.label().to_lowercase().contains(&query);
+            let rows: Vec<AnyElement> = self.tab_rows(tab, cx).into_iter().filter(|(text, _)| !searching || whole || text.to_lowercase().contains(&query)).map(|r| r.1).collect();
+            if rows.is_empty() {
+                continue;
+            }
+            // The heading scrolls with its rows.
+            body = if searching {
+                body.child(div().px_1().pt(px(if found { 18. } else { 0. })).pb_2().child(Label::new(tab.label()).size(LabelSize::Small).color(Color::Muted)))
+            } else {
+                body.child(div().pb_3().text_size(crate::ui::rems_from_px(20.)).font_weight(gpui::FontWeight::SEMIBOLD).child(tab.label()))
+            };
+            found = true;
+            // An inset group, like System Settings: rows on a soft rounded
+            // card, hairlines between them.
+            let count = rows.len();
+            let group = rows.into_iter().enumerate().flat_map(|(i, row)| {
+                let line = (i + 1 < count).then(|| div().h(px(1.)).bg(line_color).into_any_element());
+                std::iter::once(row).chain(line)
+            });
+            body = body.child(v_flex().px_4().rounded(crate::ui::rems_from_px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(group_bg).children(group.collect::<Vec<_>>()));
+        }
+        if !found {
+            body = body.child(div().pt_10().flex().justify_center().child(Label::new(t("settings.nothing_found")).color(Color::Muted)));
+        }
+        body.into_any_element()
     }
 }
 
 /// Title and description on the left, the control on the right.
-fn row(title: &str, description: &str, control: AnyElement) -> AnyElement {
-    h_flex()
+fn row(title: &str, description: &str, control: AnyElement) -> (String, AnyElement) {
+    let el = h_flex()
         .w_full()
         .justify_between()
         .gap_6()
@@ -415,12 +462,12 @@ fn row(title: &str, description: &str, control: AnyElement) -> AnyElement {
         .child(
             v_flex()
                 .min_w_0()
-                .gap_0p5()
                 .child(div().whitespace_nowrap().child(Label::new(title.to_owned())))
                 .when(!description.is_empty(), |c| c.child(Label::new(description.to_owned()).size(LabelSize::Small).color(Color::Muted))),
         )
         .child(div().flex_none().child(control))
-        .into_any_element()
+        .into_any_element();
+    (format!("{title} {description}"), el)
 }
 
 fn switch(id: &'static str, on: bool, cx: &mut Context<SettingsView>, set: fn(&mut Settings, bool)) -> AnyElement {
@@ -593,10 +640,22 @@ impl Render for SettingsView {
                     return this.record_key(e, cx);
                 }
                 let i = Tab::ALL.iter().position(|t| *t == this.tab).unwrap_or(0);
-                match e.keystroke.key.as_str() {
+                let k = &e.keystroke;
+                match k.key.as_str() {
+                    "escape" if !this.query.is_empty() => this.query.clear(),
                     "escape" => window.remove_window(),
                     "tab" | "down" => this.tab = Tab::ALL[(i + 1) % Tab::ALL.len()],
                     "up" => this.tab = Tab::ALL[(i + Tab::ALL.len() - 1) % Tab::ALL.len()],
+                    "backspace" => {
+                        this.query.pop();
+                    }
+                    // Typing anywhere searches.
+                    _ if !(k.modifiers.control || k.modifiers.alt || k.modifiers.platform) => {
+                        if let Some(ch) = k.key_char.as_deref().filter(|c| !c.chars().any(char::is_control)) {
+                            this.query.push_str(ch);
+                            this.scroll.set_offset(gpui::point(px(0.), px(0.)));
+                        }
+                    }
                     _ => {}
                 }
                 cx.notify();
@@ -614,8 +673,9 @@ impl Render for SettingsView {
                                     .flex_1()
                                     .min_w_0()
                                     .h_full()
-                                    .child(div().px_6().pt_5().pb_1().text_size(crate::ui::rems_from_px(20.)).font_weight(gpui::FontWeight::SEMIBOLD).child(self.tab.label()))
-                                    .child(div().id("body").flex_1().min_h_0().overflow_y_scroll().child(self.render_body(cx))),
+                                    .relative()
+                                    .child(div().id("body").size_full().overflow_y_scroll().track_scroll(&self.scroll).child(self.render_body(cx)))
+                                    .child(crate::ui::scrollbar(&self.scroll, &self.grab, cx)),
                             ),
                     ),
             )

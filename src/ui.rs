@@ -486,29 +486,47 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        // GPUI puts a tooltip a pixel off the pointer, over whatever is
-        // below it; the transparent top margin moves the card down, clear of
-        // the control. Small and quiet, like macOS's.
-        div().pt(px(TOOLTIP_DROP)).child(
+    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // Small, quiet and centred under the pointer, like macOS's. GPUI
+        // puts a tooltip's corner a pixel off the pointer, over whatever is
+        // below; measuring the text lets the card shift down, clear of the
+        // control, and left, onto the pointer's axis.
+        let size = LabelSize::Small.rems().to_pixels(window.rem_size());
+        let font = gpui::font(kit::UI_FONT);
+        let width_of = |text: &str| {
+            let run = gpui::TextRun { len: text.len(), font: font.clone(), ..Default::default() };
+            f32::from(window.text_system().layout_line(text, size, &[run]).width)
+        };
+        let keys = if self.key_binding.is_some() { 48. } else { 0. };
+        let text = (width_of(&self.title) + keys).max(self.meta.as_ref().map_or(0., |m| width_of(m)));
+        let width = text.min(TOOLTIP_MAX) + 2. * TOOLTIP_PAD + 2.;
+        let mouse = f32::from(window.mouse_position().x);
+        let room = f32::from(window.viewport_size().width);
+        // Where GPUI will put it, and where it should be.
+        let origin = if mouse + 1. + width > room { mouse - width - 1. } else { mouse + 1. };
+        let left = (mouse - width / 2.).clamp(4., (room - width - 4.).max(4.));
+        div().w(px(width)).pt(px(TOOLTIP_DROP)).child(
             v_flex()
+                .relative()
+                .left(px(left - origin))
+                .w(px(width))
+                .items_center()
                 .elevation_2(cx)
                 .font_family(kit::UI_FONT)
                 .text_size(LabelSize::Small.rems())
+                .text_center()
                 .text_color(cx.theme().colors.text)
                 .py_1()
-                .px_2()
-                .gap_0p5()
-                .child(
-                    h_flex()
-                        .gap_3()
-                        .child(div().max_w_64().child(self.title.clone()))
-                        .children(self.key_binding.clone()),
-                )
-                .children(self.meta.clone().map(|meta| div().max_w_64().child(Label::new(meta).size(LabelSize::XSmall).color(Color::Muted)))),
+                .px(px(TOOLTIP_PAD))
+                .child(h_flex().gap_2().child(div().max_w(px(TOOLTIP_MAX)).child(self.title.clone())).children(self.key_binding.clone()))
+                .children(self.meta.clone().map(|meta| div().max_w(px(TOOLTIP_MAX)).text_color(cx.theme().colors.text_muted).child(meta))),
         )
     }
 }
+
+/// The widest a tooltip's text gets before it wraps, and its side padding.
+const TOOLTIP_MAX: f32 = 240.;
+const TOOLTIP_PAD: f32 = 8.;
 
 /// How far below the pointer a tooltip's card starts.
 const TOOLTIP_DROP: f32 = 18.;
@@ -577,6 +595,7 @@ pub struct ButtonLike {
     selected: bool,
     disabled: bool,
     square: bool,
+    full_width: bool,
     children: SmallVec<[AnyElement; 2]>,
     tooltip: Option<TooltipBuilder>,
     on_click: Option<ClickHandler>,
@@ -591,6 +610,7 @@ impl ButtonLike {
             selected: false,
             disabled: false,
             square: false,
+            full_width: false,
             children: SmallVec::new(),
             tooltip: None,
             on_click: None,
@@ -617,6 +637,11 @@ impl ButtonLike {
         self
     }
 
+    /// Take the row's spare width.
+    pub fn full_width(mut self) -> Self {
+        self.full_width = true;
+        self
+    }
 
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
@@ -663,6 +688,7 @@ impl RenderOnce for ButtonLike {
             .bg(rest)
             .when(self.style == ButtonStyle::Outlined, |b| b.border_1().border_color(colors.border_variant))
             .map(|b| if self.square { b.w(height) } else { b.px(self.size.padding()) })
+            .when(self.full_width, |b| b.flex_1().min_w_0())
             .when(!self.disabled, |b| {
                 b.cursor_pointer().hover(|s| s.bg(hover)).active(|s| s.bg(active))
             })
@@ -935,4 +961,80 @@ mod tests {
         assert_eq!(KeyBinding::new("escape").text.as_ref(), "Escape");
         assert_eq!(KeyBinding::new("x").text.as_ref(), "X");
     }
+}
+
+// ---------------------------------------------------------------- scrollbar
+
+/// A thin scrollbar for a container that tracks `handle`: put it after that
+/// container, in a shared `relative` parent. The thumb can be dragged, and
+/// a click on the track jumps there. `grab` keeps the drag between frames.
+pub fn scrollbar(handle: &gpui::ScrollHandle, grab: &std::rc::Rc<std::cell::Cell<Option<f32>>>, cx: &App) -> impl IntoElement {
+    let (handle, grab) = (handle.clone(), grab.clone());
+    let mut color = cx.theme().colors.text;
+    gpui::canvas(
+        |_, _, _| {},
+        move |_, _, window, _| {
+            let view = handle.bounds();
+            let max = f32::from(handle.max_offset().y);
+            let h = f32::from(view.size.height);
+            if max < 1. || h < 40. {
+                return;
+            }
+            let thumb_h = (h * h / (h + max)).max(32.);
+            let travel = h - thumb_h;
+            let top = f32::from(view.top()) + travel * (-f32::from(handle.offset().y) / max).clamp(0., 1.);
+            let track_x = f32::from(view.right()) - 12.;
+            color.alpha = if grab.get().is_some() { 0.5 } else { 0.28 };
+            let thumb = Bounds::new(point(px(f32::from(view.right()) - 8.), px(top + 3.)), gpui::size(px(5.), px(thumb_h - 6.)));
+            window.paint_quad(fill(thumb, color).corner_radii(px(2.5)));
+
+            let scroll_to = {
+                let handle = handle.clone();
+                move |thumb_top: f32| {
+                    let at = ((thumb_top - f32::from(view.top())) / travel.max(1.)).clamp(0., 1.) * max;
+                    handle.set_offset(point(handle.offset().x, px(-at)));
+                }
+            };
+            let on_track = move |p: gpui::Point<Pixels>| f32::from(p.x) >= track_x && f32::from(p.x) <= f32::from(view.right()) && p.y >= view.top() && p.y <= view.bottom();
+            let g = grab.clone();
+            let jump = scroll_to.clone();
+            window.on_mouse_event(move |e: &gpui::MouseDownEvent, phase, window, cx| {
+                if phase != gpui::DispatchPhase::Capture || e.button != gpui::MouseButton::Left || !on_track(e.position) {
+                    return;
+                }
+                let y = f32::from(e.position.y);
+                if y < top || y > top + thumb_h {
+                    // The thumb's middle comes to the click.
+                    jump(y - thumb_h / 2.);
+                    g.set(Some(thumb_h / 2.));
+                } else {
+                    g.set(Some(y - top));
+                }
+                cx.stop_propagation();
+                window.refresh();
+            });
+            let g = grab.clone();
+            window.on_mouse_event(move |e: &gpui::MouseMoveEvent, phase, window, _| {
+                if phase != gpui::DispatchPhase::Capture {
+                    return;
+                }
+                if let Some(at) = g.get() {
+                    if !e.dragging() {
+                        g.set(None);
+                    } else {
+                        scroll_to(f32::from(e.position.y) - at);
+                    }
+                    window.refresh();
+                }
+            });
+            let g = grab.clone();
+            window.on_mouse_event(move |_: &gpui::MouseUpEvent, _, window, _| {
+                if g.take().is_some() {
+                    window.refresh();
+                }
+            });
+        },
+    )
+    .absolute()
+    .inset_0()
 }

@@ -24,6 +24,11 @@ const THUMB_ASPECT: f32 = 1.6;
 /// Stored thumbnail size, sharp up to twice the smallest tile.
 const THUMB: (u32, u32) = (420, 262);
 const GAP: f32 = 12.;
+/// Thumbnail corners, and how far in its round buttons and badge sit:
+/// circles of radius `RADIUS - INSET` stay concentric with the corner.
+const RADIUS: f32 = 14.;
+const INSET: f32 = 4.;
+const BUTTON: f32 = 2. * (RADIUS - INSET);
 /// Older captures are left out to keep the window snappy.
 const LIMIT: usize = 300;
 
@@ -82,6 +87,8 @@ pub struct History {
     columns: usize,
     item_width: f32,
     scroll: ScrollHandle,
+    /// Where the scrollbar thumb was grabbed, while it is dragged.
+    grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     focus: FocusHandle,
 }
 
@@ -198,7 +205,7 @@ pub fn open(cx: &mut App) {
                 }
             })
             .detach();
-            History { items, query: String::new(), filter: Filter::All, selected: 0, columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), focus }
+            History { items, query: String::new(), filter: Filter::All, selected: 0, columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus }
         })
     });
 }
@@ -347,7 +354,7 @@ impl History {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         };
         let corner = |id: &'static str, icon: IconName, tip: &'static str| {
-            pill(div().id((id, index))).size(px(26.)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tooltip(Tooltip::text(tip))
+            pill(div().id((id, index))).size(px(BUTTON)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tooltip(Tooltip::text(tip))
         };
         let wide = |id: &'static str, label: &'static str| pill(div().id((id, index))).h(px(28.)).px_3().child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)));
         let overlay = div()
@@ -355,8 +362,8 @@ impl History {
             .inset_0()
             .opacity(0.)
             .group_hover(group.clone(), |s| s.opacity(1.))
-            .children(item.thumb.as_ref().map(|t| img(t.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(8.))))
-            .child(div().absolute().inset_0().rounded(px(8.)).bg(rgba(0x00000052)))
+            .children(item.thumb.as_ref().map(|t| img(t.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
+            .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x00000052)))
             .child(
                 v_flex()
                     .absolute()
@@ -375,11 +382,11 @@ impl History {
                         )
                     }),
             )
-            .child(div().absolute().top_1p5().right_1p5().child(corner("folder", IconName::Folder, t("common.show_in_folder")).on_click({
+            .child(div().absolute().top(px(INSET)).right(px(INSET)).child(corner("folder", IconName::Folder, t("common.show_in_folder")).on_click({
                 let path = path.clone();
                 move |_, _, _| util::open_folder(&path)
             })))
-            .child(div().absolute().bottom_1p5().right_1p5().child(corner("trash", IconName::Trash, t("history.delete_del")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx)))));
+            .child(div().absolute().bottom(px(INSET)).right(px(INSET)).child(corner("trash", IconName::Trash, t("history.delete_del")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx)))));
 
         // A recording's length (or "GIF") on a frosted pill.
         let badge = match item.kind {
@@ -390,11 +397,11 @@ impl History {
         .map(|text| {
             h_flex()
                 .absolute()
-                .top_1p5()
-                .left_1p5()
+                .top(px(INSET))
+                .left(px(INSET))
+                .h(px(BUTTON))
                 .gap_1()
                 .px_2()
-                .py_0p5()
                 .rounded_full()
                 .bg(rgba(0x00000066))
                 .backdrop_blur(px(8.))
@@ -406,17 +413,20 @@ impl History {
             .relative()
             .w(px(width))
             .h(px(height))
-            .rounded(px(8.))
+            .rounded(px(RADIUS))
             .overflow_hidden()
             .bg(colors.element_background)
-            .children(item.thumb.as_ref().map(|t| img(t.sharp.clone()).size_full().object_fit(ObjectFit::Cover).rounded(px(8.))))
+            .children(item.thumb.as_ref().map(|t| img(t.sharp.clone()).size_full().object_fit(ObjectFit::Cover).rounded(px(RADIUS))))
             // A faint shade and a hairline keep pictures from melting into
             // the window behind them.
-            .child(div().absolute().inset_0().rounded(px(8.)).bg(rgba(0x0000001f)).border_1().border_color(colors.border))
+            .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x0000001f)))
             .children(badge)
-            .child(overlay);
+            .child(overlay)
+            // The hairline last, so the hover doesn't cover it.
+            .child(div().absolute().inset_0().rounded(px(RADIUS)).border_1().border_color(colors.border));
         // The selected thumbnail gets an accent ring, like Finder's.
-        let ring = div().p(px(3.)).rounded(px(11.)).border_2().border_color(if selected { colors.text_accent } else { gpui::transparent_black() }).child(thumb);
+        // Concentric with the thumbnail: its corner plus the gap and the line.
+        let ring = div().p(px(3.)).rounded(px(RADIUS + 5.)).border_2().border_color(if selected { colors.text_accent } else { gpui::transparent_black() }).child(thumb);
         let kind = match item.kind {
             Kind::Shot => "PNG",
             Kind::Video => "MP4",
@@ -496,8 +506,7 @@ impl Render for History {
         let empty = grid.is_empty();
         let body = div()
             .id("grid")
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .px_4()
@@ -551,7 +560,7 @@ impl Render for History {
                                     }),
                             ),
                     )
-                    .child(body)
+                    .child(div().relative().flex_1().min_h_0().child(body).child(crate::ui::scrollbar(&self.scroll, &self.grab, cx)))
                     .child(
                         h_flex()
                             .gap_5()

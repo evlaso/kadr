@@ -22,6 +22,10 @@ use crate::{editor, job, ocr, pin, studio_editor, track, trim, util};
 use crate::i18n::t;
 
 const CARD_WIDTH: f32 = 240. * kit::SCALE;
+/// How far in the corner buttons sit; as circles of radius
+/// `kit::RADIUS - INSET` they stay concentric with the card's corners.
+const INSET: f32 = 6.;
+const CORNER: f32 = 2. * (kit::RADIUS - INSET);
 const THUMB_WIDTH: f32 = CARD_WIDTH;
 /// Cards are always 4:3; the picture is cropped to fill them, centred.
 const THUMB_MAX: f32 = THUMB_WIDTH * 3. / 4.;
@@ -336,7 +340,7 @@ impl CardStack {
         };
         let corner = |key: &'static str, icon: IconName, tip: &'static str| {
             pill(div().id((key, id)))
-                .size(px(26. * kit::SCALE))
+                .size(px(CORNER))
                 .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(ink)))
                 .tooltip(Tooltip::text(tip))
         };
@@ -383,7 +387,7 @@ impl CardStack {
         let extra = if video {
             (!gif).then(|| {
                 pill(div().id(("gif", id)))
-                    .h(px(26. * kit::SCALE))
+                    .h(px(CORNER))
                     .px_2()
                     .child(Label::new("GIF").size(LabelSize::XSmall).color(Color::Custom(ink)))
                     .tooltip(Tooltip::text(t("card.save_as_gif_720px_15")))
@@ -394,7 +398,7 @@ impl CardStack {
             Some(corner("ocr", IconName::CaseSensitive, t("common.recognize_text")).on_click(act(|_, path, _, _, cx| ocr::image(path.to_owned(), cx))).into_any_element())
         };
 
-        let at = |el: AnyElement| div().absolute().m_2().child(el);
+        let at = |el: AnyElement| div().absolute().m(px(INSET)).child(el);
         let hover = div()
             .absolute()
             .inset_0()
@@ -420,7 +424,7 @@ impl CardStack {
                 .left_0(),
             )
             .child(
-                div().absolute().bottom_0().right_0().m_2().child(
+                div().absolute().bottom_0().right_0().m(px(INSET)).child(
                     h_flex()
                         .gap_1()
                         .children(extra)
@@ -428,19 +432,18 @@ impl CardStack {
                 ),
             );
 
+        // The length in the corner, like in the history.
         let badge = card.video.map(|secs| {
-            h_flex()
+            div()
                 .absolute()
-                .bottom_2()
-                .left_0()
-                .right_0()
-                .justify_center()
+                .top(px(INSET))
+                .left(px(INSET))
                 .when(shown, |s| s.opacity(0.))
                 .child(
                     h_flex()
+                        .h(px(CORNER))
                         .gap_1()
-                        .px_2()
-                        .py_0p5()
+                        .px_2p5()
                         .rounded_full()
                         // Frosted, like the hover overlay under the buttons.
                         .bg(rgba(0x00000066))
@@ -521,10 +524,10 @@ impl CardStack {
                     .child(div().w_full().h(px(4.)).rounded_full().bg(hsla(0., 0., 1., 0.25)).child(div().h_full().w(gpui::relative(fraction)).rounded_full().bg(gpui::white()))),
             )
             .child(
-                div().absolute().top_0().left_0().m_2().child(
+                div().absolute().top_0().left_0().m(px(INSET)).child(
                     div()
                         .id(("cancel-job", id))
-                        .size(px(26. * kit::SCALE))
+                        .size(px(CORNER))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -590,9 +593,9 @@ impl CardStack {
                 )
             })
             .child(
-                div().absolute().top_0().left_0().m_2().child(
+                div().absolute().top_0().left_0().m(px(INSET)).child(
                     pill(div().id(("close", id)))
-                        .size(px(26. * kit::SCALE))
+                        .size(px(CORNER))
                         .child(Icon::new(IconName::Close).size(IconSize::Small).color(Color::Custom(ink)))
                         .tooltip(Tooltip::text(t("common.close")))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {

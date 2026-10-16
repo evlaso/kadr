@@ -22,7 +22,7 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 - `ui.rs`: kadr's own components (Button, IconButton, ButtonLike, Label, Icon, Switch, Tooltip, KeyBinding, ProgressBar, Divider), the theme, and color/quad helpers. Don't add Zed's `ui`/`theme` crates back: they are GPL, and these replaced them on purpose.
 - `palette.rs`: kadr's own dark and light colours (Sumi Dark, and white with the same blue), picked in the settings or following the system (`platform::prefers_dark`, since GPUI reports the appearance late on Wayland). Control fills and separators are the text color at a low opacity.
 - `kit.rs`: assets (icons and fonts are compiled in), `REM`/`SCALE`, `open_layer` overlays, `open_window` for ordinary windows (editor, studio, settings; they float by the rule in `data/hypr/kadr.lua`), `InputRegion`.
-- Screens: `cards` (quick-access card), `editor` (screenshot annotation), `studio` + `studio_editor` (zooms, trim and cuts, cursor, export through ffmpeg/libplacebo), `record` + `panel` + `track` (recording through gpu-screen-recorder, click/key log from the Hyprland Lua hook `data/hypr/kadr.lua`), `trim`, `history`, `settings` + `settings_view`, `ocr` (tesseract), `pin`, `job` (ffmpeg progress toast), `tray` (`kadr tray`, a separate process with no GPUI).
+- Screens: `cards` (quick-access card), `editor` (screenshot annotation), `studio` + `studio_editor` (zooms, trim and cuts, cursor, export through ffmpeg/libplacebo), `record` + `panel` + `track` (recording through gpu-screen-recorder, click/key log from the Hyprland Lua hook `data/hypr/kadr.lua`), `trim`, `history`, `settings` + `settings_view`, `ocr` (tesseract), `pin`, `job` (ffmpeg progress, shown as a card), `presets` (the saved-looks dropdown shared by the studio and the editor), `tray` (`kadr tray`, a separate process with no GPUI).
 
 ## Traps already hit
 
@@ -40,6 +40,7 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 
 ## Conventions
 
+- Nested corners are concentric: an inner element's radius is the outer radius less the inset (see `cards::CORNER`, `history::BUTTON`, `studio_editor::CARD_RADIUS`). Scrolling panes get `ui::scrollbar`.
 - Look and feel: CleanShot X UX in a soft, clean Apple-like look (references: CleanShot, Raycast, Atlas for Mac). No glass. Separate groups with space and tone, not lines. The main action uses the accent color.
 - Before changing the user's Hyprland config (`~/.config/hypr/*.lua`), back up the file (`.bak-<timestamp>`).
 - Commits go to `main` (GitHub `vlasmn/kadr`, private). End commit messages with the `Co-Authored-By` trailer the session specifies.
