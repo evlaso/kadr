@@ -145,7 +145,7 @@ impl Render for ProgressView {
                                 .on_click(move |_, _, _| {
                                     state.cancelled.set(true);
                                     if let Some(pid) = state.pid.get() {
-                                        util::signal(pid, libc::SIGTERM);
+                                        util::signal(pid, util::Signal::Terminate);
                                     }
                                 }),
                         ),

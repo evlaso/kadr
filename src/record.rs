@@ -385,12 +385,12 @@ impl Recorder {
         }
         // SIGINT lets gpu-screen-recorder finalize the file.
         let pid = s.gsr;
-        util::signal(pid, libc::SIGINT);
+        util::signal(pid, util::Signal::Interrupt);
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(5)).await;
             let still = this.update(cx, |rec, _| matches!(&rec.state, State::Recording(s) if s.gsr == pid)).unwrap_or(false);
             if still {
-                util::signal(pid, libc::SIGKILL);
+                util::signal(pid, util::Signal::Kill);
             }
         })
         .detach();
@@ -398,7 +398,7 @@ impl Recorder {
 
     fn toggle_pause(&mut self) -> Option<bool> {
         let State::Recording(s) = &mut self.state else { return None };
-        util::signal(s.gsr, libc::SIGUSR2);
+        util::signal(s.gsr, util::Signal::Pause);
         Some(s.clock.toggle())
     }
 
@@ -411,7 +411,7 @@ impl Recorder {
             let _ = w.update(cx, |_, window, _| window.remove_window());
         }
         if let Some(cam) = s.webcam {
-            util::signal(cam, libc::SIGTERM);
+            util::signal(cam, util::Signal::Terminate);
         }
         let _ = std::fs::remove_file(region_file());
         refresh_omarchy_indicator();
@@ -500,7 +500,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     let _ = std::fs::create_dir_all(util::cache_dir());
     let stop_cam = || {
         if let Some(cam) = webcam {
-            util::signal(cam, libc::SIGTERM);
+            util::signal(cam, util::Signal::Terminate);
         }
     };
     let stderr = std::fs::File::create(log_file()).map_err(|e| Some(e.to_string()))?;

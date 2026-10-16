@@ -97,10 +97,9 @@ impl Panel {
         let entries = self.mics.clone();
         let selected = self.opts.mic_device.clone();
         let height = (12. + 34. * entries.len() as f32) * kit::SCALE;
-        let options = WindowOptions {
+        let mut options = WindowOptions {
             titlebar: None,
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.), px(0.)), size: size(px(380. * kit::SCALE), px(height)) })),
-            linux_window_background: gpui::LinuxWindowBackground::Transparent,
             kind: WindowKind::AnchoredPopup(PopupOptions {
                 parent: window.window_handle(),
                 anchor_rect: Bounds::new(event.position, size(px(1.), px(1.))),
@@ -113,6 +112,7 @@ impl Panel {
             }),
             ..Default::default()
         };
+        crate::platform::transparent(&mut options);
         if let Err(e) = cx.open_window(options, |window, cx| {
             window.set_rem_size(px(kit::REM));
             cx.new(|_| MicMenu { panel, entries, selected })

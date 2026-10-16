@@ -54,7 +54,7 @@ async fn grab_region() -> Option<PathBuf> {
         None => false,
     };
     if let Some(pid) = freeze {
-        util::signal(pid, libc::SIGTERM);
+        util::signal(pid, util::Signal::Terminate);
     }
     grabbed.then_some(png)
 }
@@ -250,7 +250,7 @@ pub async fn download_russian() -> Result<(), String> {
         let system = PathBuf::from(format!("/usr/share/tessdata/{lang}.traineddata"));
         let link = dir.join(format!("{lang}.traineddata"));
         if system.exists() && !link.exists() {
-            let _ = std::os::unix::fs::symlink(&system, &link);
+            let _ = crate::platform::link(&system, &link);
         }
     }
     let out = dir.join("rus.traineddata");

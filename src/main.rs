@@ -3,6 +3,7 @@ mod cards;
 mod editor;
 mod history;
 mod palette;
+mod platform;
 mod panel;
 mod pin;
 mod record;
@@ -20,7 +21,6 @@ mod ocr;
 mod util;
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -159,19 +159,15 @@ impl Command {
     }
 }
 
-fn socket_path() -> PathBuf {
-    util::runtime_dir().join("kadr.sock")
-}
-
 /// Hand the (already validated, path-resolved) arguments to a running kadr.
 fn send_to_running(args: &[String]) -> bool {
-    let Ok(mut stream) = UnixStream::connect(socket_path()) else { return false };
+    let Some(mut stream) = platform::ipc::connect() else { return false };
     let line = serde_json::to_string(args).unwrap_or_default();
     stream.write_all(format!("{line}\n").as_bytes()).is_ok()
 }
 
 /// Accept commands from later invocations on a helper thread.
-fn listen(listener: UnixListener, tx: mpsc::UnboundedSender<Vec<String>>) {
+fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<Vec<String>>) {
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let mut line = String::new();
@@ -229,14 +225,12 @@ fn main() {
         return;
     }
 
-    // Become the running instance. A stale socket from a crash is replaced.
-    let path = socket_path();
-    let _ = std::fs::remove_file(&path);
-    let listener = match UnixListener::bind(&path) {
+    // Become the running instance.
+    let listener = match platform::ipc::bind() {
         Ok(l) => l,
         Err(_) if send_to_running(&resolved) => return,
         Err(e) => {
-            eprintln!("kadr: {}: {e}", path.display());
+            eprintln!("kadr: {e}");
             std::process::exit(1);
         }
     };
@@ -270,7 +264,7 @@ fn main() {
                 if idle >= 3 {
                     // Stop taking new commands first; anything already in flight
                     // gets a moment to land, and then we only quit if still idle.
-                    let _ = std::fs::remove_file(socket_path());
+                    platform::ipc::close();
                     cx.background_executor().timer(Duration::from_millis(300)).await;
                     if cx.update(|cx| cx.windows().is_empty() && !kit::is_busy(cx)) {
                         cx.update(|cx| cx.quit());

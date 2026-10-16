@@ -6,8 +6,7 @@ use gpui::App;
 use crate::settings::Settings;
 use crate::{cards, kit, util};
 
-/// Selection, screen freeze and saving are delegated to Omarchy's own
-/// screenshot command so the picker behaves exactly like the stock one.
+/// Take a screenshot (`platform::screenshot`), then copy it and show its card.
 pub fn shot(mode: String, cx: &mut App) {
     let hold = kit::hold(cx);
     cx.spawn(async move |cx| {
@@ -39,10 +38,6 @@ pub fn shot(mode: String, cx: &mut App) {
 }
 
 async fn take(mode: &str, settings: &Settings) -> Option<PathBuf> {
-    // Omarchy's script takes the folder from the environment.
-    let dir = format!("OMARCHY_SCREENSHOT_DIR={}", settings.screenshot_dir().display());
     let _ = std::fs::create_dir_all(settings.screenshot_dir());
-    let (_, stdout) = util::output(&["env", &dir, "omarchy-capture-screenshot", mode, "save"]).await?;
-    let path = stdout.lines().map(str::trim).rfind(|l| !l.is_empty()).map(PathBuf::from)?;
-    path.is_file().then_some(path)
+    crate::platform::screenshot(mode, &settings.screenshot_dir()).await
 }

@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Global, Pixels, Render, SharedString, Window,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
+    WindowBounds, WindowHandle, WindowOptions, canvas, div,
     hsla, layer_shell::*, point, prelude::*, px, size,
 };
 use crate::ui::{ActiveTheme, KeyBinding, LabelSize};
@@ -174,27 +174,17 @@ pub fn open_layer<V: Render + 'static>(
     spec: LayerSpec,
     build: impl FnOnce(&mut Window, &mut App) -> gpui::Entity<V>,
 ) -> Option<WindowHandle<V>> {
-    let (t, r, b, l) = spec.margin;
-    let options = WindowOptions {
+    // A Wayland layer on Linux, a borderless window above the others elsewhere.
+    let (kind, bounds) = crate::platform::overlay_kind(&spec, cx);
+    let mut options = WindowOptions {
         titlebar: None,
-        window_bounds: Some(WindowBounds::Windowed(Bounds {
-            origin: point(px(0.), px(0.)),
-            size: size(px(spec.size.0), px(spec.size.1)),
-        })),
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
         app_id: Some("kadr".into()),
-        linux_window_background: gpui::LinuxWindowBackground::Transparent,
         display_id: spec.monitor.as_ref().and_then(|m| m.display(cx)),
-        kind: WindowKind::LayerShell(LayerShellOptions {
-            namespace: spec.namespace.into(),
-            layer: Layer::Overlay,
-            anchor: spec.anchor,
-            margin: Some((px(t), px(r), px(b), px(l))),
-            exclusive_zone: spec.ignore_zones.then(|| px(-1.)),
-            keyboard_interactivity: spec.keyboard,
-            ..Default::default()
-        }),
+        kind,
         ..Default::default()
     };
+    crate::platform::transparent(&mut options);
     match cx.open_window(options, |window, cx| {
         window.set_rem_size(px(REM));
         build(window, cx)
@@ -205,6 +195,23 @@ pub fn open_layer<V: Render + 'static>(
             None
         }
     }
+}
+
+/// Where a layer with this anchor, margin and size would sit, as window
+/// bounds on its display, for systems without layer-shell.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub fn overlay_bounds(spec: &LayerSpec, cx: &App) -> Bounds<Pixels> {
+    let display = spec.monitor.as_ref().and_then(|m| m.display(cx)).and_then(|id| cx.find_display(id)).or_else(|| cx.primary_display());
+    let screen = display.map(|d| d.bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
+    let (t, r, b, l) = spec.margin;
+    let (sw, sh) = (f32::from(screen.size.width), f32::from(screen.size.height));
+    let fill_w = spec.anchor.contains(Anchor::LEFT) && spec.anchor.contains(Anchor::RIGHT);
+    let fill_h = spec.anchor.contains(Anchor::TOP) && spec.anchor.contains(Anchor::BOTTOM);
+    let w = if fill_w { sw - l - r } else { spec.size.0 };
+    let h = if fill_h { sh - t - b } else { spec.size.1 };
+    let x = if spec.anchor.contains(Anchor::LEFT) { l } else if spec.anchor.contains(Anchor::RIGHT) { sw - w - r } else { (sw - w) / 2. };
+    let y = if spec.anchor.contains(Anchor::TOP) { t } else if spec.anchor.contains(Anchor::BOTTOM) { sh - h - b } else { (sh - h) / 2. };
+    Bounds { origin: point(screen.origin.x + px(x), screen.origin.y + px(y)), size: size(px(w), px(h)) }
 }
 
 /// While any `Hold` is alive kadr keeps running even with no windows open
