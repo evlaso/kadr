@@ -1108,7 +1108,8 @@ impl Editor {
                     this.pick_color(i);
                     cx.notify();
                 }))
-        });
+        })
+            .collect::<Vec<_>>();
         let dot = cx.theme().colors().text;
         // A dot as thick as the stroke, then the slider.
         let dot_size = sized(WIDTHS, self.weight).min(16.) + 1.;

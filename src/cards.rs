@@ -41,10 +41,18 @@ struct CardsWindow(Option<WindowHandle<CardStack>>);
 
 impl Global for CardsWindow {}
 
+/// A card's picture, and a blurred copy shown under the hover buttons.
+/// Blurring ahead of time covers the whole picture; a backdrop blur thins out
+/// toward its edges and lets the sharp picture show there.
+struct Thumb {
+    sharp: Arc<Image>,
+    blurred: Arc<Image>,
+}
+
 struct Card {
     id: usize,
     path: PathBuf,
-    image: Arc<Image>,
+    image: Thumb,
     /// Thumbnail height.
     height: f32,
     /// Clip duration in seconds for recordings.
@@ -104,7 +112,7 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
         .unwrap_or(false)
 }
 
-fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
+fn add(path: PathBuf, image: Thumb, height: f32, video: Option<f64>, cx: &mut App) {
     let settings = Settings::load();
     let mut slot = Some(Card { id: 0, path, image, height, video, deadline: dismiss_at(&settings), hovered: false });
 
@@ -295,9 +303,9 @@ impl CardStack {
             .inset_0()
             .rounded(px(kit::RADIUS))
             .opacity(if shown { 1. } else { 0. })
-            // The picture blurs and dims behind the buttons (only while shown,
-            // so an idle card costs nothing).
-            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000052)).when(shown, |d| d.backdrop_blur(px(10.))))
+            // The picture blurs and dims behind the buttons.
+            .when(shown, |d| d.child(img(card.image.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
+            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000052)))
             .flex()
             .items_center()
             .justify_center()
@@ -365,7 +373,7 @@ impl CardStack {
             .bg(cx.theme().colors().elevated_surface_background)
             // GPUI clips children to a rectangle, so the image rounds its own
             // corners; it is pre-cropped to the card so those are the visible ones.
-            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
+            .child(img(card.image.sharp.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
             .children(badge)
             .child(hover)
             .child(self.region.mark())
@@ -455,9 +463,8 @@ pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
 
 /// Card-sized thumbnail: center-cropped to the card's aspect and scaled to
 /// twice its width, so corners round correctly and a 4K screenshot isn't kept
-/// in memory. Returns the image and the card height.
-/// Card picture, the card height and the source size.
-fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
+/// in memory. Returns its pictures, the card height and the source size.
+fn card_thumbnail(bytes: &[u8]) -> Option<(Thumb, f32, (u32, u32))> {
     let src = image::load_from_memory(bytes).ok()?;
     let (w, h) = (src.width().max(1), src.height().max(1));
     let height = THUMB_MAX;
@@ -474,11 +481,15 @@ fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
         img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
         Some(Arc::new(Image::from_bytes(ImageFormat::Png, png)))
     };
-    Some((encode(&thumb)?, height, (w, h)))
+    // Blurred small and scaled back up: cheap, and just as soft.
+    let (tw, th) = (thumb.width(), thumb.height());
+    let small = thumb.resize_exact(tw / 4, th / 4, image::imageops::FilterType::Triangle).blur(3.);
+    let blurred = small.resize_exact(tw, th, image::imageops::FilterType::Triangle);
+    Some((Thumb { sharp: encode(&thumb)?, blurred: encode(&blurred)? }, height, (w, h)))
 }
 
 /// First frame (scaled down) and duration in seconds.
-async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>)> {
+async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Thumb, f32, Option<f64>)> {
     use std::ffi::OsStr;
     let thumb = util::runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
     let (ok, _) = util::output::<&OsStr>(&[
