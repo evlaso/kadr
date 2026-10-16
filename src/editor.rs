@@ -296,7 +296,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
     // leave room for the toolbars and a backdrop.
     let natural = (w as f32 / mon.scale as f32, h as f32 / mon.scale as f32);
     let room = 1. + 2. * FRAME_PAD;
-    let fit = ((mw - 160.) / room / natural.0).min((mh - 240.) / room / natural.1).min(1.0);
+    let fit = ((mw - 160.) / room / natural.0).min((mh - 260. * kit::SCALE) / room / natural.1).min(1.0);
     let disp = (natural.0 * fit, natural.1 * fit);
 
     let image = Arc::new(Image::from_bytes(ImageFormat::Png, bytes.clone()));
@@ -789,7 +789,18 @@ impl Editor {
             .child(crop);
         let style = h_flex().gap_0p5().child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).children(weights);
 
-        h_flex().w(px(width)).justify_between().gap_2().p_1().elevation_3(cx).child(history).child(tools).child(style)
+        h_flex()
+            .w(px(width))
+            .justify_between()
+            .gap_2()
+            .px_1p5()
+            .py_1()
+            .bg(cx.theme().colors().title_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(history)
+            .child(tools)
+            .child(style)
     }
 
     /// CleanShot-like bottom bar: backdrop on the left, the file in the
@@ -856,10 +867,12 @@ impl Editor {
             .w(px(width))
             .justify_between()
             .gap_2()
-            .pl_2()
-            .pr_1()
+            .pl_2p5()
+            .pr_1p5()
             .py_1()
-            .elevation_3(cx)
+            .bg(cx.theme().colors().status_bar_background)
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
                     .flex_1()
@@ -1082,24 +1095,42 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Both bars span the framed picture, but never less than the tools need.
-        let frame = self.disp.0 * (1. + 2. * FRAME_PAD);
-        let bar_width = frame.max(1180. * kit::SCALE).min(f32::from(window.viewport_size().width) - 32.);
-        kit::root(cx)
-            .bg(rgba(0x00000099))
-            .flex()
-            .flex_col()
+        // One CleanShot-like window: tools on top, the picture on a stage,
+        // actions at the bottom. It's as wide as the framed picture plus some
+        // air, but never narrower than the tools need.
+        let viewport = window.viewport_size();
+        let pad = self.disp.0.max(self.disp.1) * FRAME_PAD;
+        let frame = (self.disp.0 + 2. * pad, self.disp.1 + 2. * pad);
+        let width = (frame.0 + 48.).max(1180. * kit::SCALE).min(f32::from(viewport.width) - 32.);
+        let stage = v_flex()
+            .w_full()
+            .h(px(frame.1 + 48.))
             .items_center()
             .justify_center()
-            .gap_1()
+            .bg(cx.theme().colors().editor_background)
+            .child(self.render_canvas(cx));
+        kit::root(cx)
+            .bg(rgba(0x00000040))
+            .flex()
+            .items_center()
+            .justify_center()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
             // The pointer stays with this surface while the button is held.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.mouse_up(cx)))
-            .child(self.render_toolbar(bar_width, cx))
-            .child(self.render_canvas(cx))
-            .child(self.render_footer(bar_width, cx))
+            .child(
+                v_flex()
+                    .w(px(width))
+                    .rounded(px(kit::RADIUS))
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .shadow(kit::shadow())
+                    .child(self.render_toolbar(width, cx))
+                    .child(stage)
+                    .child(self.render_footer(width, cx)),
+            )
     }
 }
 
