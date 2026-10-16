@@ -253,6 +253,25 @@ enum Kind {
     Blur(Option<Arc<Image>>),
     /// Everything outside the a–b box is dimmed.
     Spotlight,
+    /// Another picture dropped or pasted on top, filling the a–b box.
+    Picture(Picture),
+}
+
+/// A picture laid over the screenshot: its pixels for the export, and the
+/// same as a GPUI image for the canvas.
+#[derive(Clone)]
+struct Picture {
+    pixels: Arc<RgbaImage>,
+    shown: Arc<Image>,
+}
+
+impl Picture {
+    fn decode(bytes: &[u8]) -> Option<Picture> {
+        let pixels = image::load_from_memory(bytes).ok()?.to_rgba8();
+        let mut png = Vec::new();
+        pixels.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+        Some(Picture { pixels: Arc::new(pixels), shown: Arc::new(Image::from_bytes(gpui::ImageFormat::Png, png)) })
+    }
 }
 
 /// Geometry is in image pixels. For text `a` is the top-left corner and
@@ -326,7 +345,7 @@ impl Shape {
                 let w = self.size / 2.;
                 (l - w, t - w, r + w, b + w)
             }
-            Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => rect(self.a, self.b),
+            Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight | Kind::Picture(_) => rect(self.a, self.b),
         }
     }
 
@@ -359,12 +378,12 @@ impl Shape {
 
     /// Shapes whose corner handles scale them rather than move a point.
     fn scales(&self) -> bool {
-        matches!(self.kind, Kind::Text(_) | Kind::Counter(_) | Kind::Pen(_) | Kind::Marker(_))
+        matches!(self.kind, Kind::Text(_) | Kind::Counter(_) | Kind::Pen(_) | Kind::Marker(_) | Kind::Picture(_))
     }
 
     /// Scale `orig` by dragging corner `handle` to `p`, the opposite corner
-    /// staying put: text and counters keep their proportions (the size grows
-    /// with them), freehand stretches each way.
+    /// staying put: text, counters and pictures keep their proportions (the
+    /// size grows with them), freehand stretches each way.
     fn scale_from(&mut self, orig: &Shape, handle: usize, p: P) {
         let corners = orig.handles();
         let (Some(&h), Some(&o)) = (corners.get(handle), corners.get((handle + 2) % 4)) else { return };
@@ -428,7 +447,7 @@ impl Shape {
             Kind::Text(_) => sized(FONT_SIZES, weight),
             Kind::Counter(_) => sized(COUNTER_SIZES, weight),
             Kind::Marker(_) => sized(WIDTHS, weight) * 3.,
-            Kind::Blur(_) | Kind::Spotlight => return,
+            Kind::Blur(_) | Kind::Spotlight | Kind::Picture(_) => return,
             _ => sized(WIDTHS, weight),
         } / s;
     }
@@ -902,6 +921,7 @@ impl Editor {
             ("z", true, false) => self.undo(),
             ("z", true, true) | ("y", true, _) => self.redo(),
             ("c", true, _) => self.export(Export::Copy, window, cx),
+            ("v", true, _) => self.paste(cx),
             ("=" | "+", true, _) => self.zoom_by(1.25),
             ("-", true, _) => self.zoom_by(0.8),
             ("0", true, _) => self.zoom = 1.,
@@ -966,6 +986,54 @@ impl Editor {
         let new = self.doc.shapes.len() - 1;
         self.selected = Some(new);
         self.refresh_patch(new, cx);
+    }
+
+    /// Lay a picture over the screenshot, centred, at most half its size,
+    /// and select it.
+    fn add_picture(&mut self, picture: Picture) {
+        let (pw, ph) = (picture.pixels.width() as f32, picture.pixels.height() as f32);
+        let (cw, ch) = (self.px.0 as f32, self.px.1 as f32);
+        let fit = (cw * 0.5 / pw).min(ch * 0.5 / ph).min(1.);
+        let (w, h) = (pw * fit, ph * fit);
+        let (x, y) = ((cw - w) / 2., (ch - h) / 2.);
+        self.checkpoint();
+        self.doc.shapes.push(Shape {
+            kind: Kind::Picture(picture),
+            a: (x, y),
+            b: (x + w, y + h),
+            color: self.colors[self.color],
+            size: 0.,
+            filled: false,
+            text: TextStyle::Plain,
+        });
+        self.selected = Some(self.doc.shapes.len() - 1);
+        self.tool = Tool::Select;
+    }
+
+    /// Ctrl+V: a copied picture, or a copied image file.
+    fn paste(&mut self, cx: &mut Context<Self>) {
+        let Some(item) = cx.read_from_clipboard() else { return };
+        let picture = item.entries().iter().find_map(|entry| match entry {
+            gpui::ClipboardEntry::Image(image) => Picture::decode(image.bytes()),
+            gpui::ClipboardEntry::ExternalPaths(paths) => paths.paths().iter().find_map(|p| Picture::decode(&std::fs::read(p).ok()?)),
+            gpui::ClipboardEntry::String(text) => {
+                let line = text.text().lines().next()?.trim();
+                let path = line.strip_prefix("file://").unwrap_or(line);
+                Picture::decode(&std::fs::read(path).ok()?)
+            }
+        });
+        if let Some(picture) = picture {
+            self.add_picture(picture);
+        }
+    }
+
+    /// Files dropped on the editor: each image goes on as a picture.
+    fn drop_files(&mut self, paths: &gpui::ExternalPaths) {
+        for path in paths.paths() {
+            if let Some(picture) = std::fs::read(path).ok().and_then(|bytes| Picture::decode(&bytes)) {
+                self.add_picture(picture);
+            }
+        }
     }
 
     /// Text look; restyles the selected text too.
@@ -1604,7 +1672,7 @@ impl Editor {
         let at = |p: P| (px(p.0 * s), px(p.1 * s));
 
         let patches = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
-            Kind::Blur(Some(patch)) => {
+            Kind::Blur(Some(patch)) | Kind::Picture(Picture { shown: patch, .. }) => {
                 let (l, t, r, b) = rect(shape.a, shape.b);
                 Some(img(patch.clone()).absolute().left(px(l * s)).top(px(t * s)).w(px((r - l) * s)).h(px((b - t) * s)).object_fit(ObjectFit::Fill))
             }
@@ -1867,6 +1935,10 @@ impl Render for Editor {
             .justify_center()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
+            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                this.drop_files(paths);
+                cx.notify();
+            }))
             // The pointer stays with this surface while the button is held.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.mouse_up(cx)))
@@ -2171,7 +2243,7 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             outline.alpha = 0.8;
             stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, outline, 1.5 / s);
         }
-        Kind::Blur(Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Spotlight => {}
+        Kind::Blur(Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Spotlight | Kind::Picture(_) => {}
     }
 }
 
@@ -2280,6 +2352,15 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
                     *c = (*c as f32 * keep) as u8;
                 }
             }
+        }
+    }
+    // Pictures on top of the screenshot, under the drawing.
+    for shape in shapes {
+        if let Kind::Picture(picture) = &shape.kind {
+            let (l, t, r, b) = rect(shape.a, shape.b);
+            let (w, h) = ((r - l).round().max(1.) as u32, (b - t).round().max(1.) as u32);
+            let scaled = image::imageops::resize(picture.pixels.as_ref(), w, h, image::imageops::FilterType::Lanczos3);
+            image::imageops::overlay(&mut base, &scaled, l.round() as i64, t.round() as i64);
         }
     }
     let (w, h) = base.dimensions();
@@ -2394,7 +2475,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
                     draw_line(&mut pm, line, (a.0, baseline), size, ink);
                 }
             }
-            Kind::Blur(_) | Kind::Spotlight => {}
+            Kind::Blur(_) | Kind::Spotlight | Kind::Picture(_) => {}
         }
     }
     let mut data = pm.take();
@@ -2513,6 +2594,18 @@ mod tests {
 
     fn red() -> Hsla {
         gpui::hsla(0.01, 0.6, 0.54, 1.)
+    }
+
+    #[test]
+    fn pictures_go_into_the_export_at_their_box() {
+        let src = RgbaImage::from_pixel(100, 80, image::Rgba([255, 255, 255, 255]));
+        let mut png = Vec::new();
+        RgbaImage::from_pixel(10, 10, image::Rgba([200, 0, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let picture = Picture::decode(&png).unwrap();
+        let shape = Shape { kind: Kind::Picture(picture), a: (20., 20.), b: (40., 40.), color: gpui::white(), size: 0., filled: false, text: TextStyle::Plain };
+        let out = rasterize(&src, &[shape]).unwrap();
+        assert_eq!(out.get_pixel(30, 30).0, [200, 0, 0, 255]);
+        assert_eq!(out.get_pixel(45, 30).0, [255, 255, 255, 255]);
     }
 
     #[test]

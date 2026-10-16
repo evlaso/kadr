@@ -225,7 +225,6 @@ impl CardStack {
                 .justify_center()
                 .rounded_full()
                 .bg(hsla(0., 0., 1., 0.92))
-                .shadow(vec![gpui::BoxShadow { color: hsla(0., 0., 0., 0.25).into(), offset: gpui::point(px(0.), px(1.)), blur_radius: px(4.), spread_radius: px(0.), inset: false }])
                 .text_color(ink)
                 .cursor_pointer()
                 .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
