@@ -644,8 +644,7 @@ impl Editor {
     }
 
     fn backdrops(&self) -> Vec<(Hsla, Hsla)> {
-        let c = &self.colors;
-        vec![(c[4], c[5]), (c[1], c[0]), (c[3], c[4]), (gpui::hsla(0., 0., 0.22, 1.), gpui::hsla(0., 0., 0.08, 1.))]
+        palette::backdrops()
     }
 
     fn export(&mut self, how: Export, window: &mut Window, cx: &mut Context<Self>) {

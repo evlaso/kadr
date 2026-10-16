@@ -85,7 +85,7 @@ fn load_png(path: &Path) -> Option<Arc<Image>> {
 }
 
 /// One frame at `t` seconds, `width` pixels wide.
-async fn frame(path: &Path, t: f64, width: u32, tag: u64) -> Option<Arc<Image>> {
+pub(crate) async fn frame(path: &Path, t: f64, width: u32, tag: u64) -> Option<Arc<Image>> {
     let out = temp_dir().join(format!("frame-{tag}.png"));
     let (ss, scale) = (format!("{t:.3}"), format!("scale={width}:-2"));
     let (ok, _) = util::output::<&OsStr>(&[
@@ -97,7 +97,7 @@ async fn frame(path: &Path, t: f64, width: u32, tag: u64) -> Option<Arc<Image>> 
 }
 
 /// Evenly spaced thumbnails for the filmstrip.
-async fn filmstrip(path: &Path, duration: f64) -> Vec<Arc<Image>> {
+pub(crate) async fn filmstrip(path: &Path, duration: f64) -> Vec<Arc<Image>> {
     let dir = temp_dir();
     let pattern = dir.join("thumb-%02d.png");
     let filter = format!("fps={}/{:.3},scale=-2:{}", THUMBS, duration.max(0.1), (STRIP_HEIGHT * 2.) as u32);

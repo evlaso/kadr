@@ -14,7 +14,7 @@ use gpui::{
 use ui::{IconButtonShape, TintColor, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
-use crate::{editor, ocr, pin, studio, track, trim, util};
+use crate::{editor, ocr, pin, studio_editor, track, trim, util};
 
 const CARD_WIDTH: f32 = 320.;
 /// Inner padding of the card panel.
@@ -284,16 +284,15 @@ impl CardStack {
                 this.remove(id, window, cx);
             })));
 
-        let footer = h_flex().justify_between().child(tools).when(has_track, |footer| {
-            // Recordings made by kadr carry a cursor track and can get the studio treatment.
+        let footer = h_flex().justify_between().child(tools).when(video && !is_gif(&path), |footer| {
             footer.child(
-                Button::new(("studio", id), "Улучшить")
+                Button::new(("studio", id), "Студия")
                     .style(ButtonStyle::Tinted(TintColor::Accent))
                     .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                    .tooltip(Tooltip::text("Автозум к кликам, фон и тень"))
+                    .tooltip(Tooltip::text(if has_track { "Зумы к кликам, фон, клики и клавиши" } else { "Фон, отступы и зумы вручную" }))
                     .on_click(act(|this, path, id, window, cx| {
                         this.remove(id, window, cx);
-                        studio::render(path.to_owned(), cx);
+                        studio_editor::open(path.to_owned(), cx);
                     })),
             )
         });

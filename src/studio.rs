@@ -1,80 +1,157 @@
-//! "Studio" render of a recording: the camera eases in towards clicks and
-//! follows the cursor, the video sits on a gradient backdrop with a soft
-//! shadow and rounded corners. The heavy lifting is ffmpeg's libplacebo
-//! filter on the GPU; kadr computes the camera path and hands it over as
-//! time-based crop expressions.
+//! Studio render of a recording, like Screen Studio: the camera eases in on
+//! zoom segments and follows the cursor (or holds a point), the video sits on
+//! a gradient backdrop with a soft shadow and rounded corners, clicks get
+//! rings and shortcuts a pill. Segments are edited in the studio editor and
+//! kept as a per-recording project; the heavy lifting is ffmpeg's libplacebo
+//! filter on the GPU, with the camera path handed over as crop expressions.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use gpui::App;
+use gpui::{App, Hsla};
+use serde_json::json;
 use ui::IconName;
 
-use crate::track::Track;
+use crate::track::{self, Track};
 use crate::job::{self, Job};
-use crate::{cards, util};
+use crate::{cards, palette, util};
 
 /// Seconds to ease the zoom in or out.
-const RAMP: f64 = 0.8;
-/// How long the zoom lingers after the last click or key press.
+pub const RAMP: f64 = 0.8;
+/// How long an automatic zoom lingers after the last click or key press.
 const HOLD: f64 = 1.6;
 /// Clicks closer than this stay in one zoomed-in stretch.
 const GAP: f64 = 3.5;
-/// Camera path sampling rate before simplification.
-const RATE: f64 = 30.0;
+/// Camera path sampling rate.
+pub const RATE: f64 = 30.0;
+pub const DEFAULT_ZOOM: f64 = 1.8;
+pub const ZOOMS: [f64; 5] = [1.25, 1.5, 1.8, 2.2, 3.0];
+/// Margin around the video, as a fraction of the output height.
+pub const PADDINGS: [f64; 4] = [0.0, 0.04, 0.07, 0.11];
 
-struct Settings {
-    zoom: f64,
-    /// Margin around the video, as a fraction of the output height.
-    padding: f64,
-    /// Corner radius in pixels at 1440p.
-    radius: f64,
-    colors: [(u8, u8, u8); 2],
+/// A stretch where the camera is zoomed in: fully between `start` and `end`,
+/// easing in before and out after.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Seg {
+    pub start: f64,
+    pub end: f64,
+    pub zoom: f64,
+    /// Fixed point to zoom on, in video pixels; None follows the cursor.
+    pub focus: Option<(f64, f64)>,
 }
 
-impl Settings {
-    /// ~/.config/kadr/studio.json, e.g. {"zoom": 2.0, "colors": ["#1e3c72", "#2a5298"]}
-    fn load() -> Self {
-        let mut s = Settings { zoom: 1.8, padding: 0.07, radius: 22.0, colors: [(0x5b, 0x4b, 0xff), (0xe2, 0x6f, 0xd0)] };
-        let path = util::config_dir().join("studio.json");
-        let Some(v) = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else {
-            return s;
+#[derive(Clone, Debug, PartialEq)]
+pub struct Project {
+    pub segments: Vec<Seg>,
+    /// Index into `palette::backdrops()`.
+    pub backdrop: usize,
+    /// Index into `PADDINGS`.
+    pub padding: usize,
+    pub clicks: bool,
+    pub keys: bool,
+}
+
+impl Project {
+    fn path(video: &Path) -> PathBuf {
+        let mut p = track::path_for(video).into_os_string();
+        p.push(".studio");
+        PathBuf::from(p)
+    }
+
+    /// The saved edit, or segments placed on the recording's clicks.
+    pub fn load(video: &Path, track: &Track, p: &Probe) -> Project {
+        let saved = std::fs::read_to_string(Self::path(video)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        let Some(v) = saved else { return Project::auto(track, p) };
+        let segments = v["segments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                Some(Seg {
+                    start: s["start"].as_f64()?,
+                    end: s["end"].as_f64()?,
+                    zoom: s["zoom"].as_f64().unwrap_or(DEFAULT_ZOOM),
+                    focus: s["focus"].as_array().and_then(|f| Some((f.first()?.as_f64()?, f.get(1)?.as_f64()?))),
+                })
+            })
+            .collect();
+        Project {
+            segments,
+            backdrop: v["backdrop"].as_u64().unwrap_or(0) as usize,
+            padding: v["padding"].as_u64().unwrap_or(2) as usize,
+            clicks: v["clicks"].as_bool().unwrap_or(true),
+            keys: v["keys"].as_bool().unwrap_or(true),
+        }
+    }
+
+    pub fn save(&self, video: &Path) {
+        let segments: Vec<_> = self
+            .segments
+            .iter()
+            .map(|s| json!({ "start": s.start, "end": s.end, "zoom": s.zoom, "focus": s.focus.map(|(x, y)| [x, y]) }))
+            .collect();
+        let v = json!({ "segments": segments, "backdrop": self.backdrop, "padding": self.padding, "clicks": self.clicks, "keys": self.keys });
+        let path = Self::path(video);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, v.to_string());
+    }
+
+    /// Zoom on clicks: a stretch per burst of clicks, held while typing.
+    pub fn auto(track: &Track, p: &Probe) -> Project {
+        let (rx, ry, rw, rh) = track.rect;
+        let (sx, sy) = (p.w / rw.max(1.0), p.h / rh.max(1.0));
+        let in_frame = |x: f64, y: f64| {
+            let (px, py) = ((x - rx) * sx, (y - ry) * sy);
+            px >= 0.0 && py >= 0.0 && px < p.w && py < p.h
         };
-        if let Some(z) = v["zoom"].as_f64() {
-            s.zoom = z.clamp(1.0, 4.0);
+        let mut clicks: Vec<f64> = track.clicks.iter().filter(|c| in_frame(c.1, c.2)).map(|c| c.0).collect();
+        clicks.sort_by(f64::total_cmp);
+        let mut segs: Vec<(f64, f64)> = Vec::new();
+        for t in clicks {
+            match segs.last_mut() {
+                Some(last) if t - last.1 < GAP => last.1 = t,
+                _ => segs.push((t, t)),
+            }
         }
-        if let Some(p) = v["padding"].as_f64() {
-            s.padding = p.clamp(0.0, 0.3);
-        }
-        if let Some(r) = v["radius"].as_f64() {
-            s.radius = r.max(0.0);
-        }
-        if let Some(c) = v["colors"].as_array() {
-            for (slot, hex) in s.colors.iter_mut().zip(c.iter().filter_map(|h| h.as_str())) {
-                if let Some(rgb) = parse_hex(hex) {
-                    *slot = rgb;
+        // Typing keeps an existing zoom alive but doesn't start one: we don't
+        // know where the caret is.
+        for &k in &track.keys {
+            for seg in segs.iter_mut() {
+                if k >= seg.0 && k <= seg.1 + HOLD {
+                    seg.1 = seg.1.max(k);
                 }
             }
         }
-        s
+        Project {
+            segments: segs
+                .into_iter()
+                .map(|(s, e)| Seg { start: s.max(0.), end: (e + HOLD).min(p.duration), zoom: DEFAULT_ZOOM, focus: None })
+                .collect(),
+            backdrop: 0,
+            padding: 2,
+            clicks: !track.clicks.is_empty(),
+            keys: !track.keystrokes.is_empty(),
+        }
+    }
+
+    pub fn colors(&self) -> (Hsla, Hsla) {
+        let all = palette::backdrops();
+        all[self.backdrop.min(all.len() - 1)]
     }
 }
 
-fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
-    let h = hex.trim_start_matches('#');
-    let n = u32::from_str_radix(h, 16).ok().filter(|_| h.len() == 6)?;
-    Some(((n >> 16) as u8, (n >> 8) as u8, n as u8))
+#[derive(Clone, Debug)]
+pub struct Probe {
+    pub w: f64,
+    pub h: f64,
+    pub fps: String,
+    pub duration: f64,
 }
 
-pub(crate) struct Probe {
-    w: f64,
-    h: f64,
-    fps: String,
-    duration: f64,
-}
-
-async fn probe(video: &Path) -> Option<Probe> {
+pub async fn probe(video: &Path) -> Option<Probe> {
     let (ok, out) = util::output(&[
         OsStr::new("ffprobe"), "-v".as_ref(), "error".as_ref(), "-select_streams".as_ref(), "v:0".as_ref(),
         "-show_entries".as_ref(), "stream=width,height,r_frame_rate:format=duration".as_ref(),
@@ -91,86 +168,84 @@ async fn probe(video: &Path) -> Option<Probe> {
     })
 }
 
-/// Zoomed-in stretches as (first event, last event) times.
-fn segments(track: &Track, in_frame: impl Fn(f64, f64) -> bool) -> Vec<(f64, f64)> {
-    let mut clicks: Vec<f64> = track.clicks.iter().filter(|c| in_frame(c.1, c.2)).map(|c| c.0).collect();
-    clicks.sort_by(f64::total_cmp);
-    let mut segs: Vec<(f64, f64)> = Vec::new();
-    for t in clicks {
-        match segs.last_mut() {
-            Some(last) if t - last.1 < GAP => last.1 = t,
-            _ => segs.push((t, t)),
-        }
-    }
-    // Typing keeps an existing zoom alive but doesn't start one: we don't
-    // know where the caret is.
-    for &k in &track.keys {
-        for seg in segs.iter_mut() {
-            if k >= seg.0 && k <= seg.1 + HOLD {
-                seg.1 = seg.1.max(k);
-            }
-        }
-    }
-    segs
-}
-
 fn ease(x: f64) -> f64 {
     let x = x.clamp(0.0, 1.0);
     if x < 0.5 { 4.0 * x * x * x } else { 1.0 - (-2.0 * x + 2.0).powi(3) / 2.0 }
 }
 
-/// 0 = full view, 1 = fully zoomed in.
-fn envelope(segs: &[(f64, f64)], t: f64) -> f64 {
-    segs.iter()
-        .map(|&(s, e)| {
-            let rise = ease((t - (s - RAMP)) / RAMP);
-            let fall = 1.0 - ease((t - (e + HOLD)) / RAMP);
-            rise.min(fall)
-        })
-        .fold(0.0, f64::max)
+/// How far into a segment the camera is at `t`: 0 out, 1 fully zoomed.
+fn weight(seg: &Seg, t: f64) -> f64 {
+    let rise = ease((t - (seg.start - RAMP)) / RAMP);
+    let fall = 1.0 - ease((t - seg.end) / RAMP);
+    rise.min(fall)
 }
 
-type Curve = Vec<(f64, f64)>;
+pub type Curve = Vec<(f64, f64)>;
 
-/// Zoom factor and camera center (video pixels) over time.
-fn camera(track: &Track, p: &Probe, zoom: f64) -> (Curve, Curve, Curve) {
-    let (rx, ry, rw, rh) = track.rect;
-    let (sx, sy) = (p.w / rw.max(1.0), p.h / rh.max(1.0));
-    let to_px = |x: f64, y: f64| ((x - rx) * sx, (y - ry) * sy);
-    let segs = segments(track, |x, y| {
-        let (px, py) = to_px(x, y);
-        px >= 0.0 && py >= 0.0 && px < p.w && py < p.h
-    });
+/// The camera over time, sampled at `RATE`: zoom factor and center (video
+/// pixels). Shared by the editor preview and the render.
+pub struct Camera {
+    pub zoom: Curve,
+    pub x: Curve,
+    pub y: Curve,
+}
 
-    let (mut z, mut cx, mut cy) = (Vec::new(), Vec::new(), Vec::new());
-    let mut pos = (p.w / 2.0, p.h / 2.0);
-    let mut vel = (0.0, 0.0);
-    let dt = 1.0 / RATE;
-    // Critically damped spring: smooth, no overshoot, settles in ~0.6 s.
-    let omega = 7.0;
-    let steps = (p.duration * RATE).ceil() as usize;
-    for i in 0..=steps {
-        let t = i as f64 * dt;
-        let env = envelope(&segs, t);
-        let target = track.cursor_at(t).map(|(x, y)| to_px(x, y)).unwrap_or(pos);
-        let target = (target.0.clamp(0.0, p.w), target.1.clamp(0.0, p.h));
-        if env < 0.01 {
-            pos = target;
-            vel = (0.0, 0.0);
-        } else {
-            let h = dt / 4.0;
-            for _ in 0..4 {
-                let ax = omega * omega * (target.0 - pos.0) - 2.0 * omega * vel.0;
-                let ay = omega * omega * (target.1 - pos.1) - 2.0 * omega * vel.1;
-                vel = (vel.0 + ax * h, vel.1 + ay * h);
-                pos = (pos.0 + vel.0 * h, pos.1 + vel.1 * h);
+impl Camera {
+    pub fn new(track: &Track, p: &Probe, segs: &[Seg]) -> Camera {
+        let (rx, ry, rw, rh) = track.rect;
+        let (sx, sy) = (p.w / rw.max(1.0), p.h / rh.max(1.0));
+        let to_px = |x: f64, y: f64| ((x - rx) * sx, (y - ry) * sy);
+
+        let (mut z, mut cx, mut cy) = (Vec::new(), Vec::new(), Vec::new());
+        let mut pos = (p.w / 2.0, p.h / 2.0);
+        let mut vel = (0.0, 0.0);
+        let dt = 1.0 / RATE;
+        // Critically damped spring: smooth, no overshoot, settles in ~0.6 s.
+        let omega = 7.0;
+        let steps = (p.duration * RATE).ceil() as usize;
+        for i in 0..=steps {
+            let t = i as f64 * dt;
+            // The strongest segment at `t` decides zoom and focus.
+            let (seg, w) = segs
+                .iter()
+                .map(|s| (Some(s), weight(s, t)))
+                .fold((None, 0.0), |best, cur| if cur.1 > best.1 { cur } else { best });
+            let cursor = track.cursor_at(t).map(|(x, y)| to_px(x, y)).unwrap_or(pos);
+            let target = seg.and_then(|s| s.focus).unwrap_or(cursor);
+            let target = (target.0.clamp(0.0, p.w), target.1.clamp(0.0, p.h));
+            if w < 0.01 {
+                pos = target;
+                vel = (0.0, 0.0);
+            } else {
+                let h = dt / 4.0;
+                for _ in 0..4 {
+                    let ax = omega * omega * (target.0 - pos.0) - 2.0 * omega * vel.0;
+                    let ay = omega * omega * (target.1 - pos.1) - 2.0 * omega * vel.1;
+                    vel = (vel.0 + ax * h, vel.1 + ay * h);
+                    pos = (pos.0 + vel.0 * h, pos.1 + vel.1 * h);
+                }
             }
+            let zoom = seg.map_or(1.0, |s| s.zoom);
+            z.push((t, 1.0 + (zoom - 1.0) * w));
+            cx.push((t, pos.0));
+            cy.push((t, pos.1));
         }
-        z.push((t, 1.0 + (zoom - 1.0) * env));
-        cx.push((t, pos.0));
-        cy.push((t, pos.1));
+        Camera { zoom: z, x: cx, y: cy }
     }
-    (simplify(&z, 0.004), simplify(&cx, 2.0), simplify(&cy, 2.0))
+
+    /// Zoom and center at `t`, for the preview.
+    pub fn at(&self, t: f64) -> (f64, f64, f64) {
+        let sample = |c: &Curve| {
+            let i = ((t * RATE).floor() as usize).min(c.len().saturating_sub(1));
+            let (a, b) = (c[i], c[(i + 1).min(c.len() - 1)]);
+            let k = if b.0 > a.0 { ((t - a.0) / (b.0 - a.0)).clamp(0., 1.) } else { 0. };
+            a.1 + (b.1 - a.1) * k
+        };
+        if self.zoom.is_empty() {
+            return (1., 0., 0.);
+        }
+        (sample(&self.zoom), sample(&self.x), sample(&self.y))
+    }
 }
 
 /// Ramer–Douglas–Peucker on a time series.
@@ -227,18 +302,29 @@ pub(crate) struct Layout {
     radius: f64,
 }
 
-fn layout(p: &Probe, s: &Settings) -> Layout {
-    let (ow, oh) = if p.h >= 1400.0 || p.w >= 2500.0 { (2560u32, 1440u32) } else { (1920, 1080) };
-    let pad = s.padding * oh as f64;
+/// Output frame and where the video sits in it. `preview` renders small.
+fn layout(p: &Probe, project: &Project, preview: bool) -> Layout {
+    let (ow, oh) = match (preview, p.h >= 1400.0 || p.w >= 2500.0) {
+        (true, _) => (1280u32, 720u32),
+        (false, true) => (2560, 1440),
+        (false, false) => (1920, 1080),
+    };
+    let pad = PADDINGS[project.padding.min(PADDINGS.len() - 1)] * oh as f64;
     let k = ((ow as f64 - 2.0 * pad) / p.w).min((oh as f64 - 2.0 * pad) / p.h);
     let even = |v: f64| ((v / 2.0).round() * 2.0) as u32;
     let (w, h) = (even(p.w * k), even(p.h * k));
-    Layout { ow, oh, x: even((ow - w) as f64 / 2.0), y: even((oh - h) as f64 / 2.0), w, h, radius: s.radius * oh as f64 / 1440.0 }
+    // No rounding or shadow room needed when the video fills the frame.
+    let radius = if pad > 0. { 22.0 * oh as f64 / 1440.0 } else { 0. };
+    Layout { ow, oh, x: even((ow - w) as f64 / 2.0), y: even((oh - h) as f64 / 2.0), w, h, radius }
 }
 
 /// Gradient backdrop with the video's drop shadow baked in, as a binary PPM.
-fn write_background(path: &Path, l: &Layout, s: &Settings) -> std::io::Result<()> {
-    let [c0, c1] = s.colors.map(|(r, g, b)| [r as f64, g as f64, b as f64]);
+fn write_background(path: &Path, l: &Layout, colors: (Hsla, Hsla)) -> std::io::Result<()> {
+    let rgb = |c: Hsla| {
+        let c = c.to_rgb();
+        [c.r as f64 * 255., c.g as f64 * 255., c.b as f64 * 255.]
+    };
+    let (c0, c1) = (rgb(colors.0), rgb(colors.1));
     let blur = 0.035 * l.oh as f64;
     let (cx, cy) = (l.x as f64 + l.w as f64 / 2.0, l.y as f64 + l.h as f64 / 2.0 + 0.012 * l.oh as f64);
     let (hw, hh) = (l.w as f64 / 2.0, l.h as f64 / 2.0);
@@ -273,38 +359,64 @@ pub fn output_path(video: &Path) -> PathBuf {
     video.with_file_name(format!("{stem}-studio.mp4"))
 }
 
+fn preview_path(video: &Path) -> PathBuf {
+    util::runtime_dir().join(format!("kadr-preview-{}.mp4", video.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()))
+}
+
+/// Export with the saved project (or automatic zooms when there's none).
 pub fn render(video: PathBuf, cx: &mut App) {
-    let running = job::start("Улучшаю видео", IconName::Sparkle, cx);
     cx.spawn(async move |cx| {
-        let result = run(&video, &running.job).await;
-        running.finish(cx);
-        let _ = cx.update(|cx| match result {
-            Ok(Some(out)) => cards::show(out, cx),
-            Ok(None) => {}
-            Err(e) => util::notify("Не удалось улучшить видео", &e),
-        });
+        let Some(p) = probe(&video).await else {
+            return util::notify("Не удалось открыть видео", &video.display().to_string());
+        };
+        let track = Track::load(&video).unwrap_or_else(|| Track { rect: (0.0, 0.0, p.w, p.h), ..Default::default() });
+        let project = Project::load(&video, &track, &p);
+        let _ = cx.update(|cx| export(video, project, false, cx));
     })
     .detach();
 }
 
-/// Ok(None) when cancelled.
-async fn run(video: &Path, progress: &Job) -> Result<Option<PathBuf>, String> {
-    let settings = Settings::load();
+/// Render `project`; the full export lands in a card, the quick preview
+/// (720p) opens in the player.
+pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
+    let title = if preview { "Готовлю предпросмотр" } else { "Экспортирую видео" };
+    let running = job::start(title, if preview { IconName::PlayFilled } else { IconName::Sparkle }, cx);
+    cx.spawn(async move |cx| {
+        let out = if preview { preview_path(&video) } else { output_path(&video) };
+        let result = run(&video, &project, &out, preview, &running.job).await;
+        running.finish(cx);
+        match result {
+            Ok(true) if preview => {
+                util::spawn(&[OsStr::new("mpv"), "--force-window=yes".as_ref(), "--loop-file=inf".as_ref(), out.as_os_str()]);
+            }
+            Ok(true) => {
+                let _ = cx.update(|cx| cards::show(out, cx));
+            }
+            Ok(false) => {}
+            Err(e) => util::notify("Не удалось собрать видео", &e),
+        }
+    })
+    .detach();
+}
+
+/// Ok(false) when cancelled.
+async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progress: &Job) -> Result<bool, String> {
     let p = probe(video).await.ok_or("ffprobe не смог прочитать видео")?;
     let track = Track::load(video).unwrap_or_else(|| Track { rect: (0.0, 0.0, p.w, p.h), ..Default::default() });
-    let l = layout(&p, &settings);
-    let (z, x, y) = camera(&track, &p, settings.zoom);
+    let l = layout(&p, project, preview);
+    let camera = Camera::new(&track, &p, &project.segments);
+    let (z, x, y) = (simplify(&camera.zoom, 0.004), simplify(&camera.x, 2.0), simplify(&camera.y, 2.0));
 
     let tmp = util::runtime_dir().join(format!("kadr-studio-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let bg = tmp.join("bg.ppm");
     let script = tmp.join("filter.txt");
-    write_background(&bg, &l, &settings).map_err(|e| e.to_string())?;
+    write_background(&bg, &l, project.colors()).map_err(|e| e.to_string())?;
 
     // Click rings go on the recording itself (so they zoom with the camera),
     // shortcut pills on the finished frame. Inputs 0 and 1 are the video and
     // the backdrop; the overlays follow.
-    let overlays = overlays::build(&track, &p, &l, &tmp).map_err(|e| e.to_string())?;
+    let overlays = overlays::build(&track, &p, &l, &tmp, project.clicks, project.keys).map_err(|e| e.to_string())?;
 
     // libplacebo asserts on some fractional crop sizes, so the crop is kept to
     // whole, even pixels.
@@ -323,9 +435,13 @@ async fn run(video: &Path, progress: &Job) -> Result<Option<PathBuf>, String> {
     );
     std::fs::write(&script, graph).map_err(|e| e.to_string())?;
 
-    let out = output_path(video);
     let mut result = Err(String::new());
-    for encoder in [&["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-b:v", "0"][..], &["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"][..]] {
+    let encoders: [&[&str]; 2] = if preview {
+        [&["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "30", "-b:v", "0"], &["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]]
+    } else {
+        [&["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-b:v", "0"], &["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]]
+    };
+    for encoder in encoders {
         let mut argv: Vec<&OsStr> = vec![
             "ffmpeg".as_ref(), "-hide_banner".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(),
             "-i".as_ref(), video.as_os_str(),
@@ -346,10 +462,10 @@ async fn run(video: &Path, progress: &Job) -> Result<Option<PathBuf>, String> {
     }
     let _ = std::fs::remove_dir_all(&tmp);
     if progress.cancelled() {
-        let _ = std::fs::remove_file(&out);
-        return Ok(None);
+        let _ = std::fs::remove_file(out);
+        return Ok(false);
     }
-    result.map(|()| Some(out))
+    result.map(|()| true)
 }
 
 
@@ -378,7 +494,7 @@ mod overlays {
         pub last: String,
     }
 
-    pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path) -> std::io::Result<Overlays> {
+    pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path, clicks: bool, keys: bool) -> std::io::Result<Overlays> {
         let mut o = Overlays { inputs: Vec::new(), pre: String::new(), src: "0:v".into(), post: String::new(), last: "framed".into() };
         let mut next_input = 2;
 
@@ -388,7 +504,7 @@ mod overlays {
             .clicks
             .iter()
             .map(|&(t, x, y)| (t, (x - rx) * sx, (y - ry) * sy))
-            .filter(|&(t, x, y)| t >= 0. && t < p.duration && x >= 0. && y >= 0. && x < p.w && y < p.h)
+            .filter(|&(t, x, y)| clicks && t >= 0. && t < p.duration && x >= 0. && y >= 0. && x < p.w && y < p.h)
             .take(MAX)
             .collect();
         if !clicks.is_empty() {
@@ -409,7 +525,7 @@ mod overlays {
             o.src = "clicked".into();
         }
 
-        let strokes: Vec<&(f64, String)> = track.keystrokes.iter().filter(|(t, _)| *t >= 0. && *t < p.duration).take(MAX).collect();
+        let strokes: Vec<&(f64, String)> = track.keystrokes.iter().filter(|(t, _)| keys && *t >= 0. && *t < p.duration).take(MAX).collect();
         for (i, (t, label)) in strokes.iter().enumerate() {
             // Shown until the next shortcut, at most 1.4 s.
             let next = strokes.get(i + 1).map_or(p.duration, |n| n.0);
@@ -487,5 +603,37 @@ mod overlays {
         editor::draw_line(&mut pm, label, (pad, baseline), size, gpui::white());
         pm.save_png(path).map_err(std::io::Error::other)?;
         Ok((w as u32, h as u32))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn probe() -> Probe {
+        Probe { w: 1920., h: 1080., fps: "30".into(), duration: 10. }
+    }
+
+    #[test]
+    fn auto_segments_merge_close_clicks() {
+        let track = Track { rect: (0., 0., 1920., 1080.), clicks: vec![(1.0, 100., 100.), (2.0, 200., 200.), (8.0, 300., 300.)], ..Default::default() };
+        let project = Project::auto(&track, &probe());
+        assert_eq!(project.segments.len(), 2);
+        assert_eq!((project.segments[0].start, project.segments[0].end), (1.0, 2.0 + HOLD));
+        assert!(project.clicks && !project.keys);
+    }
+
+    #[test]
+    fn camera_zooms_and_holds_a_fixed_point() {
+        let track = Track { rect: (0., 0., 1920., 1080.), cursor: vec![(0., 100., 100.)], ..Default::default() };
+        let segs = vec![Seg { start: 3., end: 6., zoom: 2.2, focus: Some((1500., 800.)) }];
+        let cam = Camera::new(&track, &probe(), &segs);
+        let (z0, ..) = cam.at(0.5);
+        assert!((z0 - 1.).abs() < 1e-6, "no zoom before the segment");
+        let (z, x, y) = cam.at(5.5);
+        assert!((z - 2.2).abs() < 1e-3, "full zoom inside: {z}");
+        assert!((x - 1500.).abs() < 5. && (y - 800.).abs() < 5., "settled on the focus: {x},{y}");
+        let (z9, ..) = cam.at(9.5);
+        assert!((z9 - 1.).abs() < 1e-6, "eased back out after");
     }
 }

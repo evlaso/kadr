@@ -7,6 +7,7 @@ mod panel;
 mod pin;
 mod record;
 mod studio;
+mod studio_editor;
 mod track;
 mod trim;
 mod job;
@@ -35,7 +36,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys]
                                                  начать запись сразу (повторный вызов — стоп)
   kadr record stop                               остановить запись
-  kadr studio <видео>                            автозум к кликам, фон, тень и скругления
+  kadr studio <видео> [--render]                 студия: зумы, фон, клики и клавиши (--render — сразу экспорт)
   kadr edit <картинка>                           редактор: стрелки, текст, маркер, размытие…
   kadr trim <видео> [--from С --to С]            обрезать запись (без флагов — окно обрезки)
   kadr gif <видео>                               сохранить запись как GIF (720px, 15 к/с)
@@ -51,7 +52,7 @@ enum Command {
     Pin(PathBuf),
     Record(Option<String>, Option<record::Opts>),
     RecordStop,
-    Studio(PathBuf),
+    Studio(PathBuf, bool),
     Edit(PathBuf),
     Text(Option<PathBuf>),
     Trim(PathBuf, Option<(f64, f64)>),
@@ -77,7 +78,7 @@ impl Command {
             }
             Some("open") => file(1).map(Command::Open),
             Some("pin") => file(1).map(Command::Pin),
-            Some("studio") => file(1).map(Command::Studio),
+            Some("studio") => file(1).map(|p| Command::Studio(p, args.iter().any(|a| a == "--render"))),
             Some("edit") => file(1).map(Command::Edit),
             Some("text") if args.len() > 1 => file(1).map(|p| Command::Text(Some(p))),
             Some("text") => Ok(Command::Text(None)),
@@ -131,7 +132,8 @@ impl Command {
             Command::Pin(path) => pin::open(path, cx),
             Command::Record(mode, opts) => record::command(mode, opts, cx),
             Command::RecordStop => record::command_stop(cx),
-            Command::Studio(path) => studio::render(path, cx),
+            Command::Studio(path, false) => studio_editor::open(path, cx),
+            Command::Studio(path, true) => studio::render(path, cx),
             Command::Edit(path) => editor::open(path, cx),
             Command::Text(None) => ocr::region(cx),
             Command::Text(Some(path)) => ocr::image(path, cx),
@@ -186,7 +188,13 @@ fn main() {
     let resolved: Vec<String> = match &command {
         Command::Open(p) => vec!["open".into(), p.display().to_string()],
         Command::Pin(p) => vec!["pin".into(), p.display().to_string()],
-        Command::Studio(p) => vec!["studio".into(), p.display().to_string()],
+        Command::Studio(p, render) => {
+            let mut v = vec!["studio".into(), p.display().to_string()];
+            if *render {
+                v.push("--render".into());
+            }
+            v
+        }
         Command::Edit(p) => vec!["edit".into(), p.display().to_string()],
         Command::Text(Some(p)) => vec!["text".into(), p.display().to_string()],
         Command::Trim(p, range) => {

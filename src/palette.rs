@@ -123,3 +123,9 @@ pub fn annotation_colors() -> Vec<Hsla> {
     colors.push(rgb(0x100F0F).into());
     colors
 }
+
+/// Gradient backdrops shared by the screenshot editor and the studio.
+pub fn backdrops() -> Vec<(Hsla, Hsla)> {
+    let c = annotation_colors();
+    vec![(c[4], c[5]), (c[1], c[0]), (c[3], c[4]), (gpui::hsla(0., 0., 0.22, 1.), gpui::hsla(0., 0., 0.08, 1.))]
+}
