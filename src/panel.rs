@@ -1,176 +1,225 @@
 //! Pre-recording toolbar: audio/camera toggles and the capture mode, like
 //! CleanShot's recording bar. Enter picks a region, Esc cancels.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use gpui::{
+    App, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, WeakEntity, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
+    layer_shell::*, point, popup::*, px, size,
+};
+use ui::{Divider, TintColor, Tooltip, prelude::*};
 
-use gtk4 as gtk;
-use gtk::{gdk, glib, prelude::*};
-use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-
-use crate::record::{self, Opts, Recorder};
+use crate::record::{self, Opts};
+use crate::kit::{self, InputRegion, LayerSpec};
 use crate::util;
 
-pub fn show(app: &gtk::Application, recorder: &Rc<Recorder>) -> gtk::Window {
-    let opts = Opts::load();
-    let mic = toggle("kadr-mic-symbolic", "Микрофон", opts.mic);
-    let device = Rc::new(RefCell::new(opts.mic_device.clone()));
-    let mic_menu = mic_picker(&mic, &device);
-    let mic_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    mic_group.add_css_class("kadr-group");
-    mic_group.append(&mic);
-    mic_group.append(&mic_menu);
-    let audio = toggle("kadr-speaker-symbolic", "Звук системы", opts.audio);
-    let webcam = toggle("kadr-camera-symbolic", "Камера", opts.webcam);
-
-    let region = labeled_button("kadr-region-symbolic", "Область");
-    region.add_css_class("kadr-primary");
-    region.set_tooltip_text(Some("Выбрать область (Enter)"));
-    let full = labeled_button("kadr-screen-symbolic", "Весь экран");
-    let close = gtk::Button::from_icon_name("kadr-close-symbolic");
-    close.set_tooltip_text(Some("Отмена (Esc)"));
-
-    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    bar.add_css_class("kadr-panel");
-    for w in [mic_group.upcast_ref::<gtk::Widget>(), audio.upcast_ref(), webcam.upcast_ref()] {
-        bar.append(w);
-    }
-    bar.append(&gtk::Separator::new(gtk::Orientation::Vertical));
-    for w in [region.upcast_ref::<gtk::Widget>(), full.upcast_ref(), close.upcast_ref()] {
-        bar.append(w);
-    }
-
-    let window = gtk::Window::builder()
-        .application(app)
-        .decorated(false)
-        .resizable(false)
-        .css_classes(["kadr-overlay"])
-        .child(&bar)
-        .build();
-    window.init_layer_shell();
-    window.set_namespace(Some("kadr-panel"));
-    window.set_layer(Layer::Overlay);
-    window.set_keyboard_mode(KeyboardMode::Exclusive);
-    window.set_anchor(Edge::Top, true);
-    window.set_margin(Edge::Top, 40);
-    window.set_monitor(util::focused_monitor().as_ref());
-
-    let read = glib::clone!(#[strong] mic, #[strong] audio, #[strong] webcam, #[strong] device, move || Opts {
-        mic: mic.is_active(),
-        mic_device: device.borrow().clone(),
-        audio: audio.is_active(),
-        webcam: webcam.is_active(),
-    });
-    let choose = Rc::new(glib::clone!(#[weak] recorder, move |mode: Option<&str>| {
-        recorder.panel_done(mode.map(|m| (m, read())));
-    }));
-
-    region.connect_clicked(glib::clone!(#[strong] choose, move |_| choose(Some("region"))));
-    full.connect_clicked(glib::clone!(#[strong] choose, move |_| choose(Some("fullscreen"))));
-    close.connect_clicked(glib::clone!(#[strong] choose, move |_| choose(None)));
-
-    let keys = gtk::EventControllerKey::new();
-    keys.connect_key_pressed(glib::clone!(#[strong] choose, move |_, key, _, _| {
-        match key {
-            gdk::Key::Escape => choose(None),
-            gdk::Key::Return | gdk::Key::KP_Enter => choose(Some("region")),
-            _ => return glib::Propagation::Proceed,
-        }
-        glib::Propagation::Stop
-    }));
-    window.add_controller(keys);
-
-    window.present();
-    region.grab_focus();
-    window
+pub struct Panel {
+    opts: Opts,
+    /// (source name, description); the empty name is the system default.
+    mics: Vec<(String, String)>,
+    focus: FocusHandle,
+    region: InputRegion,
 }
 
-/// Dropdown next to the mic toggle listing input devices; picking one also
-/// turns the microphone on.
-fn mic_picker(mic: &gtk::ToggleButton, device: &Rc<RefCell<String>>) -> gtk::MenuButton {
-    let mics = record::microphones();
-    // A remembered device that is gone falls back to the system default.
-    if !mics.iter().any(|(name, _)| *name == *device.borrow()) {
-        device.borrow_mut().clear();
-    }
-    let default_name = std::process::Command::new("pactl")
-        .arg("get-default-source")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .unwrap_or_default();
-    let default_desc = mics
-        .iter()
-        .find(|(name, _)| *name == default_name)
-        .map(|(_, d)| d.clone())
-        .unwrap_or_else(|| "системный".into());
-
-    let mut entries = vec![(String::new(), format!("По умолчанию — {default_desc}"))];
-    entries.extend(mics);
-
-    let describe = |name: &str, entries: &[(String, String)]| {
-        entries.iter().find(|(n, _)| n == name).map(|(_, d)| d.clone()).unwrap_or_default()
+pub fn open(cx: &mut App) -> Option<WindowHandle<Panel>> {
+    let spec = LayerSpec {
+        namespace: "kadr-panel",
+        anchor: Anchor::TOP,
+        margin: (40., 0., 0., 0.),
+        size: (920., 80.),
+        keyboard: KeyboardInteractivity::Exclusive,
+        ignore_zones: false,
+        monitor: util::focused_monitor(),
     };
-    mic.set_tooltip_text(Some(&describe(&device.borrow(), &entries)));
+    kit::open_layer(cx, spec, |window, cx| {
+        cx.new(|cx| {
+            let focus = cx.focus_handle();
+            window.focus(&focus, cx);
+            Panel::new(focus)
+        })
+    })
+}
 
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    list.add_css_class("kadr-menu");
-    let popover = gtk::Popover::new();
-    popover.set_has_arrow(false);
-    popover.add_css_class("kadr-popover");
-    popover.set_child(Some(&list));
-
-    let checks: Rc<RefCell<Vec<(String, gtk::Image)>>> = Rc::default();
-    for (name, desc) in &entries {
-        let check = gtk::Image::from_icon_name("kadr-check-symbolic");
-        check.set_opacity(if *device.borrow() == *name { 1.0 } else { 0.0 });
-        let label = gtk::Label::new(Some(desc));
-        label.set_xalign(0.0);
-        let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        row_box.append(&check);
-        row_box.append(&label);
-        let row = gtk::Button::new();
-        row.set_child(Some(&row_box));
-        checks.borrow_mut().push((name.clone(), check));
-        row.connect_clicked(glib::clone!(
-            #[strong] device, #[strong] checks, #[weak] mic, #[weak] popover, #[strong] name, #[strong] desc,
-            move |_| {
-                *device.borrow_mut() = name.clone();
-                for (n, img) in checks.borrow().iter() {
-                    img.set_opacity(if *n == name { 1.0 } else { 0.0 });
-                }
-                mic.set_active(true);
-                mic.set_tooltip_text(Some(&desc));
-                popover.popdown();
-            }
-        ));
-        list.append(&row);
+impl Panel {
+    fn new(focus: FocusHandle) -> Self {
+        let mut opts = Opts::load();
+        let found = record::microphones();
+        // A remembered device that is gone falls back to the system default.
+        if !found.iter().any(|(name, _)| *name == opts.mic_device) {
+            opts.mic_device.clear();
+        }
+        let default_name = std::process::Command::new("pactl")
+            .arg("get-default-source")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            .unwrap_or_default();
+        let default_desc = found
+            .iter()
+            .find(|(name, _)| *name == default_name)
+            .map(|(_, d)| d.clone())
+            .unwrap_or_else(|| "системный".into());
+        let mut mics = vec![(String::new(), format!("По умолчанию — {default_desc}"))];
+        mics.extend(found);
+        Panel { opts, mics, focus, region: InputRegion::default() }
     }
 
-    let button = gtk::MenuButton::new();
-    button.set_icon_name("kadr-down-symbolic");
-    button.set_tooltip_text(Some("Выбрать микрофон"));
-    button.add_css_class("kadr-chevron");
-    button.set_popover(Some(&popover));
-    button
+    fn choose(&mut self, mode: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
+        let opts = self.opts.clone();
+        window.remove_window();
+        record::panel_done(mode.map(|m| (m, opts)), cx);
+    }
+
+    fn open_mic_menu(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = cx.weak_entity();
+        let entries = self.mics.clone();
+        let selected = self.opts.mic_device.clone();
+        let height = 12. + 34. * entries.len() as f32;
+        let options = WindowOptions {
+            titlebar: None,
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.), px(0.)), size: size(px(380.), px(height)) })),
+            window_background: WindowBackgroundAppearance::Transparent,
+            kind: WindowKind::AnchoredPopup(PopupOptions {
+                parent: window.window_handle(),
+                anchor_rect: Bounds::new(event.position, size(px(1.), px(1.))),
+                anchor: PopupAnchor::BottomLeft,
+                gravity: PopupGravity::BottomRight,
+                constraint_adjustment: PopupConstraintAdjustment::FLIP_Y | PopupConstraintAdjustment::SLIDE_X,
+                offset: point(px(-12.), px(10.)),
+                // Must be requested from the mouse-down that opens it.
+                grab: true,
+            }),
+            ..Default::default()
+        };
+        if let Err(e) = cx.open_window(options, |_, cx| cx.new(|_| MicMenu { panel, entries, selected })) {
+            util::notify("kadr: меню не открылось", &e.to_string());
+        }
+    }
 }
 
-fn content(icon: &str, label: &str) -> gtk::Box {
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    b.append(&gtk::Image::from_icon_name(icon));
-    b.append(&gtk::Label::new(Some(label)));
-    b
+impl Render for Panel {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.region.reset();
+        let toggle = |id: &'static str, icon: Icon, label: &'static str, on: bool| {
+            Button::new(id, label)
+                .style(ButtonStyle::Subtle)
+                .size(ButtonSize::Large)
+                .start_icon(icon.size(IconSize::Small).color(if on { Color::Default } else { Color::Muted }))
+                .color(if on { Color::Default } else { Color::Muted })
+                .toggle_state(on)
+        };
+        let mic_desc = self.mics.iter().find(|(n, _)| *n == self.opts.mic_device).map(|(_, d)| d.clone()).unwrap_or_default();
+
+        let mic = h_flex()
+            .child(
+                toggle("mic", Icon::new(IconName::Mic), "Микрофон", self.opts.mic)
+                    .tooltip(Tooltip::text(mic_desc))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.opts.mic = !this.opts.mic;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                // Opened on mouse-down: a grabbing popup must be requested
+                // while the button is still held.
+                div()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.open_mic_menu(e, window, cx);
+                    }))
+                    .child(
+                        IconButton::new("mic-menu", IconName::ChevronDown)
+                            .size(ButtonSize::Large)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Выбрать микрофон")),
+                    ),
+            );
+
+        let bar = h_flex()
+            .relative()
+            .gap_1()
+            .p_1()
+            .elevation_3(cx)
+            .child(mic)
+            .child(toggle("audio", Icon::new(IconName::AudioOn), "Звук системы", self.opts.audio).on_click(cx.listener(|this, _, _, cx| {
+                this.opts.audio = !this.opts.audio;
+                cx.notify();
+            })))
+            .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), "Камера", self.opts.webcam).on_click(cx.listener(|this, _, _, cx| {
+                this.opts.webcam = !this.opts.webcam;
+                cx.notify();
+            })))
+            .child(Divider::vertical().h_5().mx_1())
+            .child(
+                Button::new("region", "Область")
+                    .style(ButtonStyle::Tinted(TintColor::Error))
+                    .size(ButtonSize::Large)
+                    .start_icon(Icon::new(IconName::Crosshair).size(IconSize::Small))
+                    .tooltip(Tooltip::text("Выбрать область (Enter)"))
+                    .on_click(cx.listener(|this, _, window, cx| this.choose(Some("region"), window, cx))),
+            )
+            .child(
+                Button::new("fullscreen", "Весь экран")
+                    .style(ButtonStyle::Subtle)
+                    .size(ButtonSize::Large)
+                    .start_icon(Icon::new(IconName::Screen).size(IconSize::Small))
+                    .on_click(cx.listener(|this, _, window, cx| this.choose(Some("fullscreen"), window, cx))),
+            )
+            .child(
+                IconButton::new("cancel", IconName::Close)
+                    .size(ButtonSize::Large)
+                    .tooltip(Tooltip::text("Отмена (Esc)"))
+                    .on_click(cx.listener(|this, _, window, cx| this.choose(None, window, cx))),
+            )
+            .child(self.region.mark());
+
+        kit::root(cx)
+            .flex()
+            .items_center()
+            .justify_center()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
+                "escape" => this.choose(None, window, cx),
+                "enter" => this.choose(Some("region"), window, cx),
+                _ => {}
+            }))
+            .child(bar)
+    }
 }
 
-fn toggle(icon: &str, label: &str, active: bool) -> gtk::ToggleButton {
-    let b = gtk::ToggleButton::new();
-    b.set_child(Some(&content(icon, label)));
-    b.set_active(active);
-    b.add_css_class("kadr-toggle");
-    b
+/// Native popup listing input devices; picking one also turns the mic on.
+struct MicMenu {
+    panel: WeakEntity<Panel>,
+    entries: Vec<(String, String)>,
+    selected: String,
 }
 
-fn labeled_button(icon: &str, label: &str) -> gtk::Button {
-    let b = gtk::Button::new();
-    b.set_child(Some(&content(icon, label)));
-    b
+impl Render for MicMenu {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors();
+        let (hover, selected) = (colors.element_hover, colors.element_selected);
+        let rows = self.entries.iter().enumerate().map(|(i, (name, desc))| {
+            let panel = self.panel.clone();
+            let name = name.clone();
+            let checked = name == self.selected;
+            h_flex()
+                .id(i)
+                .h(px(32.))
+                .px_2()
+                .gap_2()
+                .rounded_md()
+                .cursor_pointer()
+                .when(checked, |row| row.bg(selected))
+                .hover(move |s| s.bg(hover))
+                .child(Icon::new(IconName::Check).size(IconSize::Small).color(if checked { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
+                .child(Label::new(desc.clone()))
+                .on_click(move |_, window, cx| {
+                    let _ = panel.update(cx, |panel, cx| {
+                        panel.opts.mic_device = name.clone();
+                        panel.opts.mic = true;
+                        cx.notify();
+                    });
+                    window.remove_window();
+                })
+        });
+        kit::root(cx).child(v_flex().size_full().p_1().gap_0p5().elevation_2(cx).children(rows))
+    }
 }

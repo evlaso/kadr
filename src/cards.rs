@@ -1,375 +1,395 @@
-//! Quick-access overlay: a stack of screenshot thumbnails in the bottom-left
-//! corner of the focused monitor, like CleanShot's floating preview.
+//! Quick-access overlay: a stack of thumbnails in the bottom-left corner of
+//! the focused monitor, like CleanShot's floating preview. One layer surface
+//! holds the whole stack; only the cards themselves take input.
 
-use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use gtk4 as gtk;
-use gtk::{gdk, gio, glib, prelude::*};
-use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+use gpui::{
+    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
+    MouseButton, MouseDownEvent, ObjectFit, SharedString, Window, WindowHandle, div, ease_out_quint,
+    img, layer_shell::*, px, rgba,
+};
+use ui::{IconButtonShape, TintColor, Tooltip, prelude::*};
 
+use crate::kit::{self, InputRegion, LayerSpec};
 use crate::{pin, studio, track, util};
 
-const CARD_WIDTH: i32 = 300;
-const MAX_CARDS: usize = 5;
+const CARD_WIDTH: f32 = 300.;
+const MAX_CARDS: usize = 4;
+const GAP: f32 = 14.;
+/// Room around the stack so card shadows aren't cut off by the overlay's edge.
+const PAD: f32 = 24.;
 const AUTO_DISMISS: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
-pub struct Cards {
-    ui: RefCell<Option<Ui>>,
-    hidden: Cell<bool>,
-}
+struct CardsWindow(Option<WindowHandle<CardStack>>);
 
-struct Ui {
-    window: gtk::Window,
-    list: gtk::Box,
-    cards: Vec<Rc<Card>>,
-}
+impl Global for CardsWindow {}
 
 struct Card {
-    revealer: gtk::Revealer,
-    timer: RefCell<Option<glib::SourceId>>,
+    id: usize,
+    path: PathBuf,
+    image: Arc<Image>,
+    height: f32,
+    /// Clip duration in seconds for recordings.
+    video: Option<f64>,
+    deadline: Instant,
+    hovered: bool,
 }
 
-impl Card {
-    fn stop_timer(&self) {
-        if let Some(id) = self.timer.take() {
-            id.remove();
-        }
-    }
+pub struct CardStack {
+    cards: Vec<Card>,
+    next_id: usize,
+    hidden: bool,
+    region: InputRegion,
 }
 
-impl Cards {
-    /// Hide or restore the overlay; returns whether anything was on screen.
-    pub fn set_hidden(&self, hidden: bool) -> bool {
-        self.hidden.set(hidden);
-        match &*self.ui.borrow() {
-            Some(ui) => {
-                let was_visible = ui.window.is_visible();
-                ui.window.set_visible(!hidden);
-                was_visible
+/// Show a card for a screenshot or recording.
+pub fn show(path: PathBuf, cx: &mut App) {
+    let hold = kit::hold(cx);
+    cx.spawn(async move |cx| {
+        let _hold = hold;
+        let loaded = if is_video(&path) {
+            video_preview(&path).await
+        } else {
+            image_preview(&path).map(|(i, w, h)| (i, w, h, None))
+        };
+        match loaded {
+            Some((image, w, h, video)) => {
+                let _ = cx.update(|cx| add(path, image, w, h, video, cx));
             }
-            None => false,
+            None => util::notify("Не удалось открыть файл", &path.display().to_string()),
+        }
+    })
+    .detach();
+}
+
+/// Hide the overlay while a screenshot is taken. Returns whether it was visible.
+pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
+    let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) else { return false };
+    handle
+        .update(cx, |stack, _, cx| {
+            let was = !stack.hidden && !stack.cards.is_empty();
+            stack.hidden = hidden;
+            cx.notify();
+            was
+        })
+        .unwrap_or(false)
+}
+
+fn add(path: PathBuf, image: Arc<Image>, w: u32, h: u32, video: Option<f64>, cx: &mut App) {
+    let height = (CARD_WIDTH * h as f32 / w.max(1) as f32).clamp(90., 240.);
+    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: Instant::now() + AUTO_DISMISS, hovered: false });
+
+    if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
+        let pushed = handle.update(cx, |stack, _, cx| {
+            let mut card = slot.take().expect("card");
+            card.id = stack.next_id;
+            stack.next_id += 1;
+            stack.cards.push(card);
+            if stack.cards.len() > MAX_CARDS {
+                stack.cards.remove(0);
+            }
+            cx.notify();
+        });
+        if pushed.is_ok() {
+            return;
         }
     }
+    // No stack on screen (or it just closed): open a fresh one.
+    let Some(card) = slot else { return };
+    let spec = LayerSpec {
+        namespace: "kadr",
+        anchor: Anchor::BOTTOM | Anchor::LEFT,
+        margin: (0., 0., 0., 0.),
+        size: (CARD_WIDTH + 2. * PAD, MAX_CARDS as f32 * (240. + GAP) + 2. * PAD),
+        keyboard: KeyboardInteractivity::None,
+        ignore_zones: false,
+        monitor: util::focused_monitor(),
+    };
+    let handle = kit::open_layer(cx, spec, |window, cx| {
+        cx.new(|cx| {
+            CardStack::start_ticking(window, cx);
+            CardStack { cards: vec![card], next_id: 1, hidden: false, region: InputRegion::default() }
+        })
+    });
+    cx.set_global(CardsWindow(handle));
+}
 
-    pub fn show(self: &Rc<Self>, app: &gtk::Application, path: PathBuf) {
-        if is_video(&path) {
-            let hold = app.hold();
-            glib::spawn_future_local(glib::clone!(#[weak(rename_to = cards)] self, #[weak] app, async move {
-                let _hold = hold;
-                match video_preview(&path).await {
-                    Some((texture, duration)) => cards.show_texture(&app, path, &texture, Some(duration)),
-                    None => util::notify("Не удалось открыть видео", &path.display().to_string()),
+impl CardStack {
+    /// Auto-dismiss: cards expire unless the pointer rests on them.
+    fn start_ticking(window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(250)).await;
+                let alive = this.update_in(cx, |stack, window, cx| {
+                    let now = Instant::now();
+                    let before = stack.cards.len();
+                    stack.cards.retain(|c| c.hovered || now < c.deadline);
+                    if stack.cards.len() != before {
+                        cx.notify();
+                    }
+                    if stack.cards.is_empty() {
+                        window.remove_window();
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if !matches!(alive, Ok(true)) {
+                    break;
                 }
-            }));
-            return;
-        }
-        match gdk::Texture::from_filename(&path) {
-            Ok(texture) => self.show_texture(app, path, &texture, None),
-            Err(e) => util::notify("Не удалось открыть картинку", &e.to_string()),
-        }
-    }
-
-    /// `video` carries the clip duration in seconds for recordings.
-    fn show_texture(self: &Rc<Self>, app: &gtk::Application, path: PathBuf, texture: &gdk::Texture, video: Option<f64>) {
-        self.ensure_ui(app);
-
-        let oldest = {
-            let ui = self.ui.borrow();
-            (ui.as_ref().unwrap().cards.len() >= MAX_CARDS).then(|| ui.as_ref().unwrap().cards[0].clone())
-        };
-        if let Some(card) = oldest {
-            self.remove(&card);
-        }
-
-        let card = self.build_card(app, path, texture, video);
-        {
-            let mut ui = self.ui.borrow_mut();
-            let ui = ui.as_mut().unwrap();
-            ui.list.append(&card.revealer);
-            ui.cards.push(card.clone());
-            if let Some(monitor) = util::focused_monitor() {
-                ui.window.set_monitor(Some(&monitor));
             }
-            ui.window.set_visible(!self.hidden.get());
-        }
-        // Reveal after the first frame so the slide-in animation plays.
-        let revealer = card.revealer.clone();
-        glib::idle_add_local_once(move || revealer.set_reveal_child(true));
-        self.arm_timer(&card);
+        })
+        .detach();
     }
 
-    fn ensure_ui(&self, app: &gtk::Application) {
-        if self.ui.borrow().is_some() {
-            return;
+    fn remove(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.cards.retain(|c| c.id != id);
+        if self.cards.is_empty() {
+            window.remove_window();
         }
-        let window = gtk::Window::builder()
-            .application(app)
-            .decorated(false)
-            .resizable(false)
-            .css_classes(["kadr-overlay"])
-            .build();
-        window.init_layer_shell();
-        window.set_namespace(Some("kadr"));
-        window.set_layer(Layer::Overlay);
-        window.set_keyboard_mode(KeyboardMode::None);
-        window.set_anchor(Edge::Bottom, true);
-        window.set_anchor(Edge::Left, true);
-        window.set_margin(Edge::Bottom, 14);
-        window.set_margin(Edge::Left, 14);
-
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        list.set_valign(gtk::Align::End);
-        window.set_child(Some(&list));
-        *self.ui.borrow_mut() = Some(Ui { window, list, cards: Vec::new() });
+        cx.notify();
     }
 
-    fn build_card(self: &Rc<Self>, app: &gtk::Application, path: PathBuf, texture: &gdk::Texture, video: Option<f64>) -> Rc<Card> {
-        let height = (CARD_WIDTH * texture.height() / texture.width().max(1)).clamp(90, 240);
-
-        let picture = gtk::Picture::for_paintable(&util::scaled_paintable(texture, CARD_WIDTH as f64, height as f64));
-
-        let copy = pill_button("Копировать");
-        let edit = pill_button(if video.is_some() { "Открыть" } else { "Редактировать" });
-        // Recordings made by kadr carry a cursor track and can get the studio treatment.
-        let studio = pill_button("✨ Улучшить");
-        studio.set_visible(video.is_some() && track::path_for(&path).exists());
-        let center = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        center.set_halign(gtk::Align::Center);
-        center.set_valign(gtk::Align::Center);
-        center.append(&copy);
-        center.append(&edit);
-        center.append(&studio);
-
-        let close = round_button("kadr-close-symbolic", "Закрыть", gtk::Align::Start, gtk::Align::Start);
-        let pin_btn = round_button("kadr-pin-symbolic", "Закрепить поверх окон", gtk::Align::End, gtk::Align::Start);
-        let trash = round_button("kadr-trash-symbolic", "Удалить файл", gtk::Align::Start, gtk::Align::End);
-        let folder = round_button("kadr-folder-symbolic", "Открыть папку", gtk::Align::End, gtk::Align::End);
-
-        let hover = gtk::Overlay::new();
-        hover.add_css_class("kadr-hover");
-        hover.set_child(Some(&center));
-        for b in [&close, &pin_btn, &trash, &folder] {
-            hover.add_overlay(b);
+    fn set_hover(&mut self, id: usize, hovered: bool) {
+        if let Some(card) = self.cards.iter_mut().find(|c| c.id == id) {
+            card.hovered = hovered;
+            if !hovered {
+                card.deadline = Instant::now() + AUTO_DISMISS;
+            }
         }
+    }
 
-        let frame = gtk::Overlay::new();
-        frame.add_css_class("kadr-card");
-        frame.set_overflow(gtk::Overflow::Hidden);
-        frame.set_child(Some(&picture));
-        if let Some(seconds) = video {
-            pin_btn.set_visible(false);
-            let badge = gtk::Label::new(Some(&format!("▶ {}", util::format_duration(seconds))));
-            badge.add_css_class("kadr-badge");
-            badge.set_halign(gtk::Align::Center);
-            badge.set_valign(gtk::Align::End);
-            frame.add_overlay(&badge);
-        }
-        frame.add_overlay(&hover);
+    fn render_card(&self, card: &Card, cx: &mut Context<Self>) -> AnyElement {
+        let id = card.id;
+        let group: SharedString = format!("card-{id}").into();
+        let path = card.path.clone();
+        let video = card.video.is_some();
+        let has_track = video && track::path_for(&path).exists();
 
-        let revealer = gtk::Revealer::builder()
-            .transition_type(gtk::RevealerTransitionType::SlideUp)
-            .transition_duration(220)
-            .child(&frame)
-            .build();
-        let card = Rc::new(Card { revealer, timer: RefCell::new(None) });
-
-        // Pause auto-dismiss while the pointer is over the card.
-        let motion = gtk::EventControllerMotion::new();
-        motion.connect_enter(glib::clone!(#[strong] card, move |_, _, _| card.stop_timer()));
-        motion.connect_leave(glib::clone!(#[weak(rename_to = cards)] self, #[strong] card, move |_| cards.arm_timer(&card)));
-        frame.add_controller(motion);
-
-        self.attach_drag(&frame, &picture, &path, &card);
-
-        let on = |button: &gtk::Button, action: fn(&Rc<Cards>, &gtk::Application, &Path, &Rc<Card>)| {
-            button.connect_clicked(glib::clone!(
-                #[weak(rename_to = cards)] self,
-                #[weak] app,
-                #[strong] path,
-                #[strong] card,
-                move |_| action(&cards, &app, &path, &card)
-            ));
+        let act = |action: fn(&mut CardStack, &Path, usize, &mut Window, &mut Context<CardStack>)| {
+            let path = path.clone();
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                action(this, &path, id, window, cx)
+            })
         };
-        on(&copy, |cards, _, path, card| {
+        let big = |id: (&'static str, usize), label: &'static str, icon: IconName| {
+            Button::new(id, label)
+                .style(ButtonStyle::Filled)
+                .size(ButtonSize::Large)
+                .start_icon(Icon::new(icon).size(IconSize::Small))
+                .width(px(170.))
+        };
+        let corner = |id: (&'static str, usize), icon: IconName, tip: &'static str| {
+            IconButton::new(id, icon).style(ButtonStyle::Filled).shape(IconButtonShape::Square).tooltip(Tooltip::text(tip))
+        };
+
+        let mut center = v_flex().items_center().gap_1p5();
+        center = center.child(big(("copy", id), "Копировать", IconName::Copy).on_click(act(|this, path, id, window, cx| {
             if is_video(path) {
-                util::copy_file(path);
+                util::copy_file(path)
             } else {
-                util::copy_image(path);
+                util::copy_image(path)
             }
-            cards.remove(card);
-        });
-        on(&edit, |cards, app, path, card| {
-            cards.remove(card);
-            cards.edit(app, path);
-        });
-        on(&close, |cards, _, _, card| cards.remove(card));
-        on(&studio, |cards, app, path, card| {
-            cards.remove(card);
-            studio::render(app, cards, path.to_owned());
-        });
-        on(&pin_btn, |cards, app, path, card| {
-            pin::open(app, path);
-            cards.remove(card);
-        });
-        on(&trash, |cards, _, path, card| {
-            if let Err(e) = gio::File::for_path(path).trash(None::<&gio::Cancellable>) {
-                util::notify("Не удалось удалить файл", &e.to_string());
-            }
-            cards.remove(card);
-        });
-        on(&folder, |_, _, path, _| util::open_folder(path));
+            this.remove(id, window, cx);
+        })));
+        center = center.child(
+            big(("edit", id), if video { "Открыть" } else { "Редактировать" }, if video { IconName::PlayFilled } else { IconName::Pencil })
+                .on_click(act(|this, path, id, window, cx| {
+                    this.remove(id, window, cx);
+                    edit(path.to_owned(), cx);
+                })),
+        );
+        if has_track {
+            // Recordings made by kadr carry a cursor track and can get the studio treatment.
+            center = center.child(
+                big(("studio", id), "Улучшить", IconName::Sparkle).style(ButtonStyle::Tinted(TintColor::Accent)).on_click(act(
+                    |this, path, id, window, cx| {
+                        this.remove(id, window, cx);
+                        studio::render(path.to_owned(), cx);
+                    },
+                )),
+            );
+        }
 
-        // Double-click on the thumbnail opens the editor (or player).
-        let click = gtk::GestureClick::new();
-        click.connect_pressed(glib::clone!(
-            #[weak(rename_to = cards)] self,
-            #[weak] app,
-            #[strong] path,
-            #[strong] card,
-            move |_, n, _, _| {
-                if n == 2 {
-                    cards.remove(&card);
-                    cards.edit(&app, &path);
+        let at = |el: IconButton| div().absolute().m_1p5().child(el);
+        let mut hover = div()
+            .absolute()
+            .inset_0()
+            .rounded(px(kit::RADIUS))
+            .bg(rgba(0x00000099))
+            .opacity(0.)
+            .group_hover(group.clone(), |s| s.opacity(1.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(center)
+            .child(at(corner(("close", id), IconName::Close, "Закрыть").on_click(act(|this, _, id, window, cx| this.remove(id, window, cx)))).top_0().left_0())
+            .child(
+                at(corner(("trash", id), IconName::Trash, "Удалить файл").on_click(act(|this, path, id, window, cx| {
+                    util::trash(path);
+                    this.remove(id, window, cx);
+                })))
+                .bottom_0()
+                .left_0(),
+            )
+            .child(at(corner(("folder", id), IconName::Folder, "Открыть папку").on_click(act(|_, path, _, _, _| util::open_folder(path)))).bottom_0().right_0());
+        if !video {
+            hover = hover.child(
+                at(corner(("pin", id), IconName::Pin, "Закрепить поверх окон").on_click(act(|this, path, id, window, cx| {
+                    pin::open(path.to_owned(), cx);
+                    this.remove(id, window, cx);
+                })))
+                .top_0()
+                .right_0(),
+            );
+        }
+
+        let badge = card.video.map(|secs| {
+            h_flex()
+                .absolute()
+                .bottom_2()
+                .left_0()
+                .right_0()
+                .justify_center()
+                .group_hover(group.clone(), |s| s.opacity(0.))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .bg(rgba(0x000000b3))
+                        .child(Icon::new(IconName::PlayFilled).size(IconSize::XSmall).color(Color::Custom(gpui::white())))
+                        .child(Label::new(util::format_duration(secs)).size(LabelSize::Small).color(Color::Custom(gpui::white()))),
+                )
+        });
+
+        // Double-click opens the editor (or the player).
+        let double_click = {
+            let path = path.clone();
+            cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                if e.click_count == 2 {
+                    this.remove(id, window, cx);
+                    edit(path.clone(), cx);
                 }
-            }
-        ));
-        picture.add_controller(click);
+            })
+        };
 
-        card
-    }
-
-    fn attach_drag(self: &Rc<Self>, frame: &gtk::Overlay, picture: &gtk::Picture, path: &Path, card: &Rc<Card>) {
-        let drag = gtk::DragSource::new();
-        drag.set_actions(gdk::DragAction::COPY);
-        let file = gio::File::for_path(path);
-        drag.connect_prepare(move |_, _, _| {
-            let files = gdk::FileList::from_array(&[file.clone()]);
-            Some(gdk::ContentProvider::for_value(&files.to_value()))
-        });
-        let icon = gtk::WidgetPaintable::new(Some(picture));
-        drag.connect_drag_begin(move |src, _| src.set_icon(Some(&icon), CARD_WIDTH / 2, 20));
-        let cancelled = Rc::new(Cell::new(false));
-        drag.connect_drag_cancel(glib::clone!(#[strong] cancelled, move |_, _, _| {
-            cancelled.set(true);
-            false
-        }));
-        // A file dropped somewhere has done its job, like in CleanShot.
-        drag.connect_drag_end(glib::clone!(#[weak(rename_to = cards)] self, #[strong] card, move |_, _, _| {
-            if !cancelled.replace(false) {
-                cards.remove(&card);
-            }
-        }));
-        frame.add_controller(drag);
-    }
-
-    fn arm_timer(self: &Rc<Self>, card: &Rc<Card>) {
-        card.stop_timer();
-        let id = glib::timeout_add_local_once(AUTO_DISMISS, glib::clone!(
-            #[weak(rename_to = cards)] self,
-            #[strong] card,
-            move || {
-                // The source is finished; drop the id without removing it.
-                card.timer.take();
-                cards.remove(&card);
-            }
-        ));
-        card.timer.replace(Some(id));
-    }
-
-    fn remove(self: &Rc<Self>, card: &Rc<Card>) {
-        card.stop_timer();
-        {
-            let mut ui = self.ui.borrow_mut();
-            let Some(ui) = ui.as_mut() else { return };
-            let Some(i) = ui.cards.iter().position(|c| Rc::ptr_eq(c, card)) else { return };
-            ui.cards.remove(i);
-        }
-        card.revealer.connect_child_revealed_notify(glib::clone!(#[weak(rename_to = cards)] self, move |revealer| {
-            if !revealer.is_child_revealed() {
-                cards.detach(revealer);
-            }
-        }));
-        card.revealer.set_reveal_child(false);
-        // Hidden overlay: no animation will run, so detach right away.
-        if !card.revealer.is_mapped() {
-            self.detach(&card.revealer);
-        }
-    }
-
-    fn detach(&self, revealer: &gtk::Revealer) {
-        let mut slot = self.ui.borrow_mut();
-        let Some(ui) = slot.as_ref() else { return };
-        if revealer.parent().as_ref() == Some(ui.list.upcast_ref()) {
-            ui.list.remove(revealer);
-        }
-        if ui.list.first_child().is_none() {
-            // Closing the last window lets the app exit when nothing else holds it.
-            let ui = slot.take().unwrap();
-            drop(slot);
-            ui.window.close();
-        }
-    }
-
-    fn edit(self: &Rc<Self>, app: &gtk::Application, path: &Path) {
-        if is_video(path) {
-            return util::open_file(path);
-        }
-        let Some(proc) = util::spawn(&[Path::new("tensaku-edit"), path]) else { return };
-        let before = util::mtime(path);
-        let hold = app.hold();
-        let path = path.to_owned();
-        glib::spawn_future_local(glib::clone!(#[weak(rename_to = cards)] self, #[weak] app, async move {
-            let _hold = hold;
-            let _ = proc.wait_future().await;
-            // The editor saves in place; bring the result back if it changed.
-            if util::mtime(&path) != before {
-                util::copy_image(&path);
-                cards.show(&app, path);
-            }
-        }));
+        let colors = cx.theme().colors();
+        div()
+            .id(("card", id))
+            .group(group)
+            .relative()
+            .flex_none()
+            .w(px(CARD_WIDTH))
+            .h(px(card.height))
+            .rounded(px(kit::RADIUS))
+            .overflow_hidden()
+            .bg(colors.elevated_surface_background)
+            .shadow(kit::shadow())
+            // GPUI clips children to a rectangle, so the image rounds its own corners.
+            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Cover).rounded(px(kit::RADIUS)))
+            .children(badge)
+            .child(hover)
+            .child(self.region.mark())
+            .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
+            .on_mouse_down(MouseButton::Left, double_click)
+            // Drag the file out to a chat, browser or file manager.
+            .on_drag(path, |_: &PathBuf, _, _, cx| cx.new(|_| DragPreview))
+            .external_drag_payload(|path: &PathBuf, _, _| {
+                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
+            })
+            .with_animation(("appear", id), Animation::new(Duration::from_millis(240)).with_easing(ease_out_quint()), |el, d| {
+                el.opacity(d).mb(px((1. - d) * -24.))
+            })
+            .into_any_element()
     }
 }
 
-fn is_video(path: &Path) -> bool {
+impl Render for CardStack {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.region.reset();
+        if self.hidden {
+            window.set_input_region(Some(&[]));
+            return kit::root(cx);
+        }
+        let cards: Vec<_> = self.cards.iter().map(|c| self.render_card(c, cx)).collect();
+        kit::root(cx).flex().flex_col().justify_end().p(px(PAD)).gap(px(GAP)).children(cards)
+    }
+}
+
+/// The platform draws its own icon for outbound file drags.
+struct DragPreview;
+
+impl Render for DragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+/// Screenshots open in Tensaku (Omarchy's annotator), recordings in the player.
+fn edit(path: PathBuf, cx: &mut App) {
+    if is_video(&path) {
+        return util::open_file(&path);
+    }
+    let before = util::mtime(&path);
+    let hold = kit::hold(cx);
+    cx.spawn(async move |cx| {
+        let _hold = hold;
+        let _ = async_process::Command::new("tensaku-edit").arg(&path).status().await;
+        // The editor saves in place; bring the result back if it changed.
+        if util::mtime(&path) != before {
+            util::copy_image(&path);
+            let _ = cx.update(|cx| show(path, cx));
+        }
+    })
+    .detach();
+}
+
+pub fn is_video(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
         Some("mp4" | "mkv" | "webm" | "mov")
     )
 }
 
+/// Pixel size from a PNG's IHDR chunk.
+pub fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 24 || &bytes[1..4] != b"PNG" {
+        return None;
+    }
+    let be = |i: usize| u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+    Some((be(16), be(20)))
+}
+
+/// Loaded from bytes rather than by path, so an edited file isn't served from cache.
+pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
+    let bytes = std::fs::read(path).ok()?;
+    let (w, h) = png_size(&bytes)?;
+    Some((Arc::new(Image::from_bytes(ImageFormat::Png, bytes)), w, h))
+}
+
 /// First frame (scaled down) and duration in seconds.
-async fn video_preview(path: &Path) -> Option<(gdk::Texture, f64)> {
-    let thumb = glib::user_runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
-    let (ok, _) = util::output(&[
+async fn video_preview(path: &Path) -> Option<(Arc<Image>, u32, u32, Option<f64>)> {
+    use std::ffi::OsStr;
+    let thumb = util::runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
+    let (ok, _) = util::output::<&OsStr>(&[
         "ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-i".as_ref(), path.as_os_str(),
         "-vframes".as_ref(), "1".as_ref(), "-vf".as_ref(), "scale=640:-2".as_ref(), thumb.as_os_str(),
     ])
     .await?;
-    let texture = ok.then(|| gdk::Texture::from_filename(&thumb).ok()).flatten();
+    let preview = ok.then(|| image_preview(&thumb)).flatten();
     let _ = std::fs::remove_file(&thumb);
-    let (_, duration) = util::output(&[
+    let (_, duration) = util::output::<&OsStr>(&[
         "ffprobe".as_ref(), "-v".as_ref(), "error".as_ref(), "-show_entries".as_ref(), "format=duration".as_ref(),
         "-of".as_ref(), "csv=p=0".as_ref(), path.as_os_str(),
     ])
     .await?;
-    Some((texture?, duration.trim().parse().unwrap_or(0.0)))
-}
-
-fn pill_button(label: &str) -> gtk::Button {
-    let b = gtk::Button::with_label(label);
-    b.add_css_class("kadr-pill");
-    b
-}
-
-fn round_button(icon: &str, tooltip: &str, halign: gtk::Align, valign: gtk::Align) -> gtk::Button {
-    let b = gtk::Button::from_icon_name(icon);
-    b.add_css_class("kadr-round");
-    b.set_tooltip_text(Some(tooltip));
-    b.set_halign(halign);
-    b.set_valign(valign);
-    b
+    let (image, w, h) = preview?;
+    Some((image, w, h, Some(duration.trim().parse().unwrap_or(0.0))))
 }

@@ -5,15 +5,18 @@ mod pin;
 mod record;
 mod studio;
 mod track;
+mod kit;
 mod util;
 
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::time::Duration;
 
-use gtk4 as gtk;
-use gtk::{gio, glib, prelude::*};
-
-const APP_ID: &str = "dev.foxqa.Kadr";
+use futures::StreamExt;
+use futures::channel::mpsc;
+use gpui::{App, QuitMode};
+use gpui_platform::application;
 
 const USAGE: &str = "kadr — скриншоты с карточкой быстрого доступа
 
@@ -41,22 +44,6 @@ enum Command {
 }
 
 impl Command {
-    fn to_args(&self) -> Vec<String> {
-        match self {
-            Command::Shot(mode) => vec!["shot".into(), mode.clone()],
-            Command::Open(p) => vec!["open".into(), p.display().to_string()],
-            Command::Pin(p) => vec!["pin".into(), p.display().to_string()],
-            Command::Record(None, _) => vec!["record".into()],
-            Command::Record(Some(mode), opts) => {
-                let mut v = vec!["record".into(), mode.clone()];
-                v.extend(opts.clone().unwrap_or_default().to_flags());
-                v
-            }
-            Command::RecordStop => vec!["record".into(), "stop".into()],
-            Command::Studio(p) => vec!["studio".into(), p.display().to_string()],
-        }
-    }
-
     fn from_args(args: &[String]) -> Result<Self, String> {
         let file = |i: usize| -> Result<PathBuf, String> {
             let arg = args.get(i).ok_or("не указан файл")?;
@@ -99,54 +86,120 @@ impl Command {
             Some(other) => Err(format!("неизвестная команда: {other}")),
         }
     }
+
+    fn run(self, cx: &mut App) {
+        match self {
+            Command::Shot(mode) => capture::shot(mode, cx),
+            Command::Open(path) => cards::show(path, cx),
+            Command::Pin(path) => pin::open(path, cx),
+            Command::Record(mode, opts) => record::command(mode, opts, cx),
+            Command::RecordStop => record::command_stop(cx),
+            Command::Studio(path) => studio::render(path, cx),
+        }
+    }
 }
 
-fn main() -> glib::ExitCode {
+fn socket_path() -> PathBuf {
+    util::runtime_dir().join("kadr.sock")
+}
+
+/// Hand the (already validated, path-resolved) arguments to a running kadr.
+fn send_to_running(args: &[String]) -> bool {
+    let Ok(mut stream) = UnixStream::connect(socket_path()) else { return false };
+    let line = serde_json::to_string(args).unwrap_or_default();
+    stream.write_all(format!("{line}\n").as_bytes()).is_ok()
+}
+
+/// Accept commands from later invocations on a helper thread.
+fn listen(listener: UnixListener, tx: mpsc::UnboundedSender<Vec<String>>) {
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut line = String::new();
+            if BufReader::new(stream).read_line(&mut line).is_ok()
+                && let Ok(args) = serde_json::from_str::<Vec<String>>(&line)
+                && tx.unbounded_send(args).is_err()
+            {
+                break;
+            }
+        }
+    });
+}
+
+fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
         print!("{USAGE}");
-        return glib::ExitCode::SUCCESS;
+        return;
     }
     // Validate and resolve paths here, before handing off to the running instance.
     let command = match Command::from_args(&args) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("kadr: {e}\n\n{USAGE}");
-            return glib::ExitCode::FAILURE;
+            std::process::exit(1);
         }
     };
+    let resolved: Vec<String> = match &command {
+        Command::Open(p) => vec!["open".into(), p.display().to_string()],
+        Command::Pin(p) => vec!["pin".into(), p.display().to_string()],
+        Command::Studio(p) => vec!["studio".into(), p.display().to_string()],
+        _ => args.clone(),
+    };
+    if send_to_running(&resolved) {
+        return;
+    }
 
-    let app = gtk::Application::builder()
-        .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
-        .build();
-    app.connect_startup(|_| util::load_css());
-
-    let cards = Rc::new(cards::Cards::default());
-    let recorder = record::Recorder::new(&app, cards.clone());
-    app.connect_command_line(move |app, cmdline| {
-        let args: Vec<String> = cmdline
-            .arguments()
-            .iter()
-            .skip(1)
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        match Command::from_args(&args) {
-            Ok(Command::Shot(mode)) => capture::shot(app, &cards, mode),
-            Ok(Command::Open(path)) => cards.show(app, path),
-            Ok(Command::Pin(path)) => pin::open(app, &path),
-            Ok(Command::Record(mode, opts)) => recorder.command(mode, opts),
-            Ok(Command::RecordStop) => recorder.command_stop(),
-            Ok(Command::Studio(path)) => studio::render(app, &cards, path),
-            Err(e) => {
-                util::notify("kadr", &e);
-                return glib::ExitCode::FAILURE;
-            }
+    // Become the running instance. A stale socket from a crash is replaced.
+    let path = socket_path();
+    let _ = std::fs::remove_file(&path);
+    let listener = match UnixListener::bind(&path) {
+        Ok(l) => l,
+        Err(_) if send_to_running(&resolved) => return,
+        Err(e) => {
+            eprintln!("kadr: {}: {e}", path.display());
+            std::process::exit(1);
         }
-        glib::ExitCode::SUCCESS
-    });
+    };
+    let (tx, mut rx) = mpsc::unbounded();
+    listen(listener, tx);
 
-    let mut argv = vec!["kadr".to_string()];
-    argv.extend(command.to_args());
-    app.run_with_args(&argv)
+    // kadr quits on its own once idle (below), not when the last overlay closes.
+    application().with_assets(kit::Assets).with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
+        kit::init(cx);
+        record::init(cx);
+        command.run(cx);
+
+        cx.spawn(async move |cx| {
+            while let Some(args) = rx.next().await {
+                let _ = cx.update(|cx| match Command::from_args(&args) {
+                    Ok(command) => command.run(cx),
+                    Err(e) => util::notify("kadr", &e),
+                });
+            }
+        })
+        .detach();
+
+        // Exit once nothing is on screen and no job is running.
+        cx.spawn(async move |cx| {
+            let mut idle = 0;
+            loop {
+                cx.background_executor().timer(Duration::from_millis(500)).await;
+                let quiet = cx.update(|cx| cx.windows().is_empty() && !kit::is_busy(cx));
+                idle = if quiet { idle + 1 } else { 0 };
+                // A short grace period lets a command that just arrived open its window.
+                if idle >= 3 {
+                    // Stop taking new commands first; anything already in flight
+                    // gets a moment to land, and then we only quit if still idle.
+                    let _ = std::fs::remove_file(socket_path());
+                    cx.background_executor().timer(Duration::from_millis(300)).await;
+                    if cx.update(|cx| cx.windows().is_empty() && !kit::is_busy(cx)) {
+                        cx.update(|cx| cx.quit());
+                        break;
+                    }
+                    idle = 0;
+                }
+            }
+        })
+        .detach();
+    });
 }

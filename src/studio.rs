@@ -8,15 +8,17 @@ use std::cell::Cell;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::rc::Rc;
+use std::time::Duration;
 
-use gtk4 as gtk;
-use gtk::{gio, glib, prelude::*};
-use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+use futures::{AsyncBufReadExt, StreamExt, io::BufReader};
+use gpui::{App, Context, Window, layer_shell::*};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 
-use crate::cards::Cards;
 use crate::track::Track;
-use crate::util;
+use crate::kit::{self, InputRegion, LayerSpec};
+use crate::{cards, util};
 
 /// Seconds to ease the zoom in or out.
 const RAMP: f64 = 0.8;
@@ -40,7 +42,7 @@ impl Settings {
     /// ~/.config/kadr/studio.json, e.g. {"zoom": 2.0, "colors": ["#1e3c72", "#2a5298"]}
     fn load() -> Self {
         let mut s = Settings { zoom: 1.8, padding: 0.07, radius: 22.0, colors: [(0x5b, 0x4b, 0xff), (0xe2, 0x6f, 0xd0)] };
-        let path = glib::user_config_dir().join("kadr").join("studio.json");
+        let path = util::config_dir().join("studio.json");
         let Some(v) = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else {
             return s;
         };
@@ -276,20 +278,34 @@ pub fn output_path(video: &Path) -> PathBuf {
     video.with_file_name(format!("{stem}-studio.mp4"))
 }
 
-pub fn render(app: &gtk::Application, cards: &Rc<Cards>, video: PathBuf) {
-    let hold = app.hold();
-    let progress = Progress::new(app);
-    let cards = cards.clone();
-    glib::spawn_future_local(glib::clone!(#[weak] app, async move {
+pub fn render(video: PathBuf, cx: &mut App) {
+    let hold = kit::hold(cx);
+    let state = Rc::new(Progress::default());
+    let spec = LayerSpec {
+        namespace: "kadr-progress",
+        anchor: Anchor::BOTTOM,
+        margin: (0., 0., 24., 0.),
+        size: (320., 64.),
+        keyboard: KeyboardInteractivity::None,
+        ignore_zones: false,
+        monitor: util::focused_monitor(),
+    };
+    let window = kit::open_layer(cx, spec, |window, cx| cx.new(|cx| ProgressView::new(state.clone(), window, cx)));
+    cx.spawn(async move |cx| {
         let _hold = hold;
-        let result = run(&video, &progress).await;
-        progress.window.close();
-        match result {
-            Ok(Some(out)) => cards.show(&app, out),
-            Ok(None) => {}
-            Err(e) => util::notify("Не удалось улучшить видео", &e),
-        }
-    }));
+        let result = run(&video, &state).await;
+        let _ = cx.update(|cx| {
+            if let Some(w) = window {
+                let _ = w.update(cx, |_, window, _| window.remove_window());
+            }
+            match result {
+                Ok(Some(out)) => cards::show(out, cx),
+                Ok(None) => {}
+                Err(e) => util::notify("Не удалось улучшить видео", &e),
+            }
+        });
+    })
+    .detach();
 }
 
 /// Ok(None) when cancelled.
@@ -300,7 +316,7 @@ async fn run(video: &Path, progress: &Progress) -> Result<Option<PathBuf>, Strin
     let l = layout(&p, &settings);
     let (z, x, y) = camera(&track, &p, settings.zoom);
 
-    let tmp = glib::user_runtime_dir().join(format!("kadr-studio-{}", std::process::id()));
+    let tmp = util::runtime_dir().join(format!("kadr-studio-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let bg = tmp.join("bg.ppm");
     let script = tmp.join("filter.txt");
@@ -348,21 +364,28 @@ async fn run(video: &Path, progress: &Progress) -> Result<Option<PathBuf>, Strin
 }
 
 async fn encode(argv: &[&OsStr], duration: f64, progress: &Progress) -> Result<(), String> {
-    let log = glib::user_cache_dir().join("kadr").join("studio.log");
-    let launcher = gio::SubprocessLauncher::new(gio::SubprocessFlags::STDOUT_PIPE);
-    launcher.set_stderr_file_path(Some(&log));
-    let proc = launcher.spawn(argv).map_err(|e| e.to_string())?;
-    progress.proc.replace(Some(proc.clone()));
+    let log = util::cache_dir().join("studio.log");
+    let _ = std::fs::create_dir_all(util::cache_dir());
+    let stderr = std::fs::File::create(&log).map_err(|e| e.to_string())?;
+    let mut child = async_process::Command::new(argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(stderr)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    progress.pid.set(Some(child.id()));
 
-    let lines = gio::DataInputStream::new(&proc.stdout_pipe().ok_or("нет вывода ffmpeg")?);
-    while let Ok(Some(line)) = lines.read_line_utf8_future(glib::Priority::DEFAULT).await {
+    let stdout = child.stdout.take().ok_or("нет вывода ffmpeg")?;
+    let mut lines = BufReader::new(stdout).lines();
+    while let Some(Ok(line)) = lines.next().await {
         if let Some(us) = line.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {
-            progress.set(us / 1e6 / duration.max(0.1));
+            progress.fraction.set(us / 1e6 / duration.max(0.1));
         }
     }
-    let _ = proc.wait_future().await;
-    progress.proc.replace(None);
-    if proc.is_successful() {
+    let status = child.status().await.map_err(|e| e.to_string())?;
+    progress.pid.set(None);
+    if status.success() {
         Ok(())
     } else {
         let tail = std::fs::read_to_string(&log).unwrap_or_default();
@@ -370,53 +393,62 @@ async fn encode(argv: &[&OsStr], duration: f64, progress: &Progress) -> Result<(
     }
 }
 
-/// Small pill at the bottom of the screen while ffmpeg works.
+#[derive(Default)]
 struct Progress {
-    window: gtk::Window,
-    label: gtk::Label,
-    proc: std::cell::RefCell<Option<gio::Subprocess>>,
-    cancelled: Rc<Cell<bool>>,
+    fraction: Cell<f64>,
+    cancelled: Cell<bool>,
+    pid: Cell<Option<u32>>,
 }
 
-impl Progress {
-    fn new(app: &gtk::Application) -> Rc<Progress> {
-        let label = gtk::Label::new(Some("✨ Улучшаю видео…"));
-        label.add_css_class("kadr-time");
-        let cancel = gtk::Button::from_icon_name("kadr-close-symbolic");
-        cancel.set_tooltip_text(Some("Отменить"));
-        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        bar.add_css_class("kadr-recbar");
-        bar.append(&label);
-        bar.append(&cancel);
+/// Small pill at the bottom of the screen while ffmpeg works.
+struct ProgressView {
+    state: Rc<Progress>,
+    region: InputRegion,
+}
 
-        let window = gtk::Window::builder()
-            .application(app)
-            .decorated(false)
-            .resizable(false)
-            .css_classes(["kadr-overlay"])
-            .child(&bar)
-            .build();
-        window.init_layer_shell();
-        window.set_namespace(Some("kadr-progress"));
-        window.set_layer(Layer::Overlay);
-        window.set_keyboard_mode(KeyboardMode::None);
-        window.set_anchor(Edge::Bottom, true);
-        window.set_margin(Edge::Bottom, 24);
-        window.set_monitor(util::focused_monitor().as_ref());
-        window.present();
-
-        let progress = Rc::new(Progress { window, label, proc: Default::default(), cancelled: Rc::default() });
-        cancel.connect_clicked(glib::clone!(#[weak] progress, move |_| {
-            progress.cancelled.set(true);
-            if let Some(p) = progress.proc.borrow().as_ref() {
-                p.force_exit();
+impl ProgressView {
+    fn new(state: Rc<Progress>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
             }
-        }));
-        progress
+        })
+        .detach();
+        ProgressView { state, region: InputRegion::default() }
     }
+}
 
-    fn set(&self, fraction: f64) {
-        let pct = (fraction * 100.0).clamp(0.0, 99.0) as u32;
-        self.label.set_text(&format!("✨ Улучшаю видео… {pct}%"));
+impl Render for ProgressView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.region.reset();
+        let pct = (self.state.fraction.get() * 100.0).clamp(0.0, 99.0) as u32;
+        let state = self.state.clone();
+        kit::root(cx).flex().items_center().justify_center().child(
+            h_flex()
+                .relative()
+                .gap_2()
+                .pl_3()
+                .pr_1()
+                .py_1()
+                .elevation_3(cx)
+                .rounded_full()
+                .child(Icon::new(IconName::Sparkle).color(Color::Accent))
+                .child(Label::new(format!("Улучшаю видео… {pct}%")))
+                .child(
+                    IconButton::new("cancel", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(Tooltip::text("Отменить"))
+                        .on_click(move |_, _, _| {
+                            state.cancelled.set(true);
+                            if let Some(pid) = state.pid.get() {
+                                util::signal(pid, libc::SIGTERM);
+                            }
+                        }),
+                )
+                .child(self.region.mark()),
+        )
     }
 }

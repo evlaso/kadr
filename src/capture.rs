@@ -1,52 +1,39 @@
-use std::ffi::OsStr;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::time::Duration;
 
-use gtk4 as gtk;
-use gtk::{gio, glib, prelude::*};
+use gpui::App;
 
-use crate::cards::Cards;
-use crate::util;
+use crate::{cards, kit, util};
 
 /// Selection, screen freeze and saving are delegated to Omarchy's own
 /// screenshot command so the picker behaves exactly like the stock one.
-pub fn shot(app: &gtk::Application, cards: &Rc<Cards>, mode: String) {
-    let hold = app.hold();
-    let app = app.clone();
-    let cards = cards.clone();
-    glib::spawn_future_local(async move {
+pub fn shot(mode: String, cx: &mut App) {
+    let hold = kit::hold(cx);
+    cx.spawn(async move |cx| {
         let _hold = hold;
         // Keep existing cards out of the frozen frame; give the compositor
-        // time to finish the layer's close animation.
-        if cards.set_hidden(true) {
-            glib::timeout_future(Duration::from_millis(250)).await;
+        // a moment to present the emptied overlay.
+        if cx.update(|cx| cards::set_hidden(true, cx)) {
+            cx.background_executor().timer(Duration::from_millis(120)).await;
         }
         let result = take(&mode).await;
-        cards.set_hidden(false);
-        match result {
-            Ok(Some(path)) => {
-                util::copy_image(&path);
-                cards.show(&app, path);
+        let _ = cx.update(|cx| {
+            cards::set_hidden(false, cx);
+            match result {
+                Some(path) => {
+                    util::copy_image(&path);
+                    cards::show(path, cx);
+                }
+                // A cancelled pick prints nothing.
+                None => {}
             }
-            Ok(None) => {}
-            Err(e) => util::notify("Не удалось снять скриншот", &e),
-        }
-    });
+        });
+    })
+    .detach();
 }
 
-async fn take(mode: &str) -> Result<Option<PathBuf>, String> {
-    let argv: [&OsStr; 3] = ["omarchy-capture-screenshot".as_ref(), mode.as_ref(), "save".as_ref()];
-    let proc = gio::Subprocess::newv(&argv, gio::SubprocessFlags::STDOUT_PIPE)
-        .map_err(|e| e.to_string())?;
-    let (stdout, _) = proc
-        .communicate_utf8_future(None)
-        .await
-        .map_err(|e| e.to_string())?;
-    let path = stdout
-        .as_deref()
-        .and_then(|s| s.lines().map(str::trim).rfind(|l| !l.is_empty()))
-        .map(PathBuf::from);
-    // A cancelled pick prints nothing.
-    Ok(path.filter(|p| p.is_file()))
+async fn take(mode: &str) -> Option<PathBuf> {
+    let (_, stdout) = util::output(&["omarchy-capture-screenshot", mode, "save"]).await?;
+    let path = stdout.lines().map(str::trim).rfind(|l| !l.is_empty()).map(PathBuf::from)?;
+    path.is_file().then_some(path)
 }

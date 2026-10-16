@@ -2,22 +2,27 @@
 //! overlay and audio, an on-screen control pill, and Omarchy's
 //! post-processing before the result lands in a quick-access card.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gtk4 as gtk;
-use gtk::{gio, glib, prelude::*};
-use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+use gpui::{
+    AnimationExt, AnyWindowHandle, App, AsyncApp, Context, Entity, Global, Window, WindowHandle, div,
+    layer_shell::*, prelude::*, px, rgba,
+};
 
-use crate::cards::Cards;
-use crate::panel;
+use crate::panel::{self, Panel};
 use crate::track::Tracker;
+use crate::kit::{self, Hold, InputRegion, LayerSpec};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 use crate::util::{self, Mon};
+use crate::cards;
 
-const SIGINT: i32 = 2;
+const PILL_WIDTH: i32 = 240;
+const PILL_HEIGHT: i32 = 60;
 
 /// Microphones as gpu-screen-recorder names them: (source name, description).
 pub fn microphones() -> Vec<(String, String)> {
@@ -32,20 +37,15 @@ pub fn microphones() -> Vec<(String, String)> {
         .map(|(n, d)| (n.to_owned(), d.to_owned()))
         .collect()
 }
-const SIGUSR2: i32 = 12;
-const SIGTERM: i32 = 15;
-
-const PILL_WIDTH: i32 = 240;
-const PILL_HEIGHT: i32 = 60;
 
 /// Omarchy's webcam resize helper reads the recorded region from here to keep
 /// the camera inside it.
 fn region_file() -> PathBuf {
-    glib::user_runtime_dir().join("omarchy-screenrecord-region")
+    util::runtime_dir().join("omarchy-screenrecord-region")
 }
 
 fn log_file() -> PathBuf {
-    glib::user_cache_dir().join("kadr").join("record.log")
+    util::cache_dir().join("record.log")
 }
 
 #[derive(Clone, Default, PartialEq, Debug)]
@@ -59,7 +59,7 @@ pub struct Opts {
 
 impl Opts {
     fn path() -> PathBuf {
-        glib::user_config_dir().join("kadr").join("record.json")
+        util::config_dir().join("record.json")
     }
 
     /// Last choices from the options panel.
@@ -80,20 +80,6 @@ impl Opts {
         }
         let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam });
         let _ = std::fs::write(path, v.to_string());
-    }
-
-    pub fn to_flags(&self) -> Vec<String> {
-        let mut flags = Vec::new();
-        if self.mic {
-            flags.push(if self.mic_device.is_empty() { "--mic".into() } else { format!("--mic={}", self.mic_device) });
-        }
-        if self.audio {
-            flags.push("--audio".into());
-        }
-        if self.webcam {
-            flags.push("--webcam".into());
-        }
-        flags
     }
 
     fn mic_source(&self) -> &str {
@@ -136,265 +122,243 @@ impl Target {
 
 enum State {
     Idle,
-    Panel(gtk::Window),
+    Panel(WindowHandle<Panel>),
     Busy,
-    Recording(Rc<Session>),
+    Recording(Session),
 }
 
 struct Session {
-    gsr: gio::Subprocess,
+    gsr: u32,
     file: PathBuf,
-    webcam: Option<gio::Subprocess>,
+    webcam: Option<u32>,
     target: Target,
+    clock: Rc<Clock>,
+    stopping: bool,
+    discard: bool,
+    windows: Vec<AnyWindowHandle>,
+    tracker: Option<Tracker>,
+    _hold: Hold,
+}
+
+/// Recording time, shared with the control pill so it can redraw without
+/// touching the recorder (which may be mid-update when the pill first renders).
+struct Clock {
     started: Instant,
     paused_at: Cell<Option<Instant>>,
     paused_total: Cell<Duration>,
-    stopping: Cell<bool>,
-    discard: Cell<bool>,
-    indicator: RefCell<Option<gtk::Window>>,
-    frame: RefCell<Option<gtk::Window>>,
-    tracker: RefCell<Option<Tracker>>,
-    _hold: gio::ApplicationHoldGuard,
 }
 
-impl Session {
+impl Clock {
+    fn new() -> Rc<Self> {
+        Rc::new(Clock { started: Instant::now(), paused_at: Cell::new(None), paused_total: Cell::new(Duration::ZERO) })
+    }
+
     fn elapsed(&self) -> Duration {
         let now = self.paused_at.get().unwrap_or_else(Instant::now);
         now.saturating_duration_since(self.started).saturating_sub(self.paused_total.get())
     }
+
+    fn paused(&self) -> bool {
+        self.paused_at.get().is_some()
+    }
+
+    /// Returns whether the recording is now paused.
+    fn toggle(&self) -> bool {
+        match self.paused_at.take() {
+            Some(at) => {
+                self.paused_total.set(self.paused_total.get() + at.elapsed());
+                false
+            }
+            None => {
+                self.paused_at.set(Some(Instant::now()));
+                true
+            }
+        }
+    }
+}
+
+/// What `begin` hands back once capture is running.
+struct Started {
+    gsr: async_process::Child,
+    file: PathBuf,
+    webcam: Option<u32>,
+    target: Target,
 }
 
 pub struct Recorder {
-    app: gtk::Application,
-    cards: Rc<Cards>,
-    state: RefCell<State>,
+    state: State,
+}
+
+struct RecorderGlobal(Entity<Recorder>);
+
+impl Global for RecorderGlobal {}
+
+pub fn init(cx: &mut App) {
+    let recorder = cx.new(|_| Recorder { state: State::Idle });
+    cx.set_global(RecorderGlobal(recorder));
+}
+
+fn recorder(cx: &App) -> Entity<Recorder> {
+    cx.global::<RecorderGlobal>().0.clone()
+}
+
+/// `kadr record [mode]`: stops a running recording, otherwise opens the
+/// options panel (no mode) or starts right away.
+pub fn command(mode: Option<String>, opts: Option<Opts>, cx: &mut App) {
+    recorder(cx).update(cx, |rec, cx| rec.command(mode, opts, cx));
+}
+
+pub fn command_stop(cx: &mut App) {
+    recorder(cx).update(cx, |rec, cx| rec.stop(false, cx));
+}
+
+/// Called by the options panel, which has already closed itself.
+pub fn panel_done(choice: Option<(&str, Opts)>, cx: &mut App) {
+    let choice = choice.map(|(m, o)| (m.to_owned(), o));
+    recorder(cx).update(cx, |rec, cx| {
+        if !matches!(rec.state, State::Panel(_)) {
+            return;
+        }
+        rec.state = State::Idle;
+        if let Some((mode, opts)) = choice {
+            opts.save();
+            // Let the panel's close animation finish so it isn't picked up.
+            rec.start(mode, opts, Duration::from_millis(250), cx);
+        }
+    });
 }
 
 impl Recorder {
-    pub fn new(app: &gtk::Application, cards: Rc<Cards>) -> Rc<Self> {
-        Rc::new(Recorder { app: app.clone(), cards, state: RefCell::new(State::Idle) })
-    }
-
-    /// `kadr record [mode]`: stops a running recording, otherwise opens the
-    /// options panel (no mode) or starts right away.
-    pub fn command(self: &Rc<Self>, mode: Option<String>, opts: Option<Opts>) {
-        let panel = match &*self.state.borrow() {
-            State::Recording(_) => None,
-            State::Busy => return,
-            State::Panel(w) => Some(Some(w.clone())),
-            State::Idle => Some(None),
-        };
-        match panel {
-            None => self.stop(false),
+    fn command(&mut self, mode: Option<String>, opts: Option<Opts>, cx: &mut Context<Self>) {
+        match &self.state {
+            State::Recording(_) => self.stop(false, cx),
+            State::Busy => {}
             // Pressing the hotkey again dismisses the panel.
-            Some(Some(window)) => {
-                self.state.replace(State::Idle);
-                window.close();
+            State::Panel(handle) => {
+                let handle = *handle;
+                self.state = State::Idle;
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
             }
-            Some(None) => match mode {
+            State::Idle => match mode {
                 None => {
-                    let window = panel::show(&self.app, self);
-                    self.state.replace(State::Panel(window));
+                    if let Some(handle) = panel::open(cx) {
+                        self.state = State::Panel(handle);
+                    }
                 }
-                Some(mode) => self.start(mode, opts.unwrap_or_else(Opts::load), Duration::ZERO),
+                Some(mode) => self.start(mode, opts.unwrap_or_else(Opts::load), Duration::ZERO, cx),
             },
         }
     }
 
-    pub fn command_stop(self: &Rc<Self>) {
-        self.stop(false);
-    }
-
-    /// Called by the options panel when it closes.
-    pub fn panel_done(self: &Rc<Self>, choice: Option<(&str, Opts)>) {
-        let window = match &*self.state.borrow() {
-            State::Panel(w) => w.clone(),
-            _ => return,
-        };
-        self.state.replace(State::Idle);
-        window.close();
-        if let Some((mode, opts)) = choice {
-            opts.save();
-            // Let the panel's close animation finish so it isn't picked up.
-            self.start(mode.to_owned(), opts, Duration::from_millis(250));
-        }
-    }
-
-    fn start(self: &Rc<Self>, mode: String, opts: Opts, delay: Duration) {
-        self.state.replace(State::Busy);
-        let hold = self.app.hold();
-        glib::spawn_future_local(glib::clone!(#[strong(rename_to = rec)] self, async move {
+    fn start(&mut self, mode: String, opts: Opts, delay: Duration, cx: &mut Context<Self>) {
+        self.state = State::Busy;
+        let hold = kit::hold(cx);
+        cx.spawn(async move |this, cx| {
             if !delay.is_zero() {
-                glib::timeout_future(delay).await;
+                cx.background_executor().timer(delay).await;
             }
-            match rec.begin(&mode, opts, hold).await {
-                Ok(session) => {
-                    // The frame goes first so the controls stack above its dimming.
-                    session.frame.replace(rec.build_frame(&session.target));
-                    let indicator = rec.build_indicator(&session);
-                    session.indicator.replace(indicator);
-                    let weak = Rc::downgrade(&session);
-                    let tracker = Tracker::start(move || {
-                        let s = weak.upgrade()?;
-                        s.paused_at.get().is_none().then(|| s.elapsed().as_secs_f64())
-                    });
-                    session.tracker.replace(Some(tracker));
-                    rec.state.replace(State::Recording(session));
-                    refresh_omarchy_indicator();
-                }
+            let result = begin(&mode, &opts, cx).await;
+            let _ = this.update(cx, |rec, cx| match result {
+                Ok(started) => rec.on_started(started, hold, cx),
                 Err(err) => {
-                    rec.state.replace(State::Idle);
+                    rec.state = State::Idle;
                     if let Some(err) = err {
                         util::notify("Запись не запустилась", &err);
                     }
                 }
-            }
-        }));
+            });
+        })
+        .detach();
     }
 
-    /// Err(None) means the user cancelled the region picker.
-    async fn begin(self: &Rc<Self>, mode: &str, opts: Opts, hold: gio::ApplicationHoldGuard) -> Result<Rc<Session>, Option<String>> {
-        let mons = util::monitors();
-        let target = if mode == "fullscreen" {
-            let focused = mons.iter().find(|m| m.focused).ok_or_else(|| Some("не найден активный монитор".to_string()))?;
-            Target::Monitor(focused.name.clone())
-        } else {
-            pick_target().await.ok_or(None)?
-        };
+    fn on_started(&mut self, started: Started, hold: Hold, cx: &mut Context<Self>) {
+        let Started { mut gsr, file, webcam, target } = started;
+        let pid = gsr.id();
+        cx.spawn(async move |this, cx| {
+            let _ = gsr.status().await;
+            let _ = this.update(cx, |rec, cx| rec.on_gsr_exit(pid, cx));
+        })
+        .detach();
 
-        let webcam = if opts.webcam { start_webcam(&target).await } else { None };
-
-        let dir = glib::user_special_dir(glib::UserDirectory::Videos)
-            .unwrap_or_else(|| glib::home_dir().join("Videos"));
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let stamp = glib::DateTime::now_local()
-            .and_then(|t| t.format("%Y-%m-%d_%H-%M-%S"))
-            .map_err(|e| e.to_string())?;
-        let file = dir.join(format!("screenrecording-{stamp}.mp4"));
-
-        let mut argv: Vec<OsString> = vec!["gpu-screen-recorder".into()];
-        argv.extend(target.gsr_args(&mons).into_iter().map(OsString::from));
-        for a in ["-k", "auto", "-f", "60", "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
-            argv.push(a.into());
-        }
-        argv.push(file.clone().into());
-        // One merged track: players usually play only the first of several.
-        let audio: Vec<&str> = [(opts.audio, "default_output"), (opts.mic, opts.mic_source())]
-            .into_iter()
-            .filter_map(|(on, dev)| on.then_some(dev))
-            .collect();
-        if !audio.is_empty() {
-            argv.extend(["-a".into(), audio.join("|").into(), "-ac".into(), "aac".into()]);
-        }
-
-        let log = log_file();
-        if let Some(dir) = log.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let launcher = gio::SubprocessLauncher::new(gio::SubprocessFlags::STDOUT_SILENCE);
-        launcher.set_stderr_file_path(Some(&log));
-        let argv_ref: Vec<&std::ffi::OsStr> = argv.iter().map(OsString::as_os_str).collect();
-        let gsr = match launcher.spawn(&argv_ref) {
-            Ok(p) => p,
-            Err(e) => {
-                stop_webcam(webcam.as_ref());
-                return Err(Some(e.to_string()));
-            }
-        };
-
-        let exited = Rc::new(Cell::new(false));
-        glib::spawn_future_local(glib::clone!(#[weak(rename_to = rec)] self, #[strong] gsr, #[strong] exited, async move {
-            let _ = gsr.wait_future().await;
-            exited.set(true);
-            rec.on_gsr_exit(&gsr);
-        }));
-
-        // The output file appears once capture has actually started.
-        for _ in 0..100 {
-            if file.exists() || exited.get() {
-                break;
-            }
-            glib::timeout_future(Duration::from_millis(100)).await;
-        }
-        if exited.get() || !file.exists() {
-            gsr.force_exit();
-            stop_webcam(webcam.as_ref());
-            let _ = std::fs::remove_file(&file);
-            return Err(Some(log_tail()));
-        }
-
-        Ok(Rc::new(Session {
-            gsr,
+        let clock = Clock::new();
+        let mut windows = Vec::new();
+        // The frame goes first so the controls stack above its dimming.
+        windows.extend(open_frame(&target, cx));
+        windows.extend(self.open_indicator(&target, clock.clone(), cx));
+        let tracker = Tracker::start(cx, |rec: &Recorder| rec.clock());
+        self.state = State::Recording(Session {
+            gsr: pid,
             file,
             webcam,
             target,
-            started: Instant::now(),
-            paused_at: Cell::new(None),
-            paused_total: Cell::new(Duration::ZERO),
-            stopping: Cell::new(false),
-            discard: Cell::new(false),
-            indicator: RefCell::new(None),
-            frame: RefCell::new(None),
-            tracker: RefCell::new(None),
+            clock,
+            stopping: false,
+            discard: false,
+            windows,
+            tracker: Some(tracker),
             _hold: hold,
-        }))
+        });
+        refresh_omarchy_indicator();
     }
 
-    fn session(&self) -> Option<Rc<Session>> {
-        match &*self.state.borrow() {
-            State::Recording(s) => Some(s.clone()),
+    /// Seconds of recorded video so far, or None while paused or idle.
+    fn clock(&self) -> Option<f64> {
+        match &self.state {
+            State::Recording(s) if !s.clock.paused() => Some(s.clock.elapsed().as_secs_f64()),
             _ => None,
         }
     }
 
-    fn stop(self: &Rc<Self>, discard: bool) {
-        let Some(s) = self.session() else { return };
-        if s.stopping.replace(true) {
+    fn stop(&mut self, discard: bool, cx: &mut Context<Self>) {
+        let State::Recording(s) = &mut self.state else { return };
+        if std::mem::replace(&mut s.stopping, true) {
             return;
         }
-        s.discard.set(discard);
-        for w in [&s.indicator, &s.frame] {
-            if let Some(w) = w.borrow().as_ref() {
-                w.set_visible(false);
-            }
+        s.discard = discard;
+        // A window that is mid-update (the pill's own button) can't be closed
+        // from here; it closed itself, and on_gsr_exit retries the rest.
+        for w in &s.windows {
+            let _ = w.update(cx, |_, window, _| window.remove_window());
         }
         // SIGINT lets gpu-screen-recorder finalize the file.
-        s.gsr.send_signal(SIGINT);
-        let gsr = s.gsr.clone();
-        glib::timeout_add_local_once(Duration::from_secs(5), move || gsr.force_exit());
+        let pid = s.gsr;
+        util::signal(pid, libc::SIGINT);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(5)).await;
+            let still = this.update(cx, |rec, _| matches!(&rec.state, State::Recording(s) if s.gsr == pid)).unwrap_or(false);
+            if still {
+                util::signal(pid, libc::SIGKILL);
+            }
+        })
+        .detach();
     }
 
-    fn toggle_pause(&self) -> Option<bool> {
-        let s = self.session()?;
-        s.gsr.send_signal(SIGUSR2);
-        match s.paused_at.take() {
-            Some(at) => {
-                s.paused_total.set(s.paused_total.get() + at.elapsed());
-                Some(false)
-            }
-            None => {
-                s.paused_at.set(Some(Instant::now()));
-                Some(true)
-            }
-        }
+    fn toggle_pause(&mut self) -> Option<bool> {
+        let State::Recording(s) = &mut self.state else { return None };
+        util::signal(s.gsr, libc::SIGUSR2);
+        Some(s.clock.toggle())
     }
 
-    fn on_gsr_exit(self: &Rc<Self>, gsr: &gio::Subprocess) {
-        let Some(s) = self.session().filter(|s| &s.gsr == gsr) else { return };
-        self.state.replace(State::Busy);
-        for w in [s.indicator.take(), s.frame.take()].into_iter().flatten() {
-            w.close();
+    fn on_gsr_exit(&mut self, pid: u32, cx: &mut Context<Self>) {
+        if !matches!(&self.state, State::Recording(s) if s.gsr == pid) {
+            return;
         }
-        stop_webcam(s.webcam.as_ref());
+        let State::Recording(mut s) = std::mem::replace(&mut self.state, State::Busy) else { unreachable!() };
+        for w in s.windows.drain(..) {
+            let _ = w.update(cx, |_, window, _| window.remove_window());
+        }
+        if let Some(cam) = s.webcam {
+            util::signal(cam, libc::SIGTERM);
+        }
         let _ = std::fs::remove_file(region_file());
         refresh_omarchy_indicator();
 
-        glib::spawn_future_local(glib::clone!(#[strong(rename_to = rec)] self, async move {
+        cx.spawn(async move |this, cx| {
             let file = s.file.clone();
             let has_data = std::fs::metadata(&file).map(|m| m.len() > 0).unwrap_or(false);
-            if s.discard.get() || !has_data {
+            if s.discard || !has_data {
                 let _ = std::fs::remove_file(&file);
-                if !s.discard.get() {
+                if !s.discard {
                     util::notify("Запись не сохранилась", &log_tail());
                 }
             } else {
@@ -402,139 +366,99 @@ impl Recorder {
                     tracker.save(s.target.rect(&util::monitors()), &file);
                 }
                 finalize(&file).await;
-                rec.cards.show(&rec.app, file);
+                let _ = cx.update(|cx| cards::show(file, cx));
             }
-            rec.state.replace(State::Idle);
+            let _ = this.update(cx, |rec, _| rec.state = State::Idle);
             drop(s);
-        }));
+        })
+        .detach();
     }
 
     /// Recording controls, kept outside the captured area so they don't end up
     /// in the video. With a whole single monitor recorded there is nowhere to
     /// put them; the Omarchy bar indicator and the hotkey still work.
-    fn build_indicator(self: &Rc<Self>, session: &Rc<Session>) -> Option<gtk::Window> {
-        let mons = util::monitors();
-        let (mon, top, left) = placement(&session.target, &mons)?;
-
-        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        dot.add_css_class("kadr-rec-dot");
-        dot.set_valign(gtk::Align::Center);
-        let time = gtk::Label::new(Some("0:00"));
-        time.add_css_class("kadr-time");
-        time.set_xalign(0.0);
-        let pause = icon_button("kadr-pause-symbolic", "Пауза");
-        let stop = icon_button("kadr-stop-symbolic", "Остановить и сохранить");
-        stop.add_css_class("kadr-stop");
-        let discard = icon_button("kadr-trash-symbolic", "Остановить и удалить");
-
-        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-        bar.add_css_class("kadr-recbar");
-        bar.set_halign(gtk::Align::Center);
-        bar.set_valign(gtk::Align::Center);
-        for w in [dot.upcast_ref::<gtk::Widget>(), time.upcast_ref(), pause.upcast_ref(), stop.upcast_ref(), discard.upcast_ref()] {
-            bar.append(w);
-        }
-        let outer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        outer.set_size_request(PILL_WIDTH, PILL_HEIGHT);
-        outer.append(&bar);
-        bar.set_hexpand(true);
-
-        let window = gtk::Window::builder()
-            .application(&self.app)
-            .decorated(false)
-            .resizable(false)
-            .css_classes(["kadr-overlay"])
-            .child(&outer)
-            .build();
-        window.init_layer_shell();
-        window.set_namespace(Some("kadr-recording"));
-        window.set_layer(Layer::Overlay);
-        window.set_keyboard_mode(KeyboardMode::None);
-        // Position relative to the monitor itself, not the bar's reserved area.
-        window.set_exclusive_zone(-1);
-        window.set_anchor(Edge::Top, true);
-        window.set_anchor(Edge::Left, true);
-        window.set_margin(Edge::Top, top);
-        window.set_margin(Edge::Left, left);
-        window.set_monitor(util::gdk_monitor(&mon.name).as_ref());
-
-        pause.connect_clicked(glib::clone!(#[weak(rename_to = rec)] self, #[weak] dot, move |b| {
-            if let Some(paused) = rec.toggle_pause() {
-                b.set_icon_name(if paused { "kadr-play-symbolic" } else { "kadr-pause-symbolic" });
-                b.set_tooltip_text(Some(if paused { "Продолжить" } else { "Пауза" }));
-                if paused { dot.add_css_class("paused") } else { dot.remove_css_class("paused") }
-            }
-        }));
-        stop.connect_clicked(glib::clone!(#[weak(rename_to = rec)] self, move |_| rec.stop(false)));
-        discard.connect_clicked(glib::clone!(#[weak(rename_to = rec)] self, move |_| rec.stop(true)));
-
-        let weak = Rc::downgrade(session);
-        glib::timeout_add_local(Duration::from_millis(250), glib::clone!(#[weak] time, #[upgrade_or] glib::ControlFlow::Break, move || {
-            let Some(s) = weak.upgrade() else { return glib::ControlFlow::Break };
-            time.set_text(&util::format_duration(s.elapsed().as_secs_f64()));
-            glib::ControlFlow::Continue
-        }));
-
-        window.present();
-        Some(window)
-    }
-
-    /// Outline of the recorded region, drawn just outside it (and dimming the
-    /// rest of the monitor) so it never shows up in the video. Click-through.
-    fn build_frame(&self, target: &Target) -> Option<gtk::Window> {
-        let Target::Region { x, y, w, h } = *target else { return None };
-        let mons = util::monitors();
-        let mon = mons.iter().find(|m| m.contains(x + w / 2, y + h / 2))?.clone();
-        let (rx, ry) = ((x - mon.x) as f64, (y - mon.y) as f64);
-        let (rw, rh) = (w as f64, h as f64);
-
-        let area = gtk::DrawingArea::new();
-        area.set_draw_func(move |_, cr, aw, ah| {
-            // A pixel of slack keeps scaled edges out of the capture.
-            let gap = 2.0;
-            let line = 2.0;
-            cr.set_fill_rule(gtk::cairo::FillRule::EvenOdd);
-            cr.rectangle(0.0, 0.0, aw as f64, ah as f64);
-            cr.rectangle(rx - gap, ry - gap, rw + gap * 2.0, rh + gap * 2.0);
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.35);
-            let _ = cr.fill();
-            let o = gap + line / 2.0;
-            cr.rectangle(rx - o, ry - o, rw + o * 2.0, rh + o * 2.0);
-            cr.set_line_width(line);
-            cr.set_source_rgba(0.898, 0.282, 0.302, 0.9);
-            let _ = cr.stroke();
-        });
-
-        let window = gtk::Window::builder()
-            .application(&self.app)
-            .decorated(false)
-            .css_classes(["kadr-overlay"])
-            .child(&area)
-            // GTK otherwise keeps its 200x200 fallback while the compositor
-            // stretches the surface over the whole monitor.
-            .default_width(mon.w)
-            .default_height(mon.h)
-            .build();
-        window.init_layer_shell();
-        window.set_namespace(Some("kadr-frame"));
-        window.set_layer(Layer::Overlay);
-        window.set_keyboard_mode(KeyboardMode::None);
-        window.set_exclusive_zone(-1);
-        for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
-            window.set_anchor(edge, true);
-        }
-        window.set_monitor(util::gdk_monitor(&mon.name).as_ref());
-        // Let clicks and scrolling reach the windows underneath.
-        let passthrough = |w: &gtk::Window| {
-            if let Some(surface) = w.surface() {
-                surface.set_input_region(Some(&gtk::cairo::Region::create()));
-            }
+    fn open_indicator(&self, target: &Target, clock: Rc<Clock>, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
+        let (mon, top, left) = placement(target, &util::monitors())?;
+        let spec = LayerSpec {
+            namespace: "kadr-recording",
+            anchor: Anchor::TOP | Anchor::LEFT,
+            margin: (top as f32, 0., 0., left as f32),
+            size: (PILL_WIDTH as f32, PILL_HEIGHT as f32),
+            keyboard: KeyboardInteractivity::None,
+            // Position relative to the monitor itself, not the bar's reserved area.
+            ignore_zones: true,
+            monitor: Some(mon),
         };
-        window.connect_realize(passthrough);
-        window.connect_map(passthrough);
-        window.present();
-        Some(window)
+        let recorder = cx.weak_entity();
+        kit::open_layer(cx, spec, |window, cx| cx.new(|cx| RecBar::new(recorder, clock, window, cx))).map(Into::into)
     }
+}
+
+/// Err(None) means the user cancelled the region picker.
+async fn begin(mode: &str, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Option<String>> {
+    let mons = util::monitors();
+    let target = if mode == "fullscreen" {
+        let focused = mons.iter().find(|m| m.focused).ok_or_else(|| Some("не найден активный монитор".to_string()))?;
+        Target::Monitor(focused.name.clone())
+    } else {
+        pick_target().await.ok_or(None)?
+    };
+
+    let webcam = if opts.webcam { start_webcam(&target, cx).await } else { None };
+
+    let dir = util::user_dir("VIDEOS", "Videos");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let file = dir.join(format!("screenrecording-{}.mp4", util::timestamp()));
+
+    let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
+    for a in ["-k", "auto", "-f", "60", "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
+        args.push(a.into());
+    }
+    args.push(file.clone().into());
+    // One merged track: players usually play only the first of several.
+    let audio: Vec<&str> = [(opts.audio, "default_output"), (opts.mic, opts.mic_source())]
+        .into_iter()
+        .filter_map(|(on, dev)| on.then_some(dev))
+        .collect();
+    if !audio.is_empty() {
+        args.extend(["-a".into(), audio.join("|").into(), "-ac".into(), "aac".into()]);
+    }
+
+    let _ = std::fs::create_dir_all(util::cache_dir());
+    let stop_cam = || {
+        if let Some(cam) = webcam {
+            util::signal(cam, libc::SIGTERM);
+        }
+    };
+    let stderr = std::fs::File::create(log_file()).map_err(|e| Some(e.to_string()))?;
+    let mut gsr = match async_process::Command::new("gpu-screen-recorder")
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            stop_cam();
+            return Err(Some(e.to_string()));
+        }
+    };
+
+    // The output file appears once capture has actually started.
+    for _ in 0..100 {
+        if file.exists() || !matches!(gsr.try_status(), Ok(None)) {
+            break;
+        }
+        cx.background_executor().timer(Duration::from_millis(100)).await;
+    }
+    if !file.exists() || !matches!(gsr.try_status(), Ok(None)) {
+        let _ = gsr.kill();
+        stop_cam();
+        let _ = std::fs::remove_file(&file);
+        return Err(Some(log_tail()));
+    }
+    Ok(Started { gsr, file, webcam, target })
 }
 
 /// Top-left margins of the control pill, relative to the monitor it goes on.
@@ -560,6 +484,136 @@ fn placement(target: &Target, mons: &[Mon]) -> Option<(Mon, i32, i32)> {
     }
 }
 
+/// Outline of the recorded region, drawn just outside it (and dimming the
+/// rest of the monitor) so it never shows up in the video. Click-through.
+fn open_frame(target: &Target, cx: &mut App) -> Option<AnyWindowHandle> {
+    let Target::Region { x, y, w, h } = *target else { return None };
+    let mon = util::monitors().into_iter().find(|m| m.contains(x + w / 2, y + h / 2))?;
+    let rect = ((x - mon.x) as f32, (y - mon.y) as f32, w as f32, h as f32);
+    let spec = LayerSpec {
+        namespace: "kadr-frame",
+        anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+        margin: (0., 0., 0., 0.),
+        size: (mon.w as f32, mon.h as f32),
+        keyboard: KeyboardInteractivity::None,
+        ignore_zones: true,
+        monitor: Some(mon),
+    };
+    kit::open_layer(cx, spec, |_, cx| cx.new(|_| Frame { rect })).map(Into::into)
+}
+
+struct Frame {
+    rect: (f32, f32, f32, f32),
+}
+
+impl Render for Frame {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Let clicks and scrolling reach the windows underneath.
+        window.set_input_region(Some(&[]));
+        // A pixel of slack keeps scaled edges out of the capture.
+        let (gap, line) = (2., 2.);
+        let (x, y, w, h) = self.rect;
+        let (x0, y0, x1, y1) = (x - gap, y - gap, x + w + gap, y + h + gap);
+        let dim = || div().absolute().bg(rgba(0x00000059));
+        div()
+            .size_full()
+            .relative()
+            .child(dim().top_0().left_0().right_0().h(px(y0.max(0.))))
+            .child(dim().top(px(y1)).left_0().right_0().bottom_0())
+            .child(dim().top(px(y0)).left_0().w(px(x0.max(0.))).h(px(y1 - y0)))
+            .child(dim().top(px(y0)).left(px(x1)).right_0().h(px(y1 - y0)))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(x0 - line))
+                    .top(px(y0 - line))
+                    .w(px(x1 - x0 + 2. * line))
+                    .h(px(y1 - y0 + 2. * line))
+                    .border(px(line))
+                    .border_color(rgba(0xe5484de6)),
+            )
+    }
+}
+
+/// The in-recording control pill: timer, pause, stop, discard.
+struct RecBar {
+    recorder: gpui::WeakEntity<Recorder>,
+    clock: Rc<Clock>,
+    region: InputRegion,
+}
+
+impl RecBar {
+    fn new(recorder: gpui::WeakEntity<Recorder>, clock: Rc<Clock>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(250)).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        RecBar { recorder, clock, region: InputRegion::default() }
+    }
+}
+
+impl Render for RecBar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.region.reset();
+        let (elapsed, paused) = (self.clock.elapsed().as_secs_f64(), self.clock.paused());
+
+        let recorder = self.recorder.clone();
+        let with_rec = move |close: bool, f: fn(&mut Recorder, &mut Context<Recorder>)| {
+            let recorder = recorder.clone();
+            move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                if close {
+                    window.remove_window();
+                }
+                let _ = recorder.update(cx, |rec, cx| f(rec, cx));
+            }
+        };
+        let button = |id: &'static str, icon: IconName, tip: &'static str| {
+            IconButton::new(id, icon).shape(IconButtonShape::Square).size(ButtonSize::Large).tooltip(Tooltip::text(tip))
+        };
+
+        let colors = cx.theme().status();
+        let dot = div().size_2p5().rounded_full().bg(if paused { colors.warning } else { colors.error });
+        let dot = if paused {
+            dot.into_any_element()
+        } else {
+            dot.with_animation(
+                "pulse",
+                gpui::Animation::new(Duration::from_millis(1200)).repeat().with_easing(gpui::ease_in_out),
+                |el, d| el.opacity(1. - 0.7 * (1. - (2. * d - 1.).abs())),
+            )
+            .into_any_element()
+        };
+
+        kit::root(cx).flex().items_center().justify_center().child(
+            h_flex()
+                .relative()
+                .gap_0p5()
+                .pl_3()
+                .pr_1()
+                .py_1()
+                .elevation_3(cx)
+                .rounded_full()
+                .child(dot)
+                .child(div().min_w(px(48.)).ml_2p5().mr_1p5().child(Label::new(util::format_duration(elapsed)).weight(gpui::FontWeight::SEMIBOLD)))
+                .child(
+                    button("pause", if paused { IconName::PlayFilled } else { IconName::DebugPause }, if paused { "Продолжить" } else { "Пауза" })
+                        .on_click(with_rec(false, |rec, cx| {
+                            rec.toggle_pause();
+                            cx.notify();
+                        })),
+                )
+                .child(button("stop", IconName::Stop, "Остановить и сохранить").icon_color(Color::Error).on_click(with_rec(true, |rec, cx| rec.stop(false, cx))))
+                .child(button("discard", IconName::Trash, "Остановить и удалить").on_click(with_rec(true, |rec, cx| rec.stop(true, cx))))
+                .child(self.region.mark()),
+        )
+    }
+}
+
 /// Omarchy's picker, so selection works like for screenshots.
 async fn pick_target() -> Option<Target> {
     let (ok, out) = util::output(&["omarchy-capture-region", "smart", "--match-monitor"]).await?;
@@ -579,7 +633,7 @@ async fn pick_target() -> Option<Target> {
 
 /// Same mpv overlay as Omarchy's recorder, so its window rules and the
 /// webcam resize hotkeys apply.
-async fn start_webcam(target: &Target) -> Option<gio::Subprocess> {
+async fn start_webcam(target: &Target, cx: &mut AsyncApp) -> Option<u32> {
     let (_, list) = util::output(&["omarchy-capture-webcam-list"]).await?;
     let Some(device) = list.split_whitespace().next().map(str::to_owned) else {
         util::notify("Камера не найдена", "Запись пойдёт без камеры");
@@ -615,25 +669,19 @@ async fn start_webcam(target: &Target) -> Option<gio::Subprocess> {
         if mapped {
             break;
         }
-        glib::timeout_future(Duration::from_millis(50)).await;
+        cx.background_executor().timer(Duration::from_millis(50)).await;
     }
     if let Target::Region { x, y, w, h } = target {
         let _ = std::fs::write(region_file(), format!("{w}x{h}+{x}+{y}"));
     }
     util::output(&["omarchy-capture-webcam-resize", "medium"]).await;
     // Let the move settle, or the camera is recorded sliding into its corner.
-    glib::timeout_future(Duration::from_millis(600)).await;
+    cx.background_executor().timer(Duration::from_millis(600)).await;
     Some(webcam)
 }
 
-fn stop_webcam(webcam: Option<&gio::Subprocess>) {
-    if let Some(p) = webcam {
-        p.send_signal(SIGTERM);
-    }
-}
-
 /// Port of Omarchy's finalize step: trim the warmup frame and normalize audio.
-async fn finalize(file: &std::path::Path) {
+async fn finalize(file: &Path) {
     let f = file.to_string_lossy().into_owned();
     let warmup = util::output(&["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+0.2", "-show_entries", "packet=flags", "-of", "csv=p=0", &f])
         .await
@@ -675,10 +723,3 @@ fn log_tail() -> String {
     let tail = lines[lines.len().saturating_sub(3)..].join("\n");
     if tail.is_empty() { "gpu-screen-recorder завершился без вывода".into() } else { tail }
 }
-
-fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
-    let b = gtk::Button::from_icon_name(icon);
-    b.set_tooltip_text(Some(tooltip));
-    b
-}
-

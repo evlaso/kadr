@@ -11,8 +11,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk4 as gtk;
-use gtk::glib;
+use gpui::{Context, Task};
 use serde_json::json;
 
 use crate::util;
@@ -21,12 +20,12 @@ use crate::util;
 const TRIM: f64 = 0.1;
 
 pub fn input_log() -> PathBuf {
-    glib::user_runtime_dir().join("kadr-input.log")
+    util::runtime_dir().join("kadr-input.log")
 }
 
 pub fn path_for(video: &Path) -> PathBuf {
     let name = video.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    glib::user_cache_dir().join("kadr").join("tracks").join(format!("{name}.json"))
+    util::cache_dir().join("tracks").join(format!("{name}.json"))
 }
 
 #[derive(Default, Debug, Clone)]
@@ -75,62 +74,58 @@ impl Track {
 
 pub struct Tracker {
     data: Rc<RefCell<Track>>,
-    source: Option<glib::SourceId>,
+    _task: Task<()>,
 }
 
 impl Tracker {
-    /// Samples at ~60 Hz. `clock` returns seconds of recorded video so far, or
-    /// None while paused.
-    pub fn start(clock: impl Fn() -> Option<f64> + 'static) -> Tracker {
+    /// Samples at ~60 Hz on the entity's context. `clock` returns seconds of
+    /// recorded video so far, or None while paused.
+    pub fn start<T: 'static>(cx: &mut Context<T>, clock: impl Fn(&T) -> Option<f64> + 'static) -> Tracker {
         let log = input_log();
         let _ = std::fs::write(&log, b"");
         let data = Rc::new(RefCell::new(Track::default()));
-        let offset = Cell::new(0u64);
-        let last_key = Cell::new(f64::NEG_INFINITY);
-        let source = glib::timeout_add_local(Duration::from_millis(16), glib::clone!(#[strong] data, move || {
-            let Some(t) = clock() else { return glib::ControlFlow::Continue };
-            let t = t - TRIM;
-            let mut d = data.borrow_mut();
-            if let Some((x, y)) = util::cursor_pos() {
-                let moved = d.cursor.last().is_none_or(|l| l.1 != x || l.2 != y || t - l.0 > 0.5);
-                if moved {
-                    d.cursor.push((t, x, y));
+        let shared = data.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let offset = Cell::new(0u64);
+            let mut last_key = f64::NEG_INFINITY;
+            loop {
+                cx.background_executor().timer(Duration::from_millis(16)).await;
+                let Ok(t) = this.update(cx, |owner, _| clock(owner)) else { break };
+                let Some(t) = t else { continue };
+                let t = t - TRIM;
+                let mut d = shared.borrow_mut();
+                if let Some((x, y)) = util::cursor_pos() {
+                    let moved = d.cursor.last().is_none_or(|l| l.1 != x || l.2 != y || t - l.0 > 0.5);
+                    if moved {
+                        d.cursor.push((t, x, y));
+                    }
                 }
-            }
-            for line in read_new(&log, &offset).lines() {
-                let mut parts = line.split_whitespace();
-                let kind = parts.next();
-                let mut num = || parts.next().and_then(|s| s.parse::<f64>().ok());
-                let (x, y) = (num(), num());
-                match kind {
-                    Some("c") => {
-                        let pos = x.zip(y).or_else(|| d.cursor.last().map(|l| (l.1, l.2)));
-                        if let Some((x, y)) = pos {
-                            d.clicks.push((t, x, y));
+                for line in read_new(&log, &offset).lines() {
+                    let mut parts = line.split_whitespace();
+                    let kind = parts.next();
+                    let mut num = || parts.next().and_then(|s| s.parse::<f64>().ok());
+                    let (x, y) = (num(), num());
+                    match kind {
+                        Some("c") => {
+                            let pos = x.zip(y).or_else(|| d.cursor.last().map(|l| (l.1, l.2)));
+                            if let Some((x, y)) = pos {
+                                d.clicks.push((t, x, y));
+                            }
                         }
+                        // Hyprland reports press and release; one per key is enough.
+                        Some("k") if t - last_key > 0.05 => {
+                            d.keys.push(t);
+                            last_key = t;
+                        }
+                        _ => {}
                     }
-                    // Hyprland reports press and release; one per key is enough.
-                    Some("k") if t - last_key.get() > 0.05 => {
-                        d.keys.push(t);
-                        last_key.set(t);
-                    }
-                    _ => {}
                 }
             }
-            glib::ControlFlow::Continue
-        }));
-        Tracker { data, source: Some(source) }
+        });
+        Tracker { data, _task: task }
     }
 
-    fn stop(&mut self) {
-        if let Some(id) = self.source.take() {
-            id.remove();
-        }
-        let _ = std::fs::remove_file(input_log());
-    }
-
-    pub fn save(mut self, rect: (i32, i32, i32, i32), video: &Path) {
-        self.stop();
+    pub fn save(self, rect: (i32, i32, i32, i32), video: &Path) {
         let d = self.data.borrow();
         let r = |v: f64| (v * 1000.0).round() / 1000.0;
         let v = json!({
@@ -151,7 +146,8 @@ impl Tracker {
 
 impl Drop for Tracker {
     fn drop(&mut self) {
-        self.stop();
+        // Stops the Lua hook from logging; the task is cancelled with `_task`.
+        let _ = std::fs::remove_file(input_log());
     }
 }
 
