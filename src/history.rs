@@ -355,8 +355,8 @@ impl History {
             .inset_0()
             .opacity(0.)
             .group_hover(group.clone(), |s| s.opacity(1.))
-            .children(item.thumb.as_ref().map(|t| img(t.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill)))
-            .child(div().absolute().inset_0().bg(rgba(0x00000052)))
+            .children(item.thumb.as_ref().map(|t| img(t.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(8.))))
+            .child(div().absolute().inset_0().rounded(px(8.)).bg(rgba(0x00000052)))
             .child(
                 v_flex()
                     .absolute()
@@ -423,17 +423,20 @@ impl History {
             .id(("item", index))
             .group(group)
             .w(px(width + 10.))
-            .gap_1()
+            .gap_0p5()
             .cursor_pointer()
             .child(ring)
-            .child(
+            .child({
+                let (day, time) = day_and_time(item.modified);
                 h_flex()
                     .px_1p5()
                     .gap_1()
-                    .justify_between()
-                    .child(Label::new(when(item.modified)).size(LabelSize::Small))
-                    .child(Label::new(kind).size(LabelSize::XSmall).color(Color::Muted)),
-            )
+                    .items_baseline()
+                    .child(Label::new(day).size(LabelSize::Small))
+                    .children(time.map(|time| Label::new(time).size(LabelSize::Small).color(Color::Muted)))
+                    .child(div().flex_1())
+                    .child(Label::new(kind).size(LabelSize::Small).color(Color::Muted))
+            })
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, window, cx| {
                 this.selected = position;
                 if e.click_count == 2 {
@@ -455,7 +458,9 @@ impl Render for History {
         let room = f32::from(viewport.width) - 2. * 16. - 6.;
         let tile = MIN_ITEM + 10.;
         self.columns = ((room + GAP) / (tile + GAP)).floor().max(1.) as usize;
-        self.item_width = (room - GAP * (self.columns as f32 - 1.)) / self.columns as f32 - 10.;
+        // A pixel of slack: a rounding error would wrap the last tile and
+        // leave every row a column short.
+        self.item_width = ((room - 1. - GAP * (self.columns as f32 - 1.)) / self.columns as f32 - 10.).floor();
 
         let visible = self.visible();
         let filters: Vec<_> = Filter::ALL.iter().map(|&(filter, label)| {
@@ -573,6 +578,30 @@ impl Render for DragPreview {
 }
 
 /// "сегодня 14:32", "вчера 09:10", "12 окт 18:05", "3 мар 2025".
+/// The capture's day ("Today", "12 Oct", "3 Mar 2025") and its time, if
+/// the day is this year's.
+fn day_and_time(t: SystemTime) -> (String, Option<String>) {
+    use chrono::{Datelike, Local};
+    let t: chrono::DateTime<Local> = t.into();
+    let today = Local::now().date_naive();
+    let date = t.date_naive();
+    let time = t.format("%H:%M").to_string();
+    let month = |m: u32| crate::i18n::t(["history.jan", "history.feb", "history.mar", "history.apr", "history.may", "history.jun", "history.jul", "history.aug", "history.sep", "history.oct", "history.nov", "history.dec"][m as usize]);
+    let capital = |s: String| {
+        let mut c = s.chars();
+        c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    };
+    if date == today {
+        (capital(tr!("history.today", "").trim().to_string()), Some(time))
+    } else if Some(date) == today.pred_opt() {
+        (capital(tr!("history.yesterday", "").trim().to_string()), Some(time))
+    } else if date.year() == today.year() {
+        (format!("{} {}", date.day(), month(date.month0())), Some(time))
+    } else {
+        (format!("{} {} {}", date.day(), month(date.month0()), date.year()), None)
+    }
+}
+
 fn when(t: SystemTime) -> String {
     use chrono::{Datelike, Local};
     let t: chrono::DateTime<Local> = t.into();

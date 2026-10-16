@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use gpui::{App, Context, Global, MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage, Window, WindowHandle, canvas, div, px};
+use gpui::{App, Context, Global, MouseButton, MouseDownEvent, RenderImage, Window, WindowHandle, canvas, div, px};
 
-use crate::kit::{self, Anchor, InputRegion, KeyboardInteractivity, LayerSpec};
+use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{Tooltip, prelude::*};
 use crate::util::{self, Mon};
 use crate::i18n::t;
@@ -92,16 +92,73 @@ const GLIDE: f32 = 0.22;
 /// Side of the live picture, in pixels.
 const LIVE: usize = 360;
 
+/// The bubble's state, shared by whichever window draws it: the recording
+/// panel while the camera is being set up (the panel surely gets the
+/// pointer), the camera's own layer once recording starts.
+pub struct BubbleState {
+    frame: Option<Arc<RenderImage>>,
+    /// Frames no longer shown, freed from the drawing window's atlas.
+    stale: Vec<Arc<RenderImage>>,
+    /// The recorded area on its monitor.
+    area: (f32, f32, f32, f32),
+    look: Look,
+    /// While dragged: the pointer's offset inside the bubble, and where the
+    /// bubble's top left is now.
+    drag: Option<((f32, f32), (f32, f32))>,
+    /// After a drop: where the bubble was let go and when; it glides from
+    /// there to its spot.
+    glide: Option<((f32, f32), std::time::Instant)>,
+    hovered: bool,
+    /// The panel draws it (set up); otherwise the camera layer does, as part
+    /// of the picture (recording).
+    hosted: bool,
+}
+
+impl BubbleState {
+    fn area(&self) -> (f64, f64, f64, f64) {
+        let (x, y, w, h) = self.area;
+        (x as f64, y as f64, w as f64, h as f64)
+    }
+
+    /// The anchor whose spot is closest to where the bubble was dropped.
+    fn snap(&mut self, top_left: (f32, f32)) {
+        let best = (0..ANCHORS.len())
+            .min_by(|&a, &b| {
+                let d = |i: usize| {
+                    let (x, y, _) = place(i, self.look.size, self.area());
+                    (x - top_left.0 as f64).hypot(y - top_left.1 as f64)
+                };
+                d(a).total_cmp(&d(b))
+            })
+            .unwrap_or(self.look.anchor);
+        self.look.anchor = best;
+        self.look.save();
+    }
+
+    fn resize(&mut self, step: i32) {
+        let i = SIZES.iter().position(|&s| (s - self.look.size).abs() < 0.001).unwrap_or(2) as i32;
+        self.look.size = SIZES[(i + step).clamp(0, SIZES.len() as i32 - 1) as usize];
+        self.look.save();
+    }
+}
+
 #[derive(Default)]
-struct Bubble(Option<(WindowHandle<CameraView>, u32)>);
+struct Bubble(Option<(gpui::Entity<BubbleState>, WindowHandle<CameraView>, u32)>);
 
 impl Global for Bubble {}
 
+/// The bubble's state while the camera is on, for the panel to draw.
+pub fn state(cx: &App) -> Option<gpui::Entity<BubbleState>> {
+    cx.try_global::<Bubble>().and_then(|b| b.0.as_ref().map(|(s, _, _)| s.clone()))
+}
+
 /// Show the camera over `area` (in `mon`'s coordinates), or move it there.
-pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
-    if let Some((handle, _)) = cx.try_global::<Bubble>().and_then(|b| b.0) {
-        let _ = handle.update(cx, |view, _, cx| {
-            view.area = area;
+/// The panel draws it while it's open (`hosted`).
+pub fn show(mon: &Mon, area: (f32, f32, f32, f32), hosted: bool, cx: &mut App) {
+    if let Some(state) = state(cx) {
+        state.update(cx, |s, cx| {
+            s.area = area;
+            s.hosted = hosted;
             cx.notify();
         });
         return;
@@ -143,6 +200,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
         let _ = child.wait();
     });
 
+    let state = cx.new(|_| BubbleState { frame: None, stale: Vec::new(), area, look: Look::load(), drag: None, glide: None, hovered: false, hosted });
     let spec = LayerSpec {
         namespace: "kadr-camera",
         anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
@@ -153,38 +211,44 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
         monitor: Some(mon.clone()),
     };
     let hold = kit::hold(cx);
+    let view_state = state.clone();
     let Some(handle) = kit::open_layer(cx, spec, move |_, cx| {
-        cx.new(|_| CameraView { frame: None, stale: Vec::new(), area, look: Look::load(), drag: None, glide: None, hovered: false, locked: false, region: InputRegion::default(), _hold: hold })
+        cx.new(|cx| {
+            cx.observe(&view_state, |_, _, cx| cx.notify()).detach();
+            CameraView { state: view_state, _hold: hold }
+        })
     }) else {
         util::signal(pid, util::Signal::Terminate);
         return;
     };
-    cx.set_global(Bubble(Some((handle, pid))));
+    cx.set_global(Bubble(Some((state.clone(), handle, pid))));
     cx.spawn(async move |cx| {
         while let Some(buf) = futures::StreamExt::next(&mut rx).await {
             let Some(frame) = image::RgbaImage::from_raw(LIVE as u32, LIVE as u32, buf) else { break };
             let frame = Arc::new(RenderImage::new([image::Frame::new(frame)]));
-            let alive = handle.update(cx, |view, _, cx| {
-                if let Some(old) = view.frame.replace(frame) {
-                    view.stale.push(old);
+            // Hidden (or replaced by a new bubble): stop.
+            if cx.update(|cx| self::state(cx).map(|s| s.entity_id())) != Some(state.entity_id()) {
+                break;
+            }
+            state.update(cx, |s, cx| {
+                if let Some(old) = s.frame.replace(frame) {
+                    s.stale.push(old);
                 }
                 cx.notify();
             });
-            if alive.is_err() {
-                break;
-            }
         }
     })
     .detach();
 }
 
-/// Recording started: set up is over.
+/// Recording started: the bubble becomes part of the picture, drawn by its
+/// own layer, with no controls.
 pub fn lock(cx: &mut App) {
-    if let Some((handle, _)) = cx.try_global::<Bubble>().and_then(|b| b.0) {
-        let _ = handle.update(cx, |view, _, cx| {
-            view.locked = true;
-            view.hovered = false;
-            view.drag = None;
+    if let Some(state) = state(cx) {
+        state.update(cx, |s, cx| {
+            s.hosted = false;
+            s.hovered = false;
+            s.drag = None;
             cx.notify();
         });
     }
@@ -192,119 +256,82 @@ pub fn lock(cx: &mut App) {
 
 /// Close the bubble and free the camera.
 pub fn hide(cx: &mut App) {
-    if let Some((handle, pid)) = cx.try_global::<Bubble>().and_then(|b| b.0) {
+    if let Some((_, handle, pid)) = cx.try_global::<Bubble>().and_then(|b| b.0.clone()) {
         util::signal(pid, util::Signal::Terminate);
         let _ = handle.update(cx, |_, window, _| window.remove_window());
         cx.set_global(Bubble(None));
     }
 }
 
-struct CameraView {
-    frame: Option<Arc<RenderImage>>,
-    /// Frames no longer shown, freed from the atlas on render.
-    stale: Vec<Arc<RenderImage>>,
-    /// The recorded area on this monitor.
-    area: (f32, f32, f32, f32),
-    look: Look,
-    /// While dragged: the pointer's offset inside the bubble, and where the
-    /// bubble's top left is now.
-    drag: Option<((f32, f32), (f32, f32))>,
-    /// After a drop: where the bubble was let go and when; it glides from
-    /// there to its spot.
-    glide: Option<((f32, f32), std::time::Instant)>,
-    hovered: bool,
-    /// Recording: the bubble is part of the picture, so it shows no controls
-    /// and lets clicks through.
-    locked: bool,
-    region: InputRegion,
-    _hold: kit::Hold,
-}
-
-impl CameraView {
-    fn area(&self) -> (f64, f64, f64, f64) {
-        let (x, y, w, h) = self.area;
-        (x as f64, y as f64, w as f64, h as f64)
-    }
-
-    /// The anchor whose spot is closest to where the bubble was dropped.
-    fn snap(&mut self, top_left: (f32, f32)) {
-        let best = (0..ANCHORS.len())
-            .min_by(|&a, &b| {
-                let d = |i: usize| {
-                    let (x, y, _) = place(i, self.look.size, self.area());
-                    (x - top_left.0 as f64).hypot(y - top_left.1 as f64)
-                };
-                d(a).total_cmp(&d(b))
-            })
-            .unwrap_or(self.look.anchor);
-        self.look.anchor = best;
-        self.look.save();
-    }
-
-    fn resize(&mut self, step: i32) {
-        let i = SIZES.iter().position(|&s| (s - self.look.size).abs() < 0.001).unwrap_or(2) as i32;
-        self.look.size = SIZES[(i + step).clamp(0, SIZES.len() as i32 - 1) as usize];
-        self.look.save();
-    }
-}
-
-impl Render for CameraView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        for old in self.stale.drain(..) {
-            let _ = window.drop_image(old);
+/// The pointer moved over the host window: drag the bubble along.
+pub fn pointer_moved(state: &gpui::Entity<BubbleState>, position: gpui::Point<gpui::Pixels>, cx: &mut App) {
+    state.update(cx, |s, cx| {
+        if let Some((grab, _)) = s.drag {
+            let p = (f32::from(position.x), f32::from(position.y));
+            s.drag = Some((grab, (p.0 - grab.0, p.1 - grab.1)));
+            cx.notify();
         }
-        self.region.reset();
-        let (x, y, side) = place(self.look.anchor, self.look.size, self.area());
-        let (mut left, mut top) = self.drag.map(|(_, at)| at).unwrap_or((x as f32, y as f32));
-        if let Some((from, since)) = self.glide {
-            let t = (since.elapsed().as_secs_f32() / GLIDE).min(1.);
-            if t < 1. {
-                // Ease out: quick at first, settling into place.
-                let k = 1. - (1. - t).powi(3);
-                left = from.0 + (left - from.0) * k;
-                top = from.1 + (top - from.1) * k;
-                window.request_animation_frame();
-            } else {
-                self.glide = None;
+    });
+}
+
+/// The button came up over the host window: drop the bubble into its spot.
+pub fn pointer_released(state: &gpui::Entity<BubbleState>, cx: &mut App) {
+    state.update(cx, |s, cx| {
+        if let Some((_, at)) = s.drag.take() {
+            s.snap(at);
+            s.glide = Some((at, std::time::Instant::now()));
+            cx.notify();
+        }
+    });
+}
+
+/// The bubble as an element in monitor coordinates, for a full-monitor
+/// window. `interactive` adds dragging, the wheel and the hover controls;
+/// `mark` (the host's input region) goes inside it so it takes the pointer.
+pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option<AnyElement>, window: &mut Window, cx: &mut App) -> AnyElement {
+    let stale: Vec<_> = state.update(cx, |s, _| s.stale.drain(..).collect());
+    for old in stale {
+        let _ = window.drop_image(old);
+    }
+    let s = state.read(cx);
+    let (x, y, side) = place(s.look.anchor, s.look.size, s.area());
+    let (mut left, mut top) = s.drag.map(|(_, at)| at).unwrap_or((x as f32, y as f32));
+    let mut gliding = false;
+    if let Some((from, since)) = s.glide {
+        let t = (since.elapsed().as_secs_f32() / GLIDE).min(1.);
+        if t < 1. {
+            // Ease out: quick at first, settling into place.
+            let k = 1. - (1. - t).powi(3);
+            left = from.0 + (left - from.0) * k;
+            top = from.1 + (top - from.1) * k;
+            gliding = true;
+            window.request_animation_frame();
+        }
+    }
+    let side = side as f32;
+    let radius = s.look.round as f32 * side / 2.;
+    let frame = s.frame.clone();
+    let round = s.look.round;
+    let shown = interactive && s.hovered && s.drag.is_none();
+    if !gliding && s.glide.is_some() {
+        state.update(cx, |s, _| s.glide = None);
+    }
+    let picture = canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            if let Some(frame) = frame.clone() {
+                let _ = window.paint_image(bounds, bounds, px(radius).into(), 0., frame, 0, false);
             }
-        }
-        let side = side as f32;
-        let radius = self.look.round as f32 * side / 2.;
-        let frame = self.frame.clone();
-        let picture = canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                if let Some(frame) = frame.clone() {
-                    let _ = window.paint_image(bounds, bounds, px(radius).into(), 0., frame, 0, false);
-                }
-            },
-        )
-        .size_full();
-        if self.locked {
-            window.set_input_region(Some(&[]));
-        }
-        let shown = !self.locked && self.hovered && window.is_window_hovered() && self.drag.is_none();
-        // Controls sit inside the bubble, along its bottom, while hovered:
-        // nothing to reach across, nothing for the area's edge to cut off.
-        let controls = shown.then(|| {
-            let ink = gpui::white();
-            let button = |id: &'static str, icon: IconName, tip: &'static str| {
-                div()
-                    .id(id)
-                    .size(px(26.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
-                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(ink)))
-                    .tooltip(Tooltip::text(t(tip)))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            };
-            let next_round = ROUNDS[(ROUNDS.iter().position(|&r| (r - self.look.round).abs() < 0.01).unwrap_or(0) + 1) % ROUNDS.len()];
-            let shape = div()
-                .id("cam-round")
+        },
+    )
+    .size_full();
+
+    // Controls inside the bubble, along its bottom, while hovered.
+    let controls = shown.then(|| {
+        let ink = gpui::white();
+        let button = |id: &'static str, icon: IconName, tip: &'static str| {
+            div()
+                .id(id)
                 .size(px(26.))
                 .flex()
                 .items_center()
@@ -312,93 +339,112 @@ impl Render for CameraView {
                 .rounded_full()
                 .cursor_pointer()
                 .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
-                .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).border_2().border_color(ink))
-                .tooltip(Tooltip::text(t("camera.shape")))
+                .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(ink)))
+                .tooltip(Tooltip::text(t(tip)))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.look.round = next_round;
-                    this.look.save();
-                    cx.notify();
-                }));
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom(px((side * 0.08).max(6.)))
-                .flex()
-                .justify_center()
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .p_0p5()
-                        .rounded_full()
-                        .bg(gpui::hsla(0., 0., 0., 0.55))
-                        .child(button("cam-smaller", IconName::Dash, "camera.smaller").on_click(cx.listener(|this, _, _, cx| {
-                            this.resize(-1);
-                            cx.notify();
-                        })))
-                        .child(button("cam-bigger", IconName::Plus, "camera.bigger").on_click(cx.listener(|this, _, _, cx| {
-                            this.resize(1);
-                            cx.notify();
-                        })))
-                        .child(shape),
-                )
-        });
-        kit::root(cx)
-            .relative()
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
-                if let Some((grab, _)) = this.drag {
-                    let p = (f32::from(e.position.x), f32::from(e.position.y));
-                    this.drag = Some((grab, (p.0 - grab.0, p.1 - grab.1)));
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                if let Some((_, at)) = this.drag.take() {
-                    this.snap(at);
-                    this.glide = Some((at, std::time::Instant::now()));
-                    cx.notify();
-                }
-            }))
+        };
+        let next_round = ROUNDS[(ROUNDS.iter().position(|&r| (r - round).abs() < 0.01).unwrap_or(0) + 1) % ROUNDS.len()];
+        let (smaller, bigger, shape) = (state.clone(), state.clone(), state.clone());
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px((side * 0.08).max(6.)))
+            .flex()
+            .justify_center()
             .child(
-                div()
-                    .id("cam")
-                    .absolute()
-                    .left(px(left))
-                    .top(px(top))
-                    .w(px(side))
-                    .h(px(side))
-                    .rounded(px(radius))
-                    .bg(gpui::black())
-                    .shadow(kit::shadow())
-                    .when(!self.locked, |d| d.cursor_grab())
-                    .on_hover(cx.listener(|this, on: &bool, _, cx| {
-                        this.hovered = *on;
+                h_flex()
+                    .gap_0p5()
+                    .p_0p5()
+                    .rounded_full()
+                    .bg(gpui::hsla(0., 0., 0., 0.55))
+                    .child(button("cam-smaller", IconName::Dash, "camera.smaller").on_click(move |_, _, cx| smaller.update(cx, |s, cx| {
+                        s.resize(-1);
                         cx.notify();
-                    }))
-                    // The wheel resizes too.
-                    .on_scroll_wheel(cx.listener(|this, e: &gpui::ScrollWheelEvent, _, cx| {
-                        if this.locked {
-                            return;
-                        }
-                        let dy = f32::from(e.delta.pixel_delta(px(20.)).y);
-                        if dy.abs() > 0.5 {
-                            this.resize(if dy > 0. { 1 } else { -1 });
-                            cx.notify();
-                        }
-                    }))
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                        if this.locked {
-                            return;
-                        }
-                        let p = (f32::from(e.position.x), f32::from(e.position.y));
-                        this.drag = Some(((p.0 - left, p.1 - top), (left, top)));
+                    })))
+                    .child(button("cam-bigger", IconName::Plus, "camera.bigger").on_click(move |_, _, cx| bigger.update(cx, |s, cx| {
+                        s.resize(1);
                         cx.notify();
-                    }))
-                    .child(picture)
-                    .children(controls)
-                    .when(!self.locked, |d| d.child(self.region.mark())),
+                    })))
+                    .child(
+                        div()
+                            .id("cam-round")
+                            .size(px(26.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
+                            .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).border_2().border_color(ink))
+                            .tooltip(Tooltip::text(t("camera.shape")))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(move |_, _, cx| shape.update(cx, |s, cx| {
+                                s.look.round = next_round;
+                                s.look.save();
+                                cx.notify();
+                            })),
+                    ),
             )
+    });
+
+    let (hover, wheel, press) = (state.clone(), state.clone(), state.clone());
+    div()
+        .id("cam")
+        .absolute()
+        .left(px(left))
+        .top(px(top))
+        .w(px(side))
+        .h(px(side))
+        .rounded(px(radius))
+        .bg(gpui::black())
+        .shadow(kit::shadow())
+        .when(interactive, |d| {
+            d.cursor_grab()
+                .on_hover(move |on: &bool, _, cx| hover.update(cx, |s, cx| {
+                    s.hovered = *on;
+                    cx.notify();
+                }))
+                // The wheel resizes too.
+                .on_scroll_wheel(move |e: &gpui::ScrollWheelEvent, _, cx| {
+                    let dy = f32::from(e.delta.pixel_delta(px(20.)).y);
+                    if dy.abs() > 0.5 {
+                        wheel.update(cx, |s, cx| {
+                            s.resize(if dy > 0. { 1 } else { -1 });
+                            cx.notify();
+                        });
+                    }
+                })
+                .on_mouse_down(MouseButton::Left, move |e: &MouseDownEvent, _, cx| {
+                    let p = (f32::from(e.position.x), f32::from(e.position.y));
+                    press.update(cx, |s, cx| {
+                        s.drag = Some(((p.0 - left, p.1 - top), (left, top)));
+                        cx.notify();
+                    });
+                })
+        })
+        .child(picture)
+        .children(controls)
+        .children(mark)
+        .into_any_element()
+}
+
+/// The camera's own layer: empty and click-through while the panel draws
+/// the bubble, the bubble itself (as part of the picture) once recording.
+struct CameraView {
+    state: gpui::Entity<BubbleState>,
+    _hold: kit::Hold,
+}
+
+impl Render for CameraView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_input_region(Some(&[]));
+        let root = kit::root(cx).relative();
+        if self.state.read(cx).hosted {
+            return root;
+        }
+        let state = self.state.clone();
+        root.child(bubble(&state, false, None, window, cx))
     }
 }
 

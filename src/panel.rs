@@ -5,7 +5,7 @@
 
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
-    AnyView, App, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, WeakEntity, Window,
+    AnyView, App, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, WeakEntity, Window,
     WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
     point, popup::*, px, rgba, size,
 };
@@ -35,6 +35,8 @@ pub struct Panel {
     /// Only the bar takes the pointer: the camera bubble and the windows
     /// around stay reachable while the panel is up.
     region: InputRegion,
+    /// Re-render when the camera bubble's state changes (it's drawn here).
+    watching_camera: Option<gpui::EntityId>,
     focus: FocusHandle,
 }
 
@@ -77,7 +79,7 @@ pub fn open(target: Target, cx: &mut App) -> Option<WindowHandle<Panel>> {
     });
     // The camera shows up right away, to set it up before recording.
     if handle.is_some() && Opts::load().webcam {
-        crate::webcam::show(&shown_mon, rect, cx);
+        crate::webcam::show(&shown_mon, rect, true, cx);
     }
     handle
 }
@@ -102,7 +104,7 @@ impl Panel {
             .unwrap_or_else(|| t("record_bar.system").into());
         let mut mics = vec![(String::new(), tr!("record_bar.default_mic", default_desc))];
         mics.extend(found);
-        Panel { opts, mics, target, mon, rect, level: 0., meter: None, region: InputRegion::default(), focus }
+        Panel { opts, mics, target, mon, rect, level: 0., meter: None, region: InputRegion::default(), watching_camera: None, focus }
     }
 
     /// Keep a level meter on the chosen microphone while it's on.
@@ -202,7 +204,16 @@ impl Panel {
 }
 
 impl Render for Panel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // While the panel is up it draws the camera bubble itself, so the
+        // bubble surely gets the pointer.
+        let camera = crate::webcam::state(cx).filter(|_| self.opts.webcam);
+        if let Some(state) = &camera
+            && self.watching_camera != Some(state.entity_id())
+        {
+            self.watching_camera = Some(state.entity_id());
+            cx.observe(state, |_, _, cx| cx.notify()).detach();
+        }
         // CleanShot-style: icons only, names and shortcuts in tooltips.
         let tip = |title: &'static str, meta: Option<SharedString>, keys: Option<&'static str>| {
             move |_: &mut Window, cx: &mut App| -> AnyView {
@@ -304,7 +315,7 @@ impl Render for Panel {
             .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), self.opts.webcam).tooltip(tip(t("common.camera"), on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.webcam = !this.opts.webcam;
                 if this.opts.webcam {
-                    crate::webcam::show(&this.mon, this.rect, cx);
+                    crate::webcam::show(&this.mon, this.rect, true, cx);
                 } else {
                     crate::webcam::hide(cx);
                 }
@@ -414,6 +425,12 @@ impl Render for Panel {
                     .child(div().absolute().left(px(x - 2.)).top(px(y - 2.)).w(px(w + 4.)).h(px(h + 4.)).border_2().border_color(gpui::white()))
             })
             .child(div().absolute().left(px(bar_x)).top(px(bar_y)).w(px(room)).flex().justify_center().child(bar))
+            .children(camera.as_ref().map(|state| crate::webcam::bubble(state, true, Some(self.region.mark()), window, cx)))
+            .when_some(camera.clone(), |root, state| {
+                let released = state.clone();
+                root.on_mouse_move(move |e: &MouseMoveEvent, _, cx| crate::webcam::pointer_moved(&state, e.position, cx))
+                    .on_mouse_up(MouseButton::Left, move |_, _, cx| crate::webcam::pointer_released(&released, cx))
+            })
     }
 }
 

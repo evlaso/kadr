@@ -592,7 +592,7 @@ pub fn show_bubble(target: &Target, mons: &[Mon], cx: &mut App) {
             .map(|m| (m.clone(), ((x - m.x) as f32, (y - m.y) as f32, *w as f32, *h as f32))),
     };
     if let Some((mon, area)) = found {
-        webcam::show(&mon, area, cx);
+        webcam::show(&mon, area, false, cx);
     }
 }
 

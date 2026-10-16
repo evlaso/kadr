@@ -1624,7 +1624,7 @@ impl Editor {
     fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let (card_bg, track_bg, thumb_bg, ring, edge, panel_bg, divider) =
-            (colors.element_background, colors.element_hover, colors.elevated_surface_background, colors.text, colors.border_variant, colors.editor_background, colors.border_variant);
+            (colors.element_background, colors.element_hover, colors.element_selected, colors.text, colors.border_variant, colors.editor_background, colors.border_variant);
         // The same language as the studio's sidebar: soft cards, a label and
         // its control on one line, segmented choices.
         let card = || v_flex().w_full().p_3().gap_3().rounded(px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
@@ -1700,7 +1700,8 @@ impl Editor {
                     .justify_center()
                     .rounded(px(6.))
                     .cursor_pointer()
-                    .when(on, |d| d.bg(thumb_bg).shadow(vec![BoxShadow { color: gpui::hsla(0., 0., 0., 0.18).into(), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false }]))
+                    .when(on, |d| d.bg(thumb_bg))
+                    .when(!on, |d| d.hover(|d| d.bg(track_bg)))
                     .child(Label::new(t(label)).size(LabelSize::Small).color(if on { Color::Default } else { Color::Muted }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.frame.aspect = i;
@@ -1753,7 +1754,7 @@ impl Editor {
             .child(self.render_presets(cx))
             .child(
                 card()
-                    .child(h_flex().w_full().p(px(2.)).gap(px(2.)).rounded(px(8.)).bg(track_bg).children(aspects))
+                    .child(h_flex().w_full().gap(px(2.)).children(aspects))
                     .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(tiles))
                     .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(walls))
                     .child(row(t("studio.row_padding"), padding))

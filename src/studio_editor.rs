@@ -18,7 +18,7 @@ use gpui::{
     Window, canvas, div, img, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
 };
-use crate::ui::{IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit;
 use crate::ui::fill;
@@ -40,6 +40,8 @@ const ROW_LABEL: f32 = 74.;
 const STAGE_PAD: f32 = 24.;
 /// Edge grab width on segments, in pixels.
 const EDGE: f32 = 9.;
+/// The timeline stretches up to this many times the window's width.
+const MAX_TIMELINE_ZOOM: f32 = 8.;
 const MIN_SEG: f64 = 0.3;
 const NEW_SEG: f64 = 2.0;
 const NEW_CUT: f64 = 1.0;
@@ -55,6 +57,7 @@ enum Knob {
     CursorSmooth,
     CamSize,
     CamRound,
+    TimelineZoom,
 }
 
 enum Drag {
@@ -98,6 +101,8 @@ pub struct StudioEditor {
     placing: bool,
     /// The pointer over the timeline: what a press there would do.
     timeline_cursor: CursorStyle,
+    /// How many times wider than the window the timeline is drawn.
+    timeline_zoom: f32,
     /// Room for the preview (it fits the output's shape inside).
     stage: (f32, f32),
     /// The preview area measured in the last layout; `stage` follows it.
@@ -174,6 +179,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         drag: None,
                         placing: false,
                         timeline_cursor: CursorStyle::PointingHand,
+                        timeline_zoom: 1.,
                         stage,
                         stage_cell: Rc::new(Cell::new(stage)),
                         timeline: Rc::new(Cell::new((0., 1., 0.))),
@@ -690,6 +696,10 @@ impl StudioEditor {
             Knob::CursorSmooth => self.project.cursor_smooth = v,
             Knob::CamSize => self.project.cam_size = studio::MIN_CAM + v * (studio::MAX_CAM - studio::MIN_CAM),
             Knob::CamRound => self.project.cam_round = v,
+            Knob::TimelineZoom => {
+                self.timeline_zoom = 1. + v as f32 * (MAX_TIMELINE_ZOOM - 1.);
+                return cx.notify();
+            }
         }
         self.changed(cx);
     }
@@ -867,6 +877,33 @@ impl StudioEditor {
             .w(px(side))
             .h(px(side))
         });
+        // The shortcut being shown at the playhead, as the export draws it.
+        let strokes = &self.track.keystrokes;
+        let key_pill = (self.project.keys).then(|| {
+            let i = strokes.iter().rposition(|(t, _)| *t <= self.playhead)?;
+            let (t, label) = &strokes[i];
+            let next = strokes.get(i + 1).map_or(self.probe.duration, |n| n.0);
+            let show = (next - t).clamp(0.35, 1.4);
+            (self.playhead < t + show).then(|| label.clone())
+        })
+        .flatten()
+        .map(|label| {
+            let text = (l.ow.min(l.oh) as f64 * studio::KEY_SIZES[self.project.keys_size.min(studio::KEY_SIZES.len() - 1)].1) as f32 * k;
+            let margin = l.h as f32 * 0.05 * k;
+            let pill = div()
+                .px(px(text * 0.75))
+                .h(px(text * 1.9))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(gpui::rgba(0x161618dc))
+                .text_color(gpui::white())
+                .text_size(px(text))
+                .font_family(kit::ANNOTATION_FONT)
+                .child(label);
+            let row = div().absolute().left_0().right_0().flex().justify_center().child(pill);
+            if self.project.keys_top { row.top(px(by + margin)) } else { row.top(px(by + bh - margin - text * 1.9)) }
+        });
         div()
             .relative()
             .w(px(fw))
@@ -876,6 +913,7 @@ impl StudioEditor {
             .child(backdrop)
             .child(picture)
             .children(cam)
+            .children(key_pill)
             .when(self.placing, |d| {
                 d.child(
                     div()
@@ -920,6 +958,7 @@ impl StudioEditor {
         let status = cx.theme().status();
         let (accent, lane_bg, text, tick) = (colors.text_accent, colors.element_background, colors.text, colors.border);
         let line = colors.border_variant;
+        let zoom_blue = crate::ui::from_hex(0x0A84FF);
         let (handle_color, cut_color) = (status.warning, status.error);
         let thumbs = self.thumbs.iter().map(|t| img(t.clone()).flex_1().h_full().object_fit(ObjectFit::Cover));
         let d = self.probe.duration.max(0.001);
@@ -971,8 +1010,9 @@ impl StudioEditor {
                 }
                 for &(s, e, selected) in &segments {
                     let block = Bounds::new(point(at(s), lane_top + px(2.)), size(at(e) - at(s), px(LANE - 4.)));
-                    let mut fill_color = accent;
-                    fill_color.alpha = if selected { 0.75 } else { 0.5 };
+                    // Blue like CleanShot's zoom strip, brighter when chosen.
+                    let mut fill_color = zoom_blue;
+                    fill_color.alpha = if selected { 1. } else { 0.55 };
                     window.paint_quad(crate::ui::quad(block, px(8.), fill_color, px(if selected { 2. } else { 0. }), text, BorderStyle::Solid));
                     // Grips at both ends, like Final Cut's: something to catch.
                     let mut grip = text;
@@ -1017,7 +1057,7 @@ impl StudioEditor {
                 .justify_center()
                 .gap_1()
                 .overflow_hidden()
-                .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).text_color(gpui::white()).child(format!("×{:.2}", s.zoom).trim_end_matches('0').trim_end_matches('.').to_string()))
+                .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).text_color(gpui::white()).child(tr!("studio.zoom_block", format!("{:.2}", s.zoom).trim_end_matches('0').trim_end_matches('.'))))
                 .when(s.focus.is_some(), |d| d.child(Icon::new(IconName::Crosshair).size(IconSize::XSmall).color(Color::Custom(gpui::white()))))
         });
         let cut_marks = self.project.cuts.iter().map(|&(a, b)| {
@@ -1040,10 +1080,11 @@ impl StudioEditor {
 
         // A hairline sets the timeline apart from the preview above.
         div().w_full().px_4().pt_2().pb_3().border_t_1().border_color(line).child(
+            div().id("timeline-scroll").w_full().overflow_x_scroll().child(
             div()
                 .id("timeline")
                 .relative()
-                .w_full()
+                .w(relative(self.timeline_zoom))
                 .h(px(lane_y + LANE))
                 .cursor(match self.drag {
                     Some(Drag::Move { .. } | Drag::CutMove { .. }) => CursorStyle::ClosedHand,
@@ -1068,10 +1109,12 @@ impl StudioEditor {
                             lane.child(Label::new(t("studio.click_track_add_zoom")).size(LabelSize::XSmall).color(Color::Placeholder))
                         }),
                 )
-                .children(labels)
                 .child(painter)
+                // Labels over the painted blocks, which are solid now.
+                .children(labels)
                 .children(cut_marks)
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.timeline_down(e, cx))),
+            ),
         )
     }
 
@@ -1119,24 +1162,32 @@ impl StudioEditor {
     }
 
     /// Time, stepping, cutting and the current zoom, under the preview.
+    /// Time on the left, play controls in the middle, cutting and the
+    /// timeline's zoom on the right, like CleanShot's.
     fn render_transport(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (z, _, _) = self.camera.at(self.playhead);
-        let mono = |text: String| div().font_family(kit::MONO_FONT).text_sm().text_color(cx.theme().colors().text_muted).child(text);
+        let colors = cx.theme().colors();
+        let time = h_flex()
+            .gap_1()
+            .font_family(kit::MONO_FONT)
+            .text_sm()
+            .child(div().text_color(colors.text).child(clock(self.playhead)))
+            .child(div().text_color(colors.text_muted).child(format!("/ {}", clock(self.probe.duration))));
+        let (start, end) = self.project.trim;
         h_flex()
             .w_full()
-            .justify_between()
             .px_3()
             .py_1p5()
-            .child(div().w(px(180.)).child(mono(format!("{} / {}", clock(self.playhead), clock(self.probe.duration)))))
+            .child(div().flex_1().child(time))
             .child(
                 h_flex()
                     .gap_1()
                     .child(
-                        IconButton::new("back", IconName::ChevronLeft)
-                            .shape(IconButtonShape::Square)
+                        ButtonLike::new("to-start")
+                            .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text(t("studio.back_half_second")))
-                            .on_click(cx.listener(|this, _, _, cx| this.seek(this.playhead - 0.5, cx))),
+                            .child(div().px_1().child(Icon::from_path("icons/kadr/skip_back.svg").size(IconSize::Small)))
+                            .tooltip(Tooltip::text(t("studio.to_start")))
+                            .on_click(cx.listener(move |this, _, _, cx| this.seek(start, cx))),
                     )
                     .child(
                         IconButton::new("play", if self.playing { IconName::DebugPause } else { IconName::PlayFilled })
@@ -1146,18 +1197,19 @@ impl StudioEditor {
                             .on_click(cx.listener(|this, _, window, cx| this.toggle_play(window, cx))),
                     )
                     .child(
-                        IconButton::new("forward", IconName::ChevronRight)
-                            .shape(IconButtonShape::Square)
+                        ButtonLike::new("to-end")
+                            .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text(t("studio.forward_half_second")))
-                            .on_click(cx.listener(|this, _, _, cx| this.seek(this.playhead + 0.5, cx))),
+                            .child(div().px_1().child(Icon::from_path("icons/kadr/skip_forward.svg").size(IconSize::Small)))
+                            .tooltip(Tooltip::text(t("studio.to_end")))
+                            .on_click(cx.listener(move |this, _, _, cx| this.seek(end, cx))),
                     ),
             )
             .child(
                 h_flex()
-                    .w(px(180.))
+                    .flex_1()
                     .justify_end()
-                    .gap_2()
+                    .gap_1()
                     .child(
                         Button::new("cut", t("studio.cut"))
                             .style(ButtonStyle::Subtle)
@@ -1166,7 +1218,30 @@ impl StudioEditor {
                             .tooltip(|_, cx| cx.new(|_| Tooltip::new(t("studio.cut_piece_from_here")).meta(t("studio.then_drag_edges_on_filmstrip")).key_binding(kit::keys("x"))).into())
                             .on_click(cx.listener(|this, _, _, cx| this.add_cut(cx))),
                     )
-                    .child(mono(format!("×{z:.2}"))),
+                    .child(div().w(px(8.)))
+                    .child(
+                        IconButton::new("timeline-out", IconName::Dash)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text(t("studio.timeline_zoom")))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.timeline_zoom = (this.timeline_zoom / 1.5).max(1.);
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().w(px(110.)).child(self.slider(Knob::TimelineZoom, ((self.timeline_zoom - 1.) / (MAX_TIMELINE_ZOOM - 1.)) as f64, String::new(), cx)))
+                    .child(
+                        IconButton::new("timeline-in", IconName::Plus)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text(t("studio.timeline_zoom")))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.timeline_zoom = (this.timeline_zoom * 1.5).min(MAX_TIMELINE_ZOOM);
+                                cx.notify();
+                            })),
+                    ),
             )
     }
 
@@ -1208,7 +1283,7 @@ impl StudioEditor {
     /// cut first, then the look of the whole video and the export.
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        let (card_bg, track_bg, thumb_bg, ring, edge) = (colors.element_background, colors.element_hover, colors.elevated_surface_background, colors.text, colors.border_variant);
+        let (card_bg, track_bg, thumb_bg, ring, edge) = (colors.element_background, colors.element_hover, colors.element_selected, colors.text, colors.border_variant);
         let (sidebar_bg, divider) = (colors.editor_background, colors.border_variant);
         let (accent, line) = (colors.text_accent, colors.border);
         // An inset group, like System Settings: a soft card, rows inside.
@@ -1229,10 +1304,12 @@ impl StudioEditor {
                 .justify_center()
                 .rounded(px(6.))
                 .cursor_pointer()
-                .when(on, |d| d.bg(thumb_bg).shadow(vec![BoxShadow { color: gpui::hsla(0., 0., 0., 0.18).into(), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.), inset: false }]))
+                .when(on, |d| d.bg(thumb_bg))
+                .when(!on, |d| d.hover(|d| d.bg(track_bg)))
                 .child(Label::new(text).size(LabelSize::Small).color(if on { Color::Default } else { Color::Muted }).truncate())
         };
-        let segmented = |items: Vec<AnyElement>| h_flex().w_full().p(px(2.)).gap(px(2.)).rounded(px(8.)).bg(track_bg).children(items).into_any_element();
+        // Like the settings' choices: no track, only the chosen one is filled.
+        let segmented = |items: Vec<AnyElement>| h_flex().w_full().gap(px(2.)).children(items).into_any_element();
 
         // What's selected on the timeline, or the timeline's own tools.
         let context = if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {

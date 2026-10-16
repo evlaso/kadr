@@ -53,8 +53,6 @@ assets![
     "icons/play_filled.svg" => "../data/zed/icons/play_filled.svg",
     "icons/check.svg" => "../data/zed/icons/check.svg",
     "icons/chevron_down.svg" => "../data/zed/icons/chevron_down.svg",
-    "icons/chevron_left.svg" => "../data/zed/icons/chevron_left.svg",
-    "icons/chevron_right.svg" => "../data/zed/icons/chevron_right.svg",
     "icons/dash.svg" => "../data/zed/icons/dash.svg",
     "icons/plus.svg" => "../data/zed/icons/plus.svg",
     "icons/sparkle.svg" => "../data/zed/icons/sparkle.svg",
@@ -85,6 +83,8 @@ assets![
     "icons/kadr/area.svg" => "../data/icons/editor/area.svg",
     "icons/kadr/window.svg" => "../data/icons/editor/window.svg",
     "icons/kadr/scroll.svg" => "../data/icons/editor/scroll.svg",
+    "icons/kadr/skip_back.svg" => "../data/icons/editor/skip_back.svg",
+    "icons/kadr/skip_forward.svg" => "../data/icons/editor/skip_forward.svg",
     // Zed has no camera icon.
     "icons/kadr/camera.svg" => "../data/icons/kadr-camera-symbolic.svg",
 ];

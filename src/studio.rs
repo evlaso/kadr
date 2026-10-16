@@ -399,10 +399,14 @@ impl Project {
             cam_anchor: 4,
         };
         // The look last used in the studio carries over.
-        match std::fs::read_to_string(last_look_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
+        let mut project = match std::fs::read_to_string(last_look_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
             Some(look) => project.with_look(&look, p),
             None => project,
-        }
+        };
+        // A look can't switch on what the recording doesn't have.
+        project.clicks &= !track.clicks.is_empty();
+        project.keys &= !track.keystrokes.is_empty();
+        project
     }
 
     pub fn colors(&self) -> (Hsla, Hsla) {

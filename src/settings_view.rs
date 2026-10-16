@@ -67,6 +67,8 @@ pub struct SettingsView {
     keys: Vec<Vec<String>>,
     /// The action a new shortcut is being recorded for; binds are paused.
     recording: Option<usize>,
+    /// The language dropdown is open.
+    languages_open: bool,
     /// Space kadr's captures take, measured when the window opens.
     usage: storage::Usage,
     focus: FocusHandle,
@@ -83,12 +85,71 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, usage: storage::usage(&Settings::load()), focus }
+            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, usage: storage::usage(&Settings::load()), focus }
         })
     });
 }
 
 impl SettingsView {
+    /// The language as a dropdown: there will be more than fit in a row.
+    fn render_languages(&self, cx: &mut Context<Self>) -> AnyElement {
+        let current = self.settings.language;
+        let menu = self.languages_open.then(|| {
+            gpui::deferred(
+                v_flex()
+                    .id("languages")
+                    .occlude()
+                    .absolute()
+                    .top(px(30.))
+                    .right_0()
+                    .min_w(px(160.))
+                    .p_1()
+                    .gap_0p5()
+                    .elevation_3(cx)
+                    .children(crate::i18n::Lang::ALL.into_iter().map(|lang| {
+                        h_flex()
+                            .id(SharedString::from(format!("lang-{}", lang.code())))
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded(crate::ui::rems_from_px(6.))
+                            .cursor_pointer()
+                            .hover(|d| d.bg(cx.theme().colors().element_hover))
+                            .child(Icon::new(IconName::Check).size(IconSize::Small).color(if lang == current { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
+                            .child(Label::new(lang.name()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.languages_open = false;
+                                this.settings.language = lang;
+                                this.settings.save();
+                                crate::i18n::set(lang);
+                                cx.refresh_windows();
+                                cx.notify();
+                            }))
+                    })),
+            )
+        });
+        div()
+            .relative()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if this.languages_open {
+                    this.languages_open = false;
+                    cx.notify();
+                }
+            }))
+            .child(
+                ButtonLike::new("language")
+                    .style(ButtonStyle::Filled)
+                    .toggle_state(self.languages_open)
+                    .child(h_flex().gap_1p5().px_2().child(Label::new(current.name()).size(LabelSize::Small)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.languages_open = !this.languages_open;
+                        cx.notify();
+                    })),
+            )
+            .children(menu)
+            .into_any_element()
+    }
+
     fn update(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Settings)) {
         change(&mut self.settings);
         self.settings.save();
@@ -144,10 +205,10 @@ impl SettingsView {
             .flex_none()
             .p_2()
             .gap_0p5()
-            .bg(colors.editor_background)
-            // The window clips to a rectangle; the sidebar rounds its own corners.
-            .rounded_l(crate::ui::rems_from_px(11.))
-            .rounded_smoothing(crate::ui::SMOOTHING)
+            // The same dark as the page, set apart by a hairline, like the
+            // editors' side panels.
+            .border_r_1()
+            .border_color(colors.border_variant)
             .child(div().px_2().pt_1().pb_2().child(Label::new(t("common.settings")).size(LabelSize::Small).color(Color::Muted)))
             .children(Tab::ALL.into_iter().map(|tab| {
                 let on = tab == self.tab;
@@ -185,23 +246,7 @@ impl SettingsView {
             Tab::General => vec![
                 row(t("settings.language"),
                     "",
-                    h_flex()
-                        .gap_0p5()
-                        .children(crate::i18n::Lang::ALL.into_iter().map(|lang| {
-                            let on = s.language == lang;
-                            ButtonLike::new(SharedString::from(format!("lang-{}", lang.code())))
-                                .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                                .toggle_state(on)
-                                .child(div().px_1p5().child(Label::new(lang.name()).size(LabelSize::Small)))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.settings.language = lang;
-                                    this.settings.save();
-                                    crate::i18n::set(lang);
-                                    cx.refresh_windows();
-                                    cx.notify();
-                                }))
-                        }))
-                        .into_any_element(),
+                    self.render_languages(cx),
                 ),
                 row(t("common.appearance"),
                     t("settings.like_system_always_dark_light"),
@@ -328,8 +373,15 @@ impl SettingsView {
                 row("kadr", t("settings.screenshots_screen_recording"), Label::new(tr!("settings.version", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
                 row(t("settings.interface"), t("settings.interface_details"), Label::new("GPUI CE").color(Color::Muted).into_any_element()),
                 row(t("settings.source_code"),
-                    "github.com/vlasmn/kadr",
-                    Button::new("repo", t("common.open")).style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr"))).into_any_element(),
+                    "",
+                    div()
+                        .id("repo")
+                        .text_color(cx.theme().colors().text_accent)
+                        .cursor_pointer()
+                        .hover(|d| d.underline())
+                        .child("github.com/vlasmn/kadr")
+                        .on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr")))
+                        .into_any_element(),
                 ),
                 row(t("settings.settings_folder"),
                     "~/.config/kadr",
@@ -533,7 +585,7 @@ impl Drop for SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         kit::root(cx)
-            .bg(cx.theme().colors().elevated_surface_background)
+            .bg(cx.theme().colors().editor_background)
             .flex()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
