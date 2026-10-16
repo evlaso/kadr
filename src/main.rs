@@ -35,6 +35,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr record                                    панель записи экрана (или стоп, если идёт запись)
   kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys]
                                                  начать запись сразу (повторный вызов — стоп)
+  kadr record area \"X,Y WxH\"                   панель записи для заданной области
   kadr record stop                               остановить запись
   kadr studio <видео> [--render]                 студия: зумы, фон, клики и клавиши (--render — сразу экспорт)
   kadr edit <картинка>                           редактор: стрелки, текст, маркер, размытие…
@@ -52,6 +53,7 @@ enum Command {
     Pin(PathBuf),
     Record(Option<String>, Option<record::Opts>),
     RecordStop,
+    RecordArea(String),
     Studio(PathBuf, bool),
     Edit(PathBuf),
     Text(Option<PathBuf>),
@@ -102,6 +104,7 @@ impl Command {
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
+                Some("area") => args.get(2).cloned().map(Command::RecordArea).ok_or_else(|| "укажи область: \"X,Y WxH\"".to_string()),
                 Some(mode @ ("region" | "fullscreen")) => {
                     let mut opts = record::Opts::default();
                     for flag in &args[2..] {
@@ -132,6 +135,7 @@ impl Command {
             Command::Pin(path) => pin::open(path, cx),
             Command::Record(mode, opts) => record::command(mode, opts, cx),
             Command::RecordStop => record::command_stop(cx),
+            Command::RecordArea(area) => record::command_area(&area, cx),
             Command::Studio(path, false) => studio_editor::open(path, cx),
             Command::Studio(path, true) => studio::render(path, cx),
             Command::Edit(path) => editor::open(path, cx),

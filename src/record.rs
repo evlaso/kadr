@@ -90,7 +90,7 @@ impl Opts {
 }
 
 #[derive(Clone, Debug)]
-enum Target {
+pub enum Target {
     Monitor(String),
     Region { x: i32, y: i32, w: i32, h: i32 },
 }
@@ -211,22 +211,59 @@ pub fn command(mode: Option<String>, opts: Option<Opts>, cx: &mut App) {
     recorder(cx).update(cx, |rec, cx| rec.command(mode, opts, cx));
 }
 
+/// `kadr record area "X,Y WxH"`: the recording bar for a given area.
+pub fn command_area(geometry: &str, cx: &mut App) {
+    let Some(target) = parse_area(geometry) else {
+        return util::notify("kadr", "Область задаётся как \"X,Y WxH\"");
+    };
+    recorder(cx).update(cx, |rec, cx| {
+        if matches!(rec.state, State::Idle)
+            && let Some(handle) = panel::open(target, cx)
+        {
+            rec.state = State::Panel(handle);
+        }
+    });
+}
+
+fn parse_area(out: &str) -> Option<Target> {
+    let (pos, size) = out.trim().split_once(' ')?;
+    let (x, y) = pos.split_once(',')?;
+    let (w, h) = size.split_once('x')?;
+    Some(Target::Region { x: x.parse().ok()?, y: y.parse().ok()?, w: w.parse().ok()?, h: h.parse().ok()? })
+}
+
 pub fn command_stop(cx: &mut App) {
     recorder(cx).update(cx, |rec, cx| rec.stop(false, cx));
 }
 
-/// Called by the options panel, which has already closed itself.
-pub fn panel_done(choice: Option<(&str, Opts)>, cx: &mut App) {
-    let choice = choice.map(|(m, o)| (m.to_owned(), o));
+/// What the recording bar asks for when it closes.
+pub enum PanelChoice {
+    Record(Target),
+    /// Pick the area again.
+    Repick,
+    Cancel,
+}
+
+/// Where a recording comes from.
+enum Area {
+    Pick,
+    Fullscreen,
+    Fixed(Target),
+}
+
+/// Called by the recording bar, which has already closed itself.
+pub fn panel_done(choice: PanelChoice, opts: Opts, cx: &mut App) {
     recorder(cx).update(cx, |rec, cx| {
         if !matches!(rec.state, State::Panel(_)) {
             return;
         }
         rec.state = State::Idle;
-        if let Some((mode, opts)) = choice {
-            opts.save();
-            // Let the panel's close animation finish so it isn't picked up.
-            rec.start(mode, opts, Duration::from_millis(250), cx);
+        opts.save();
+        match choice {
+            // Let the bar's close animation finish so it isn't recorded.
+            PanelChoice::Record(target) => rec.start(Area::Fixed(target), opts, Duration::from_millis(250), cx),
+            PanelChoice::Repick => rec.command(None, None, cx),
+            PanelChoice::Cancel => {}
         }
     });
 }
@@ -242,25 +279,39 @@ impl Recorder {
                 self.state = State::Idle;
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
             }
+            // Like CleanShot: pick the area first, then show the bar by it.
             State::Idle => match mode {
                 None => {
-                    if let Some(handle) = panel::open(cx) {
-                        self.state = State::Panel(handle);
-                    }
+                    self.state = State::Busy;
+                    let hold = kit::hold(cx);
+                    cx.spawn(async move |this, cx| {
+                        let _hold = hold;
+                        let target = pick_target().await;
+                        let _ = this.update(cx, |rec, cx| {
+                            rec.state = State::Idle;
+                            if let Some(handle) = target.and_then(|t| panel::open(t, cx)) {
+                                rec.state = State::Panel(handle);
+                            }
+                        });
+                    })
+                    .detach();
                 }
-                Some(mode) => self.start(mode, opts.unwrap_or_else(Opts::load), Duration::ZERO, cx),
+                Some(mode) => {
+                    let area = if mode == "fullscreen" { Area::Fullscreen } else { Area::Pick };
+                    self.start(area, opts.unwrap_or_else(Opts::load), Duration::ZERO, cx)
+                }
             },
         }
     }
 
-    fn start(&mut self, mode: String, opts: Opts, delay: Duration, cx: &mut Context<Self>) {
+    fn start(&mut self, area: Area, opts: Opts, delay: Duration, cx: &mut Context<Self>) {
         self.state = State::Busy;
         let hold = kit::hold(cx);
         cx.spawn(async move |this, cx| {
             if !delay.is_zero() {
                 cx.background_executor().timer(delay).await;
             }
-            let result = begin(&mode, &opts, cx).await;
+            let result = begin(area, &opts, cx).await;
             let _ = this.update(cx, |rec, cx| match result {
                 Ok(started) => rec.on_started(started, hold, cx),
                 Err(err) => {
@@ -398,13 +449,15 @@ impl Recorder {
 }
 
 /// Err(None) means the user cancelled the region picker.
-async fn begin(mode: &str, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Option<String>> {
+async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Option<String>> {
     let mons = util::monitors();
-    let target = if mode == "fullscreen" {
-        let focused = mons.iter().find(|m| m.focused).ok_or_else(|| Some("не найден активный монитор".to_string()))?;
-        Target::Monitor(focused.name.clone())
-    } else {
-        pick_target().await.ok_or(None)?
+    let target = match area {
+        Area::Fullscreen => {
+            let focused = mons.iter().find(|m| m.focused).ok_or_else(|| Some("не найден активный монитор".to_string()))?;
+            Target::Monitor(focused.name.clone())
+        }
+        Area::Pick => pick_target().await.ok_or(None)?,
+        Area::Fixed(target) => target,
     };
 
     let webcam = if opts.webcam { start_webcam(&target, cx).await } else { None };
@@ -636,10 +689,7 @@ async fn pick_target() -> Option<Target> {
         return Some(Target::Monitor(name.to_owned()));
     }
     // "X,Y WxH"
-    let (pos, size) = out.split_once(' ')?;
-    let (x, y) = pos.split_once(',')?;
-    let (w, h) = size.split_once('x')?;
-    Some(Target::Region { x: x.parse().ok()?, y: y.parse().ok()?, w: w.parse().ok()?, h: h.parse().ok()? })
+    parse_area(out)
 }
 
 /// Same mpv overlay as Omarchy's recorder, so its window rules and the
