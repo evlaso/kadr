@@ -25,6 +25,7 @@ use crate::ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Toolt
 use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{fill, outline};
 use crate::{cards, ocr, palette, studio_editor, util};
+use crate::i18n::t;
 
 /// A point in image pixels.
 type P = (f32, f32);
@@ -207,18 +208,18 @@ impl Tool {
 
     fn label(self) -> &'static str {
         match self {
-            Tool::Select => "Выделить и двигать",
-            Tool::Arrow => "Стрелка",
-            Tool::Rect => "Прямоугольник",
-            Tool::Ellipse => "Эллипс",
-            Tool::Line => "Линия",
-            Tool::Pen => "Карандаш",
-            Tool::Marker => "Маркер",
-            Tool::Text => "Текст",
-            Tool::Counter => "Нумерация шагов",
-            Tool::Blur => "Скрыть (пикселизация)",
-            Tool::Spotlight => "Прожектор: затемнить всё вокруг",
-            Tool::Crop => "Обрезать",
+            Tool::Select => t("Выделить и двигать"),
+            Tool::Arrow => t("Стрелка"),
+            Tool::Rect => t("Прямоугольник"),
+            Tool::Ellipse => t("Эллипс"),
+            Tool::Line => t("Линия"),
+            Tool::Pen => t("Карандаш"),
+            Tool::Marker => t("Маркер"),
+            Tool::Text => t("Текст"),
+            Tool::Counter => t("Нумерация шагов"),
+            Tool::Blur => t("Скрыть (пикселизация)"),
+            Tool::Spotlight => t("Прожектор: затемнить всё вокруг"),
+            Tool::Crop => t("Обрезать"),
         }
     }
 
@@ -555,10 +556,10 @@ pub struct Editor {
 /// Open a screenshot for annotation.
 pub fn open(path: PathBuf, cx: &mut App) {
     let Ok(bytes) = std::fs::read(&path) else {
-        return util::notify("Не удалось открыть картинку", &path.display().to_string());
+        return util::notify(t("Не удалось открыть картинку"), &path.display().to_string());
     };
     let Some((w, h)) = cards::png_size(&bytes) else {
-        return util::notify("Редактор открывает только PNG", &path.display().to_string());
+        return util::notify(t("Редактор открывает только PNG"), &path.display().to_string());
     };
     let Some(mon) = util::focused_monitor() else { return };
     let (mw, mh) = (mon.w as f32, mon.h as f32);
@@ -1117,7 +1118,7 @@ impl Editor {
     }
 
     fn pick_wallpaper(&mut self, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Выбрать картинку для фона".into()) });
+        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(t("Выбрать картинку для фона").into()) });
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else { return };
             let Some(path) = paths.into_iter().next() else { return };
@@ -1132,7 +1133,7 @@ impl Editor {
     fn export(&mut self, how: Export, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_text();
         let Some(src) = self.source.clone() else {
-            return util::notify("kadr", "Картинка ещё загружается, попробуй через секунду");
+            return util::notify("kadr", t("Картинка ещё загружается, попробуй через секунду"));
         };
         let doc = self.doc.clone();
         let frame = self.frame.clone();
@@ -1143,12 +1144,12 @@ impl Editor {
             let _hold = hold;
             let png = cx.background_executor().spawn(async move { compose(&src, &doc, &frame) }).await;
             let Some(png) = png else {
-                return util::notify("Не удалось сохранить", &path.display().to_string());
+                return util::notify(t("Не удалось сохранить"), &path.display().to_string());
             };
             match how {
                 Export::Save => {
                     if let Err(e) = std::fs::write(&path, png) {
-                        return util::notify("Не удалось сохранить", &e.to_string());
+                        return util::notify(t("Не удалось сохранить"), &e.to_string());
                     }
                     util::copy_image(&path);
                     let _ = cx.update(|cx| cards::show(path, cx));
@@ -1219,7 +1220,7 @@ impl Editor {
                 .border_color(if selected { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
                 .child(div().size(px(20.)).rounded_full().bg(c))
-                .tooltip(Tooltip::text(format!("Цвет ({})", i + 1)))
+                .tooltip(Tooltip::text(tr!("Цвет ({})", i + 1)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.pick_color(i);
                     this.colors_open = false;
@@ -1286,7 +1287,7 @@ impl Editor {
                     .gap_1p5()
                     .px_1()
                     .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(if self.frame.on() { Color::Accent } else { Color::Default }))
-                    .child(Label::new("Фон")),
+                    .child(Label::new(t("Фон"))),
             )
             .tooltip(Tooltip::text("Фон, отступы, скругление, тень и формат"))
             .on_click(cx.listener(|this, _, _, cx| {
@@ -1344,8 +1345,8 @@ impl Editor {
             };
             h_flex()
                 .gap_0p5()
-                .child(option("outline", false, "icons/kadr/rect.svg", "Контур"))
-                .child(option("solid", true, "icons/kadr/fill.svg", "Заливка"))
+                .child(option("outline", false, "icons/kadr/rect.svg", t("Контур")))
+                .child(option("solid", true, "icons/kadr/fill.svg", t("Заливка")))
                 .child(Divider::vertical().h_5().mx_1())
         });
         // Plain, on a plate or outlined, for text.
@@ -1372,9 +1373,9 @@ impl Editor {
             };
             h_flex()
                 .gap_0p5()
-                .child(option("text-plain", TextStyle::Plain, "Обычный текст"))
-                .child(option("text-plate", TextStyle::Plate, "На плашке"))
-                .child(option("text-outline", TextStyle::Outline, "С обводкой"))
+                .child(option("text-plain", TextStyle::Plain, t("Обычный текст")))
+                .child(option("text-plate", TextStyle::Plate, t("На плашке")))
+                .child(option("text-outline", TextStyle::Outline, t("С обводкой")))
                 .child(Divider::vertical().h_5().mx_1())
         });
         let style = h_flex()
@@ -1422,7 +1423,7 @@ impl Editor {
             .hover(|s| s.bg(cx.theme().colors().element_hover))
             .cursor_grab()
             .child(Icon::from_path("icons/kadr/grip.svg").size(IconSize::Small).color(Color::Muted))
-            .child(Label::new("Перетащи").color(Color::Muted))
+            .child(Label::new(t("Перетащи")).color(Color::Muted))
             .tooltip(Tooltip::text("Утащи картинку с пометками в чат, браузер или папку"))
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
@@ -1452,7 +1453,7 @@ impl Editor {
                     .style(ButtonStyle::Subtle)
                     .size(ButtonSize::Large)
                     .label_size(LabelSize::Small)
-                    .tooltip(Tooltip::text(format!("{}, {} · по размеру окна (Ctrl+0)", name, self.size_label())))
+                    .tooltip(Tooltip::text(tr!("{}, {} · по размеру окна (Ctrl+0)", name, self.size_label())))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.zoom = 1.;
                         cx.notify();
@@ -1484,7 +1485,7 @@ impl Editor {
                     .flex_1()
                     .gap_1()
                     .child(
-                        Button::new("cancel", "Отмена")
+                        Button::new("cancel", t("Отмена"))
                             .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
                             .key_binding(kit::keys("escape"))
@@ -1492,7 +1493,7 @@ impl Editor {
                     )
                     .when(self.doc.crop.is_some(), |row| {
                         row.child(
-                            Button::new("uncrop", "Без обрезки").style(ButtonStyle::Subtle).size(ButtonSize::Large).color(Color::Muted).on_click(cx.listener(|this, _, _, cx| {
+                            Button::new("uncrop", t("Без обрезки")).style(ButtonStyle::Subtle).size(ButtonSize::Large).color(Color::Muted).on_click(cx.listener(|this, _, _, cx| {
                                 this.checkpoint();
                                 this.doc.crop = None;
                                 cx.notify();
@@ -1516,14 +1517,14 @@ impl Editor {
                     )
                     .child(div().w(px(8.)))
                     .child(
-                        Button::new("copy", "Копировать")
+                        Button::new("copy", t("Копировать"))
                             .style(ButtonStyle::Filled)
                             .size(ButtonSize::Large)
                             .key_binding(kit::keys("ctrl-c"))
                             .on_click(cx.listener(|this, _, window, cx| this.export(Export::Copy, window, cx))),
                     )
                     .child(
-                        Button::new("save", "Сохранить")
+                        Button::new("save", t("Сохранить"))
                             .style(ButtonStyle::Accent)
                             .size(ButtonSize::Large)
                             .key_binding(kit::keys("ctrl-s"))
@@ -1593,21 +1594,21 @@ impl Editor {
             .w_full()
             .gap_2()
             .pb_2()
-            .child(Label::new("Пресеты").size(LabelSize::Small).color(Color::Muted))
-            .when(self.presets.is_empty(), |s| s.child(Label::new("Сохрани текущий фон, чтобы включать его одним кликом").size(LabelSize::XSmall).color(Color::Muted)))
+            .child(Label::new(t("Пресеты")).size(LabelSize::Small).color(Color::Muted))
+            .when(self.presets.is_empty(), |s| s.child(Label::new(t("Сохрани текущий фон, чтобы включать его одним кликом")).size(LabelSize::XSmall).color(Color::Muted)))
             .child(h_flex().flex_wrap().gap_1().children(chips))
             .child(match active {
-                None => Button::new("save-frame-preset", "Сохранить как пресет")
+                None => Button::new("save-frame-preset", t("Сохранить как пресет"))
                     .style(ButtonStyle::Subtle)
                     .start_icon(Icon::new(IconName::Plus).size(IconSize::Small))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        let next = this.presets.iter().filter_map(|(name, _)| name.strip_prefix("Пресет ")?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
-                        this.presets.push((format!("Пресет {next}"), this.frame.to_json()));
+                        let next = this.presets.iter().filter_map(|(name, _)| name.strip_prefix(t("Пресет "))?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
+                        this.presets.push((tr!("Пресет {}", next), this.frame.to_json()));
                         save_frame_presets(&this.presets);
                         cx.notify();
                     }))
                     .into_any_element(),
-                Some(i) => Button::new("delete-frame-preset", "Удалить пресет")
+                Some(i) => Button::new("delete-frame-preset", t("Удалить пресет"))
                     .style(ButtonStyle::Subtle)
                     .color(Color::Muted)
                     .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Muted))
@@ -1674,7 +1675,7 @@ impl Editor {
             .iter()
             .enumerate()
             .map(|(i, (label, _))| {
-                chip(SharedString::from(format!("aspect-{i}")), label, self.frame.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
+                chip(SharedString::from(format!("aspect-{i}")), t(label), self.frame.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
                     this.frame.aspect = i;
                     if !this.frame.on() {
                         this.frame.backdrop = Backdrop::Gradient(0);
@@ -1695,7 +1696,7 @@ impl Editor {
                 None => (src.width() as f32, src.height() as f32),
             };
             let ((ow, oh), _) = self.frame.layout(w.round(), h.round());
-            format!("Итог: {}×{}", ow, oh)
+            tr!("Итог: {}×{}", ow, oh)
         });
 
         v_flex()
@@ -1711,7 +1712,7 @@ impl Editor {
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(Label::new("Фон"))
+                    .child(Label::new(t("Фон")))
                     .child(Switch::new("frame-on", ToggleState::from(self.frame.on())).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
                         this.frame.backdrop = if *state == ToggleState::Selected { Backdrop::Gradient(0) } else { Backdrop::None };
                         cx.notify();
@@ -1719,30 +1720,30 @@ impl Editor {
             )
             .child(self.render_presets(cx))
             .child(
-                section("Подложка")
+                section(t("Подложка"))
                     .child(h_flex().flex_wrap().gap_1().children(gradients))
                     .child(h_flex().flex_wrap().gap_1().children(walls))
                     .child(
-                        Button::new("own-wallpaper", "Своя картинка…")
+                        Button::new("own-wallpaper", t("Своя картинка…"))
                             .style(ButtonStyle::Subtle)
                             .start_icon(Icon::new(IconName::Image).size(IconSize::Small))
                             .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx))),
                     ),
             )
             .child(
-                section("Оформление")
-                    .child(caption("Отступ"))
+                section(t("Оформление"))
+                    .child(caption(t("Отступ")))
                     .child(padding)
-                    .child(caption("Скругление углов"))
+                    .child(caption(t("Скругление углов")))
                     .child(radius)
-                    .child(caption("Тень"))
+                    .child(caption(t("Тень")))
                     .child(shadow),
             )
             .child(
                 v_flex()
                     .w_full()
                     .gap_2()
-                    .child(Label::new("Формат").size(LabelSize::Small).color(Color::Muted))
+                    .child(Label::new(t("Формат")).size(LabelSize::Small).color(Color::Muted))
                     .child(h_flex().flex_wrap().gap_1().children(aspects))
                     .children(size.filter(|_| self.frame.on()).map(|s| Label::new(s).size(LabelSize::XSmall).color(Color::Muted))),
             )
@@ -1753,7 +1754,7 @@ impl Editor {
         match self.doc.crop {
             Some((a, b)) => {
                 let (l, t, r, bt) = rect(a, b);
-                format!("{}×{} (обрезано)", (r - l).round(), (bt - t).round())
+                tr!("{}×{} (обрезано)", (r - l).round(), (bt - t).round())
             }
             None => format!("{}×{}", self.px.0, self.px.1),
         }
@@ -1809,7 +1810,8 @@ impl Editor {
                         div().h(px(m.line * s)).line_height(px(m.line * s)).child(if caret { format!("{line}▏") } else { line.clone() })
                     }))
                 };
-                let base = div().absolute().text_size(px(shape.size * s)).font_weight(gpui::FontWeight::SEMIBOLD).whitespace_nowrap();
+                // The export draws text with the bundled font; the canvas must match it.
+                let base = div().absolute().font_family(kit::ANNOTATION_FONT).text_size(px(shape.size * s)).font_weight(gpui::FontWeight::SEMIBOLD).whitespace_nowrap();
                 Some(match shape.text {
                     TextStyle::Plain => base.left(x).top(y).child(block(shape.color)).into_any_element(),
                     TextStyle::Plate => {
@@ -1849,6 +1851,7 @@ impl Editor {
                         .flex()
                         .items_center()
                         .justify_center()
+                        .font_family(kit::ANNOTATION_FONT)
                         .text_size(px(d * 0.55))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(on_color(shape.color))

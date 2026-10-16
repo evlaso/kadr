@@ -17,6 +17,7 @@ use crate::ui::{Tooltip, prelude::*};
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::settings::{Settings, Side};
 use crate::{editor, ocr, pin, studio_editor, track, trim, util};
+use crate::i18n::t;
 
 const CARD_WIDTH: f32 = 240. * kit::SCALE;
 const THUMB_WIDTH: f32 = CARD_WIDTH;
@@ -93,7 +94,7 @@ pub fn show(path: PathBuf, cx: &mut App) {
             Some((image, height, video)) => {
                 let _ = cx.update(|cx| add(path, image, height, video, cx));
             }
-            None => util::notify("Не удалось открыть файл", &path.display().to_string()),
+            None => util::notify(t("Не удалось открыть файл"), &path.display().to_string()),
         }
     })
     .detach();
@@ -243,7 +244,7 @@ impl CardStack {
                 .tooltip(Tooltip::text(tip))
         };
 
-        let mut center = v_flex().items_center().gap_1p5().child(big("copy", "Копировать").on_click(act(|this, path, id, window, cx| {
+        let mut center = v_flex().items_center().gap_1p5().child(big("copy", t("Копировать")).on_click(act(|this, path, id, window, cx| {
             if is_video(path) {
                 util::copy_file(path)
             } else {
@@ -253,15 +254,15 @@ impl CardStack {
         })));
         center = if video && !gif {
             center.child(
-                big("studio", "Студия")
-                    .tooltip(Tooltip::text(if has_track { "Зумы к кликам, фон, клики и клавиши" } else { "Фон, отступы и зумы вручную" }))
+                big("studio", t("Студия"))
+                    .tooltip(Tooltip::text(if has_track { t("Зумы к кликам, фон, клики и клавиши") } else { t("Фон, отступы и зумы вручную") }))
                     .on_click(act(|this, path, id, window, cx| {
                         this.remove(id, window, cx);
                         studio_editor::open(path.to_owned(), cx);
                     })),
             )
         } else {
-            center.child(big("edit", if gif { "Открыть" } else { "Редактировать" }).on_click(act(|this, path, id, window, cx| {
+            center.child(big("edit", if gif { t("Открыть") } else { t("Редактировать") }).on_click(act(|this, path, id, window, cx| {
                 this.remove(id, window, cx);
                 edit(path.to_owned(), cx);
             })))
@@ -270,13 +271,13 @@ impl CardStack {
         // Top right: pin for pictures, trim for recordings.
         let top_right = if video {
             (!gif).then(|| {
-                corner("trim", IconName::Scissors, "Обрезать").on_click(act(|this, path, id, window, cx| {
+                corner("trim", IconName::Scissors, t("Обрезать")).on_click(act(|this, path, id, window, cx| {
                     this.remove(id, window, cx);
                     trim::open(path.to_owned(), cx);
                 }))
             })
         } else {
-            Some(corner("pin", IconName::Pin, "Закрепить поверх окон").on_click(act(|this, path, id, window, cx| {
+            Some(corner("pin", IconName::Pin, t("Закрепить поверх окон")).on_click(act(|this, path, id, window, cx| {
                 pin::open(path.to_owned(), cx);
                 this.remove(id, window, cx);
             })))
@@ -293,7 +294,7 @@ impl CardStack {
                     .into_any_element()
             })
         } else {
-            Some(corner("ocr", IconName::CaseSensitive, "Распознать текст").on_click(act(|_, path, _, _, cx| ocr::image(path.to_owned(), cx))).into_any_element())
+            Some(corner("ocr", IconName::CaseSensitive, t("Распознать текст")).on_click(act(|_, path, _, _, cx| ocr::image(path.to_owned(), cx))).into_any_element())
         };
 
         let at = |el: AnyElement| div().absolute().m_2().child(el);
@@ -309,10 +310,10 @@ impl CardStack {
             .items_center()
             .justify_center()
             .child(center)
-            .child(at(corner("close", IconName::Close, "Закрыть").on_click(act(|this, _, id, window, cx| this.remove(id, window, cx))).into_any_element()).top_0().left_0())
+            .child(at(corner("close", IconName::Close, t("Закрыть")).on_click(act(|this, _, id, window, cx| this.remove(id, window, cx))).into_any_element()).top_0().left_0())
             .children(top_right.map(|b| at(b.into_any_element()).top_0().right_0()))
             .child(
-                at(corner("trash", IconName::Trash, "Удалить файл")
+                at(corner("trash", IconName::Trash, t("Удалить файл"))
                     .on_click(act(|this, path, id, window, cx| {
                         util::trash(path);
                         this.remove(id, window, cx);
@@ -326,7 +327,7 @@ impl CardStack {
                     h_flex()
                         .gap_1()
                         .children(extra)
-                        .child(corner("folder", IconName::Folder, "Показать в папке").on_click(act(|_, path, _, _, _| util::open_folder(path)))),
+                        .child(corner("folder", IconName::Folder, t("Показать в папке")).on_click(act(|_, path, _, _, _| util::open_folder(path)))),
                 ),
             );
 

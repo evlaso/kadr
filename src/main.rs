@@ -1,3 +1,5 @@
+#[macro_use]
+mod i18n;
 mod capture;
 mod cards;
 mod editor;
@@ -34,29 +36,30 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui::{App, QuitMode};
 use gpui_platform::application;
+use crate::i18n::t;
 
-const USAGE: &str = "kadr — скриншоты с карточкой быстрого доступа
+const USAGE: &str = "kadr — screenshots and screen recording with a quick-access thumbnail
 
-Использование:
-  kadr capture                                   все режимы на одной панели
-  kadr shot [smart|region|windows|fullscreen|timer]  снять скриншот (по умолчанию smart)
-  kadr shot scroll [\"X,Y WxH\"]                  скриншот с прокруткой (повторный вызов — готово)
-  kadr open <файл>                               показать карточку для готовой картинки
-  kadr pin <файл>                                закрепить картинку поверх окон
+Usage:
+  kadr capture                                   every mode on one bar
+  kadr shot [smart|region|windows|fullscreen|timer]  take a screenshot (smart by default)
+  kadr shot scroll [\"X,Y WxH\"]                  scrolling screenshot (again to finish)
+  kadr open <file>                               show the thumbnail for an existing image
+  kadr pin <file>                                pin an image on top of windows
 
-  kadr record                                    панель записи экрана (или стоп, если идёт запись)
+  kadr record                                    the recording bar (or stop a running recording)
   kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
-                                                 начать запись сразу (повторный вызов — стоп)
-  kadr record area \"X,Y WxH\"                   панель записи для заданной области
-  kadr record stop                               остановить запись
-  kadr studio <видео> [--render]                 студия: зумы, фон, клики и клавиши (--render — сразу экспорт)
-  kadr edit <картинка>                           редактор: стрелки, текст, маркер, размытие…
-  kadr trim <видео> [--from С --to С]            обрезать запись (без флагов — окно обрезки)
-  kadr gif <видео>                               сохранить запись как GIF (720px, 15 к/с)
-  kadr history                                   история скриншотов и записей
-  kadr settings                                  настройки
-  kadr tray                                      иконка в трее (для автозапуска)
-  kadr text [картинка]                           распознать текст (в области или на картинке) и скопировать
+                                                 start recording at once (again to stop)
+  kadr record area \"X,Y WxH\"                   the recording bar for a given area
+  kadr record stop                               stop recording
+  kadr studio <video> [--render]                 studio: zooms, background, clicks and keys (--render exports at once)
+  kadr edit <image>                              editor: arrows, text, highlighter, blur…
+  kadr trim <video> [--from S --to S]            trim a recording (no flags: the trim window)
+  kadr gif <video>                               save a recording as GIF (720px, 15 fps)
+  kadr history                                   history of screenshots and recordings
+  kadr settings                                  settings
+  kadr tray                                      tray icon (for autostart)
+  kadr text [image]                              recognize text (in an area or an image) and copy it
 ";
 
 const MODES: [&str; 5] = ["smart", "region", "windows", "fullscreen", "timer"];
@@ -92,7 +95,7 @@ pub(crate) fn run_args(args: &[String], cx: &mut App) {
 impl Command {
     fn from_args(args: &[String]) -> Result<Self, String> {
         let file = |i: usize| -> Result<PathBuf, String> {
-            let arg = args.get(i).ok_or("не указан файл")?;
+            let arg = args.get(i).ok_or(t("не указан файл"))?;
             std::fs::canonicalize(arg).map_err(|e| format!("{arg}: {e}"))
         };
         match args.first().map(String::as_str) {
@@ -103,7 +106,7 @@ impl Command {
                 if MODES.contains(&mode) {
                     Ok(Command::Shot(mode.into()))
                 } else {
-                    Err(format!("неизвестный режим: {mode}"))
+                    Err(tr!("неизвестный режим: {}", mode))
                 }
             }
             Some("open") => file(1).map(Command::Open),
@@ -116,14 +119,14 @@ impl Command {
                 let path = file(1)?;
                 let flag = |name: &str| -> Result<Option<f64>, String> {
                     match args.iter().position(|a| a == name) {
-                        Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).map(Some).ok_or(format!("{name}: нужны секунды")),
+                        Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).map(Some).ok_or(tr!("{}: нужны секунды", name)),
                         None => Ok(None),
                     }
                 };
                 let range = match (flag("--from")?, flag("--to")?) {
                     (None, None) => None,
                     (from, Some(to)) => Some((from.unwrap_or(0.), to)),
-                    (Some(_), None) => return Err("укажи и --to".into()),
+                    (Some(_), None) => return Err(t("укажи и --to").into()),
                 };
                 Ok(Command::Trim(path, range))
             }
@@ -134,7 +137,7 @@ impl Command {
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
-                Some("area") => args.get(2).cloned().map(Command::RecordArea).ok_or_else(|| "укажи область: \"X,Y WxH\"".to_string()),
+                Some("area") => args.get(2).cloned().map(Command::RecordArea).ok_or_else(|| t("укажи область: \"X,Y WxH\"").to_string()),
                 Some(mode @ ("region" | "fullscreen")) => {
                     let mut opts = record::Opts::default();
                     for flag in &args[2..] {
@@ -148,14 +151,14 @@ impl Command {
                             "--webcam" => opts.webcam = true,
                             "--keys" => opts.keys = true,
                             "--studio" => opts.studio = true,
-                            other => return Err(format!("неизвестный флаг: {other}")),
+                            other => return Err(tr!("неизвестный флаг: {}", other)),
                         }
                     }
                     Ok(Command::Record(Some(mode.into()), Some(opts)))
                 }
-                Some(other) => Err(format!("неизвестный режим записи: {other}")),
+                Some(other) => Err(tr!("неизвестный режим записи: {}", other)),
             },
-            Some(other) => Err(format!("неизвестная команда: {other}")),
+            Some(other) => Err(tr!("неизвестная команда: {}", other)),
         }
     }
 
@@ -206,6 +209,7 @@ fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<Vec<Strin
 }
 
 fn main() {
+    i18n::set(settings::Settings::load().language);
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
         print!("{USAGE}");

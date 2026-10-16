@@ -5,6 +5,7 @@ use gpui::{App, AsyncApp};
 
 use crate::settings::Settings;
 use crate::{cards, kit, picker, util};
+use crate::i18n::t;
 
 /// Take a screenshot with kadr's own picker, then copy it and show its card.
 pub fn shot(mode: String, cx: &mut App) {
@@ -65,7 +66,7 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     match saved {
         Ok(()) => Some(path),
         Err(e) => {
-            util::notify("Не удалось сохранить", &e.to_string());
+            util::notify(t("Не удалось сохранить"), &e.to_string());
             None
         }
     }

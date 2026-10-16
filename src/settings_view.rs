@@ -13,6 +13,7 @@ use crate::kit;
 use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side, ThemeMode};
 use crate::studio::{PADDINGS, ZOOMS};
 use crate::{hotkeys, ocr, palette, storage, tray, util};
+use crate::i18n::t;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -31,14 +32,14 @@ impl Tab {
 
     fn label(self) -> &'static str {
         match self {
-            Tab::General => "Основные",
-            Tab::Screenshots => "Скриншоты",
-            Tab::Recording => "Запись",
-            Tab::Studio => "Студия",
-            Tab::Text => "Текст",
-            Tab::Shortcuts => "Клавиши",
-            Tab::Storage => "Хранилище",
-            Tab::About => "О kadr",
+            Tab::General => t("Основные"),
+            Tab::Screenshots => t("Скриншоты"),
+            Tab::Recording => t("Запись"),
+            Tab::Studio => t("Студия"),
+            Tab::Text => t("Текст"),
+            Tab::Shortcuts => t("Клавиши"),
+            Tab::Storage => t("Хранилище"),
+            Tab::About => t("О kadr"),
         }
     }
 
@@ -95,7 +96,7 @@ impl SettingsView {
     }
 
     fn pick_folder(&mut self, screenshots: bool, cx: &mut Context<Self>) {
-        let answer = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Выбрать".into()) });
+        let answer = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some(t("Выбрать").into()) });
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(mut paths))) = answer.await
                 && let Some(dir) = paths.pop()
@@ -147,7 +148,7 @@ impl SettingsView {
             // The window clips to a rectangle; the sidebar rounds its own corners.
             .rounded_l(crate::ui::rems_from_px(11.))
             .rounded_smoothing(crate::ui::SMOOTHING)
-            .child(div().px_2().pt_1().pb_2().child(Label::new("Настройки").size(LabelSize::Small).color(Color::Muted)))
+            .child(div().px_2().pt_1().pb_2().child(Label::new(t("Настройки")).size(LabelSize::Small).color(Color::Muted)))
             .children(Tab::ALL.into_iter().map(|tab| {
                 let on = tab == self.tab;
                 h_flex()
@@ -173,8 +174,8 @@ impl SettingsView {
                     .px_2()
                     .pb_1()
                     .gap_1()
-                    .child(Label::new("Изменения сохраняются сразу").size(LabelSize::XSmall).color(Color::Muted))
-                    .child(h_flex().gap_1().child(kit::keys("escape")).child(Label::new("Закрыть").size(LabelSize::XSmall).color(Color::Muted))),
+                    .child(Label::new(t("Изменения сохраняются сразу")).size(LabelSize::XSmall).color(Color::Muted))
+                    .child(h_flex().gap_1().child(kit::keys("escape")).child(Label::new(t("Закрыть")).size(LabelSize::XSmall).color(Color::Muted))),
             )
     }
 
@@ -182,13 +183,33 @@ impl SettingsView {
         let s = self.settings.clone();
         let rows: Vec<AnyElement> = match self.tab {
             Tab::General => vec![
-                row("Оформление",
-                    "Как в системе, или всегда тёмное или светлое",
+                row(t("Язык"),
+                    "",
+                    h_flex()
+                        .gap_0p5()
+                        .children(crate::i18n::Lang::ALL.into_iter().map(|lang| {
+                            let on = s.language == lang;
+                            ButtonLike::new(SharedString::from(format!("lang-{}", lang.code())))
+                                .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                                .toggle_state(on)
+                                .child(div().px_1p5().child(Label::new(lang.name()).size(LabelSize::Small)))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.settings.language = lang;
+                                    this.settings.save();
+                                    crate::i18n::set(lang);
+                                    cx.refresh_windows();
+                                    cx.notify();
+                                }))
+                        }))
+                        .into_any_element(),
+                ),
+                row(t("Оформление"),
+                    t("Как в системе, или всегда тёмное или светлое"),
                     {
                         let modes = [ThemeMode::System, ThemeMode::Dark, ThemeMode::Light];
                         h_flex()
                             .gap_0p5()
-                            .children(modes.into_iter().zip(["Как в системе", "Тёмное", "Светлое"]).map(|(mode, label)| {
+                            .children(modes.into_iter().zip([t("Как в системе"), t("Тёмное"), t("Светлое")]).map(|(mode, label)| {
                                 let on = s.theme == mode;
                                 ButtonLike::new(SharedString::from(format!("theme-{label}")))
                                     .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
@@ -204,10 +225,10 @@ impl SettingsView {
                             .into_any_element()
                     },
                 ),
-                row("Показывать карточку", "Миниатюра в углу экрана после снимка или записи", switch("show_card", s.show_card, cx, |s, on| s.show_card = on)),
-                row("Копировать скриншот", "Сразу класть снимок в буфер обмена", switch("copy", s.copy_screenshot, cx, |s, on| s.copy_screenshot = on)),
-                row("Иконка в трее",
-                    "Клик открывает настройки, правый клик — снимки и запись",
+                row(t("Показывать карточку"), t("Миниатюра в углу экрана после снимка или записи"), switch("show_card", s.show_card, cx, |s, on| s.show_card = on)),
+                row(t("Копировать скриншот"), t("Сразу класть снимок в буфер обмена"), switch("copy", s.copy_screenshot, cx, |s, on| s.copy_screenshot = on)),
+                row(t("Иконка в трее"),
+                    t("Клик открывает настройки, правый клик — снимки и запись"),
                     switch("tray", s.tray, cx, |s, on| {
                         s.tray = on;
                         // Saved first: the new tray process reads the setting.
@@ -215,33 +236,33 @@ impl SettingsView {
                         if on { tray::start() } else { tray::stop() }
                     }),
                 ),
-                row("Карточка исчезает через",
-                    "Пока на ней курсор, она не пропадает",
-                    chips(cx, "secs", CARD_SECONDS.iter().map(|&n| if n == 0 { "Никогда".into() } else { format!("{n} с") }).collect(), CARD_SECONDS.iter().position(|&n| n == s.card_seconds), |s, i| s.card_seconds = CARD_SECONDS[i]),
+                row(t("Карточка исчезает через"),
+                    t("Пока на ней курсор, она не пропадает"),
+                    chips(cx, "secs", CARD_SECONDS.iter().map(|&n| if n == 0 { t("Никогда").into() } else { tr!("{} с", n) }).collect(), CARD_SECONDS.iter().position(|&n| n == s.card_seconds), |s, i| s.card_seconds = CARD_SECONDS[i]),
                 ),
-                row("Где показывать", "Угол экрана для карточек", chips(cx, "side", vec!["Слева".into(), "Справа".into()], Some((s.card_side == Side::Right) as usize), |s, i| s.card_side = if i == 1 { Side::Right } else { Side::Left })),
-                row("Сколько карточек сразу",
-                    "Старые уходят, когда приходят новые",
+                row(t("Где показывать"), t("Угол экрана для карточек"), chips(cx, "side", vec![t("Слева").into(), t("Справа").into()], Some((s.card_side == Side::Right) as usize), |s, i| s.card_side = if i == 1 { Side::Right } else { Side::Left })),
+                row(t("Сколько карточек сразу"),
+                    t("Старые уходят, когда приходят новые"),
                     chips(cx, "max", MAX_CARDS.iter().map(|n| n.to_string()).collect(), MAX_CARDS.iter().position(|&n| n == s.max_cards), |s, i| s.max_cards = MAX_CARDS[i]),
                 ),
             ],
             Tab::Screenshots => {
-                let mut rows = vec![row("Папка для скриншотов", "По умолчанию та же, что у Omarchy", folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true))];
+                let mut rows = vec![row(t("Папка для скриншотов"), t("По умолчанию та же, что у Omarchy"), folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true))];
                 // A choice only where windows tile; elsewhere it's a window.
                 if cfg!(target_os = "linux") {
                     rows.push(row(
-                        "Редактор",
-                        "Окно не мешает снимать другие экраны, а поверх всего закрывает экран целиком",
-                        chips(cx, "editor", vec!["Окно".into(), "Поверх всего".into()], Some((!s.editor_window) as usize), |s, i| s.editor_window = i == 0),
+                        t("Редактор"),
+                        t("Окно не мешает снимать другие экраны, а поверх всего закрывает экран целиком"),
+                        chips(cx, "editor", vec![t("Окно").into(), t("Поверх всего").into()], Some((!s.editor_window) as usize), |s, i| s.editor_window = i == 0),
                     ));
                 }
                 rows
             }
             Tab::Recording => vec![
-                row("Папка для записей", "По умолчанию «Видео»", folder(cx, s.video_dir(), s.video_dir.is_some(), false)),
-                row("Частота кадров", "60 — плавнее, 30 — файлы меньше", chips(cx, "fps", FPS.iter().map(|f| format!("{f} к/с")).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
-                row("Качество", "Выше — чётче мелкий текст, но файлы больше", chips(cx, "quality", QUALITIES.iter().map(|q| q.1.to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
-                row("Рамка вокруг области", "Подсвечивать записываемую область (в запись не попадает)", switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
+                row(t("Папка для записей"), t("По умолчанию «Видео»"), folder(cx, s.video_dir(), s.video_dir.is_some(), false)),
+                row(t("Частота кадров"), t("60 — плавнее, 30 — файлы меньше"), chips(cx, "fps", FPS.iter().map(|f| tr!("{} к/с", f)).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
+                row(t("Качество"), t("Выше — чётче мелкий текст, но файлы больше"), chips(cx, "quality", QUALITIES.iter().map(|q| t(q.1).to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
+                row(t("Рамка вокруг области"), t("Подсвечивать записываемую область (в запись не попадает)"), switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
             ],
             Tab::Studio => {
                 let ring = cx.theme().colors().text;
@@ -260,59 +281,59 @@ impl SettingsView {
                         .on_click(cx.listener(move |this, _, _, cx| this.update(cx, |s| s.studio_backdrop = i)))
                 }));
                 vec![
-                    row("Зум по умолчанию", "Для зумов, расставленных по кликам", chips(cx, "zoom", ZOOMS.iter().map(|z| format!("×{z}")).collect(), ZOOMS.iter().position(|&z| (z - s.studio_zoom).abs() < 0.01), |s, i| s.studio_zoom = ZOOMS[i])),
-                    row("Фон по умолчанию", "Подложка вокруг видео", swatches.into_any_element()),
-                    row("Отступ по умолчанию", "Сколько фона видно вокруг видео", chips(cx, "pad", vec!["Нет".into(), "S".into(), "M".into(), "L".into()], Some(s.studio_padding.min(PADDINGS.len() - 1)), |s, i| s.studio_padding = i)),
+                    row(t("Зум по умолчанию"), t("Для зумов, расставленных по кликам"), chips(cx, "zoom", ZOOMS.iter().map(|z| format!("×{z}")).collect(), ZOOMS.iter().position(|&z| (z - s.studio_zoom).abs() < 0.01), |s, i| s.studio_zoom = ZOOMS[i])),
+                    row(t("Фон по умолчанию"), t("Подложка вокруг видео"), swatches.into_any_element()),
+                    row(t("Отступ по умолчанию"), t("Сколько фона видно вокруг видео"), chips(cx, "pad", vec![t("Нет").into(), "S".into(), "M".into(), "L".into()], Some(s.studio_padding.min(PADDINGS.len() - 1)), |s, i| s.studio_padding = i)),
                 ]
             }
             Tab::Text => {
                 let has_rus = self.languages.split('+').any(|l| l == "rus");
                 let action = if has_rus {
-                    Label::new("Установлен").color(Color::Muted).into_any_element()
+                    Label::new(t("Установлен")).color(Color::Muted).into_any_element()
                 } else {
-                    Button::new("rus", if self.downloading { "Скачиваю…" } else { "Скачать (15 МБ)" })
+                    Button::new("rus", if self.downloading { t("Скачиваю…") } else { t("Скачать (15 МБ)") })
                         .style(ButtonStyle::Accent)
                         .disabled(self.downloading)
                         .on_click(cx.listener(|this, _, _, cx| this.download_russian(cx)))
                         .into_any_element()
                 };
                 vec![
-                    row("Языки распознавания", "Tesseract читает все сразу", Label::new(self.languages.replace('+', ", ")).into_any_element()),
-                    row("Русский язык", "Официальная модель Tesseract, ставится в папку kadr без sudo", action),
+                    row(t("Языки распознавания"), t("Tesseract читает все сразу"), Label::new(self.languages.replace('+', ", ")).into_any_element()),
+                    row(t("Русский язык"), t("Официальная модель Tesseract, ставится в папку kadr без sudo"), action),
                 ]
             }
-            Tab::Shortcuts if cfg!(target_os = "linux") => hotkeys::ACTIONS.iter().enumerate().map(|(i, action)| row(action.title, "", self.render_keys(i, cx))).collect(),
-            Tab::Shortcuts => vec![row("Сочетания клавиш", "Пока настраиваются только в Hyprland", div().into_any_element())],
+            Tab::Shortcuts if cfg!(target_os = "linux") => hotkeys::ACTIONS.iter().enumerate().map(|(i, action)| row(t(action.title), "", self.render_keys(i, cx))).collect(),
+            Tab::Shortcuts => vec![row(t("Сочетания клавиш"), t("Пока настраиваются только в Hyprland"), div().into_any_element())],
             Tab::Storage => vec![
                 self.render_usage(cx),
-                row("Удалять старые снимки и записи",
-                    "Насовсем, раз в день. Только файлы kadr, остальное в папках не трогается",
-                    chips(cx, "cleanup", storage::CLEANUP_DAYS.iter().map(|&d| if d == 0 { "Никогда".into() } else { format!("{d} дн.") }).collect(), storage::CLEANUP_DAYS.iter().position(|&d| d == s.cleanup_days), |s, i| s.cleanup_days = storage::CLEANUP_DAYS[i]),
+                row(t("Удалять старые снимки и записи"),
+                    t("Насовсем, раз в день. Только файлы kadr, остальное в папках не трогается"),
+                    chips(cx, "cleanup", storage::CLEANUP_DAYS.iter().map(|&d| if d == 0 { t("Никогда").into() } else { tr!("{} дн.", d) }).collect(), storage::CLEANUP_DAYS.iter().position(|&d| d == s.cleanup_days), |s, i| s.cleanup_days = storage::CLEANUP_DAYS[i]),
                 ),
-                row("Очистить сейчас",
-                    if s.cleanup_days == 0 { "Выбери срок выше" } else { "Удалить то, что старше выбранного срока" },
-                    Button::new("clean-now", "Очистить")
+                row(t("Очистить сейчас"),
+                    if s.cleanup_days == 0 { t("Выбери срок выше") } else { t("Удалить то, что старше выбранного срока") },
+                    Button::new("clean-now", t("Очистить"))
                         .style(ButtonStyle::Subtle)
                         .disabled(s.cleanup_days == 0)
                         .on_click(cx.listener(|this, _, _, cx| {
                             let freed = storage::clean(&this.settings, this.settings.cleanup_days);
                             this.usage = storage::usage(&this.settings);
-                            util::notify("Хранилище очищено", &format!("Освобождено {} ({} файлов)", crate::studio::human_size(freed.bytes as f64), freed.files));
+                            util::notify(t("Хранилище очищено"), &tr!("Освобождено {} ({} файлов)", crate::studio::human_size(freed.bytes as f64), freed.files));
                             cx.notify();
                         }))
                         .into_any_element(),
                 ),
             ],
             Tab::About => vec![
-                row("kadr", "Скриншоты и запись экрана", Label::new(format!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
-                row("Интерфейс", "GPUI CE и свои компоненты, цвета из темы Omarchy", Label::new("GPUI CE").color(Color::Muted).into_any_element()),
-                row("Исходный код",
+                row("kadr", t("Скриншоты и запись экрана"), Label::new(tr!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
+                row(t("Интерфейс"), t("GPUI CE и свои компоненты, цвета из темы Omarchy"), Label::new("GPUI CE").color(Color::Muted).into_any_element()),
+                row(t("Исходный код"),
                     "github.com/vlasmn/kadr",
-                    Button::new("repo", "Открыть").style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr"))).into_any_element(),
+                    Button::new("repo", t("Открыть")).style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr"))).into_any_element(),
                 ),
-                row("Папка настроек",
+                row(t("Папка настроек"),
                     "~/.config/kadr",
-                    Button::new("config", "Открыть").style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(&util::config_dir())).into_any_element(),
+                    Button::new("config", t("Открыть")).style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(&util::config_dir())).into_any_element(),
                 ),
             ],
         };
@@ -378,7 +399,7 @@ fn folder(cx: &mut Context<SettingsView>, dir: PathBuf, custom: bool, screenshot
     h_flex()
         .gap_1()
         .child(div().max_w(px(260. * kit::SCALE)).child(Label::new(shown).size(LabelSize::Small).color(Color::Muted).truncate()))
-        .child(Button::new(if screenshots { "pick-shots" } else { "pick-videos" }, "Выбрать…").style(ButtonStyle::Subtle).on_click(cx.listener(move |this, _, _, cx| this.pick_folder(screenshots, cx))))
+        .child(Button::new(if screenshots { "pick-shots" } else { "pick-videos" }, t("Выбрать…")).style(ButtonStyle::Subtle).on_click(cx.listener(move |this, _, _, cx| this.pick_folder(screenshots, cx))))
         .when(custom, |row| {
             row.child(
                 IconButton::new(if screenshots { "reset-shots" } else { "reset-videos" }, IconName::Close)
@@ -404,9 +425,9 @@ impl SettingsView {
         let u = self.usage;
         let total = u.total().max(1) as f32;
         let parts = [
-            ("Скриншоты", u.screenshots, colors.text_accent),
-            ("Записи", u.recordings, cx.theme().status().warning),
-            ("Кэш студии", u.cache, colors.text_muted),
+            (t("Скриншоты"), u.screenshots, colors.text_accent),
+            (t("Записи"), u.recordings, cx.theme().status().warning),
+            (t("Кэш студии"), u.cache, colors.text_muted),
         ];
         let size = |b: u64| crate::studio::human_size(b as f64);
         let bar = h_flex()
@@ -430,7 +451,7 @@ impl SettingsView {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(Label::new("Занято"))
+                    .child(Label::new(t("Занято")))
                     .child(div().text_size(crate::ui::rems_from_px(18.)).font_weight(gpui::FontWeight::SEMIBOLD).child(size(u.total()))),
             )
             .child(bar)
@@ -453,7 +474,7 @@ impl SettingsView {
                 .into_any_element()
         });
         let add = if self.recording == Some(i) {
-            Label::new("Нажми сочетание… (Esc — отмена)").size(LabelSize::Small).color(Color::Accent).into_any_element()
+            Label::new(t("Нажми сочетание… (Esc — отмена)")).size(LabelSize::Small).color(Color::Accent).into_any_element()
         } else {
             IconButton::new(SharedString::from(format!("add-key-{i}")), IconName::Plus)
                 .tooltip(Tooltip::text("Добавить сочетание"))
@@ -497,7 +518,7 @@ impl SettingsView {
 
     fn save_keys(&self) {
         if let Err(e) = hotkeys::save(&self.keys) {
-            util::notify("Не удалось сохранить сочетания", &e.to_string());
+            util::notify(t("Не удалось сохранить сочетания"), &e.to_string());
         }
     }
 }

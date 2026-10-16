@@ -16,6 +16,7 @@ use crate::ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::{editor, pin, trim, util};
+use crate::i18n::t;
 
 const ITEM_WIDTH: f32 = 208.;
 const THUMB: (u32, u32) = (208, 128);
@@ -309,7 +310,7 @@ impl History {
         };
         let meta = match item.kind {
             Kind::Shot => "PNG",
-            Kind::Video => "Видео",
+            Kind::Video => t("Видео"),
             Kind::Gif => "GIF",
         };
         let actions = h_flex()
@@ -319,21 +320,21 @@ impl History {
             .gap_0p5()
             .opacity(0.)
             .group_hover(group.clone(), |s| s.opacity(1.))
-            .child(tool("copy", IconName::Copy, "Копировать (Ctrl+C)").on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
+            .child(tool("copy", IconName::Copy, t("Копировать (Ctrl+C)")).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
                 this.copy(index);
                 window.remove_window();
             })))
             .when(item.kind != Kind::Gif, |row| {
                 row.child(
-                    tool("edit", if item.kind == Kind::Shot { IconName::Pencil } else { IconName::Scissors }, if item.kind == Kind::Shot { "Редактировать (E)" } else { "Обрезать (E)" })
+                    tool("edit", if item.kind == Kind::Shot { IconName::Pencil } else { IconName::Scissors }, if item.kind == Kind::Shot { t("Редактировать (E)") } else { t("Обрезать (E)") })
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_item(index, true, window, cx))),
                 )
             })
-            .child(tool("folder", IconName::Folder, "Показать в папке").on_click({
+            .child(tool("folder", IconName::Folder, t("Показать в папке")).on_click({
                 let path = path.clone();
                 move |_, _, _| util::open_folder(&path)
             }))
-            .child(tool("trash", IconName::Trash, "Удалить (Del)").on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx))));
+            .child(tool("trash", IconName::Trash, t("Удалить (Del)")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx))));
 
         let thumb = div()
             .relative()
@@ -404,7 +405,7 @@ impl Render for History {
             ButtonLike::new(SharedString::from(format!("filter-{label}")))
                 .style(if self.filter == filter { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .toggle_state(self.filter == filter)
-                .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
+                .child(div().px_1p5().child(Label::new(t(label)).size(LabelSize::Small)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.filter = filter;
                     this.selected = 0;
@@ -416,7 +417,7 @@ impl Render for History {
             .gap_2()
             .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Small).color(Color::Muted))
             .child(if self.query.is_empty() {
-                Label::new("Поиск по имени или дате…").color(Color::Placeholder).into_any_element()
+                Label::new(t("Поиск по имени или дате…")).color(Color::Placeholder).into_any_element()
             } else {
                 Label::new(format!("{}▏", self.query)).into_any_element()
             });
@@ -442,7 +443,7 @@ impl Render for History {
                         .pt_10()
                         .flex()
                         .justify_center()
-                        .child(Label::new(if self.items.is_empty() { "Пока ничего не снято" } else { "Ничего не найдено" }).color(Color::Muted)),
+                        .child(Label::new(if self.items.is_empty() { t("Пока ничего не снято") } else { t("Ничего не найдено") }).color(Color::Muted)),
                 )
             });
 
@@ -489,13 +490,13 @@ impl Render for History {
                             .gap_4()
                             .px_3()
                             .py_1p5()
-                            .child(hint("enter", "Открыть"))
-                            .child(hint("e", "Редактор / обрезка"))
-                            .child(hint("ctrl-c", "Копировать"))
-                            .child(hint("delete", "Удалить"))
-                            .child(hint("tab", "Фильтр"))
+                            .child(hint("enter", t("Открыть")))
+                            .child(hint("e", t("Редактор / обрезка")))
+                            .child(hint("ctrl-c", t("Копировать")))
+                            .child(hint("delete", t("Удалить")))
+                            .child(hint("tab", t("Фильтр")))
                             .child(div().flex_1())
-                            .child(hint("escape", "Закрыть")),
+                            .child(hint("escape", t("Закрыть"))),
                     ),
             )
     }
@@ -515,13 +516,13 @@ fn when(t: SystemTime) -> String {
     use chrono::{Datelike, Local};
     let t: chrono::DateTime<Local> = t.into();
     let today = Local::now().date_naive();
-    let months = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+    let months = [crate::i18n::t("янв"), crate::i18n::t("фев"), crate::i18n::t("мар"), crate::i18n::t("апр"), crate::i18n::t("мая"), crate::i18n::t("июн"), crate::i18n::t("июл"), crate::i18n::t("авг"), crate::i18n::t("сен"), crate::i18n::t("окт"), crate::i18n::t("ноя"), crate::i18n::t("дек")];
     let date = t.date_naive();
     let time = t.format("%H:%M");
     if date == today {
-        format!("сегодня {time}")
+        tr!("сегодня {}", time)
     } else if Some(date) == today.pred_opt() {
-        format!("вчера {time}")
+        tr!("вчера {}", time)
     } else if date.year() == today.year() {
         format!("{} {} {time}", date.day(), months[date.month0() as usize])
     } else {

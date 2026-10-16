@@ -28,6 +28,7 @@ use crate::studio::{
 };
 use crate::track::Track;
 use crate::{palette, trim, util};
+use crate::i18n::t;
 
 const FILMSTRIP: f32 = 52.;
 const RULER: f32 = 18.;
@@ -115,7 +116,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx| {
         let _hold = hold;
         let Some(probe) = studio::probe(&video).await else {
-            return util::notify("Не удалось открыть видео", &video.display().to_string());
+            return util::notify(t("Не удалось открыть видео"), &video.display().to_string());
         };
         let Some(mon) = util::focused_monitor() else { return };
         let track = Track::load(&video).unwrap_or_else(|| Track { rect: (0.0, 0.0, probe.w, probe.h), ..Default::default() });
@@ -258,8 +259,8 @@ impl StudioEditor {
     }
 
     fn save_preset(&mut self, cx: &mut Context<Self>) {
-        let next = self.presets.iter().filter_map(|(name, _)| name.strip_prefix("Пресет ")?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
-        self.presets.push((format!("Пресет {next}"), self.project.look()));
+        let next = self.presets.iter().filter_map(|(name, _)| name.strip_prefix(t("Пресет "))?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
+        self.presets.push((tr!("Пресет {}", next), self.project.look()));
         studio::save_presets(&self.presets);
         cx.notify();
     }
@@ -696,7 +697,7 @@ impl StudioEditor {
     }
 
     fn pick_wallpaper(&mut self, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Выбрать картинку для фона".into()) });
+        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(t("Выбрать картинку для фона").into()) });
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else { return };
             let Some(path) = paths.into_iter().next() else { return };
@@ -860,7 +861,7 @@ impl StudioEditor {
                         .right_0()
                         .flex()
                         .justify_center()
-                        .child(div().px_2().py_1().rounded_md().bg(rgba(0x000000cc)).text_xs().text_color(gpui::white()).child("Кликни по видео, куда приблизить")),
+                        .child(div().px_2().py_1().rounded_md().bg(rgba(0x000000cc)).text_xs().text_color(gpui::white()).child(t("Кликни по видео, куда приблизить"))),
                 )
             })
     }
@@ -1036,7 +1037,7 @@ impl StudioEditor {
                         .items_center()
                         .justify_center()
                         .when(self.project.segments.is_empty(), |lane| {
-                            lane.child(Label::new("Кликни по дорожке, чтобы добавить зум").size(LabelSize::XSmall).color(Color::Placeholder))
+                            lane.child(Label::new(t("Кликни по дорожке, чтобы добавить зум")).size(LabelSize::XSmall).color(Color::Placeholder))
                         }),
                 )
                 .children(labels)
@@ -1069,7 +1070,7 @@ impl StudioEditor {
                     .flex_none()
                     .gap_1()
                     .child(
-                        Button::new("preview", "Предпросмотр")
+                        Button::new("preview", t("Предпросмотр"))
                             .style(ButtonStyle::Filled)
                             .size(ButtonSize::Large)
                             .tooltip(Tooltip::text("Собрать 720p со всеми эффектами и открыть в плеере"))
@@ -1077,7 +1078,7 @@ impl StudioEditor {
                     )
                     .child(div().px_1().child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small).color(Color::Muted)))
                     .child(
-                        Button::new("export", if gif { "Экспорт GIF" } else { "Экспорт" })
+                        Button::new("export", if gif { t("Экспорт GIF") } else { t("Экспорт") })
                             .style(ButtonStyle::Accent)
                             .size(ButtonSize::Large)
                             .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
@@ -1111,7 +1112,7 @@ impl StudioEditor {
                         IconButton::new("play", if self.playing { IconName::DebugPause } else { IconName::PlayFilled })
                             .shape(IconButtonShape::Square)
                             .size(ButtonSize::Large)
-                            .tooltip(|_, cx| cx.new(|_| Tooltip::new("Играть / пауза").key_binding(kit::keys("space"))).into())
+                            .tooltip(|_, cx| cx.new(|_| Tooltip::new(t("Играть / пауза")).key_binding(kit::keys("space"))).into())
                             .on_click(cx.listener(|this, _, window, cx| this.toggle_play(window, cx))),
                     )
                     .child(
@@ -1128,11 +1129,11 @@ impl StudioEditor {
                     .justify_end()
                     .gap_2()
                     .child(
-                        Button::new("cut", "Вырезать")
+                        Button::new("cut", t("Вырезать"))
                             .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
                             .start_icon(Icon::new(IconName::Scissors).size(IconSize::Small))
-                            .tooltip(|_, cx| cx.new(|_| Tooltip::new("Вырезать кусок с этого места").meta("Потом тяни его края на раскадровке").key_binding(kit::keys("x"))).into())
+                            .tooltip(|_, cx| cx.new(|_| Tooltip::new(t("Вырезать кусок с этого места")).meta(t("Потом тяни его края на раскадровке")).key_binding(kit::keys("x"))).into())
                             .on_click(cx.listener(|this, _, _, cx| this.add_cut(cx))),
                     )
                     .child(mono(format!("×{z:.2}"))),
@@ -1193,11 +1194,11 @@ impl StudioEditor {
         let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
 
         let context = if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
-            section("Вырезка")
-                .child(Label::new(format!("Убираем {} ({} → {})", seconds((b - a).abs()), clock(a.min(b)), clock(a.max(b)))).size(LabelSize::Small))
-                .child(Label::new("Тяни края на раскадровке, чтобы поменять").size(LabelSize::XSmall).color(Color::Muted))
+            section(t("Вырезка"))
+                .child(Label::new(tr!("Убираем {} ({} → {})", seconds((b - a).abs()), clock(a.min(b)), clock(a.max(b)))).size(LabelSize::Small))
+                .child(Label::new(t("Тяни края на раскадровке, чтобы поменять")).size(LabelSize::XSmall).color(Color::Muted))
                 .child(
-                    Button::new("delete-cut", "Вернуть кусок")
+                    Button::new("delete-cut", t("Вернуть кусок"))
                         .style(ButtonStyle::Subtle)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .key_binding(kit::keys("delete"))
@@ -1208,31 +1209,31 @@ impl StudioEditor {
                         })),
                 )
         } else if let Some((index, seg)) = self.selected.and_then(|i| self.project.segments.get(i).map(|s| (i, s.clone()))) {
-            section("Зум")
-                .child(caption("Увеличение"))
+            section(t("Зум"))
+                .child(caption(t("Увеличение")))
                 .child(h_flex().flex_wrap().gap_1().children(ZOOMS.iter().map(|&z| {
                     chip(SharedString::from(format!("zoom-{z}")), format!("×{z}"), (seg.zoom - z).abs() < 0.01).on_click(cx.listener(move |this, _, _, cx| {
                         this.project.segments[index].zoom = z;
                         this.changed(cx);
                     }))
                 })))
-                .child(caption("Куда приближать"))
+                .child(caption(t("Куда приближать")))
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(chip("focus-cursor".into(), "За курсором".into(), seg.focus.is_none() && !self.placing).on_click(cx.listener(move |this, _, _, cx| {
+                        .child(chip("focus-cursor".into(), t("За курсором").into(), seg.focus.is_none() && !self.placing).on_click(cx.listener(move |this, _, _, cx| {
                             this.placing = false;
                             this.project.segments[index].focus = None;
                             this.changed(cx);
                         })))
-                        .child(chip("focus-point".into(), "В точку".into(), seg.focus.is_some() || self.placing).on_click(cx.listener(|this, _, _, cx| {
+                        .child(chip("focus-point".into(), t("В точку").into(), seg.focus.is_some() || self.placing).on_click(cx.listener(|this, _, _, cx| {
                             this.placing = true;
                             cx.notify();
                         }))),
                 )
-                .when(self.placing, |s| s.child(Label::new("Кликни по видео, куда приблизить").size(LabelSize::XSmall).color(Color::Accent)))
+                .when(self.placing, |s| s.child(Label::new(t("Кликни по видео, куда приблизить")).size(LabelSize::XSmall).color(Color::Accent)))
                 .child(
-                    Button::new("delete", "Удалить зум")
+                    Button::new("delete", t("Удалить зум"))
                         .style(ButtonStyle::Subtle)
                         .color(Color::Error)
                         .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Error))
@@ -1241,22 +1242,22 @@ impl StudioEditor {
                 )
         } else {
             let edited = self.project.trim != (0., self.probe.duration) || !self.project.cuts.is_empty();
-            section("Монтаж")
+            section(t("Монтаж"))
                 .child(
                     Label::new(match self.project.segments.len() {
-                        0 => "Зумов нет: кликни по нижней дорожке, чтобы добавить".to_string(),
-                        n => format!("Зумов: {n}. Выбери любой на таймлайне, чтобы настроить"),
+                        0 => t("Зумов нет: кликни по нижней дорожке, чтобы добавить").to_string(),
+                        n => tr!("Зумов: {}. Выбери любой на таймлайне, чтобы настроить", n),
                     })
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
-                .child(Label::new("Жёлтые края раскадровки обрезают начало и конец, «Вырезать» (X) убирает кусок из середины").size(LabelSize::XSmall).color(Color::Muted))
+                .child(Label::new(t("Жёлтые края раскадровки обрезают начало и конец, «Вырезать» (X) убирает кусок из середины")).size(LabelSize::XSmall).color(Color::Muted))
                 .child(
                     h_flex()
                         .flex_wrap()
                         .gap_1()
                         .child(
-                            Button::new("auto", "Зумы по кликам")
+                            Button::new("auto", t("Зумы по кликам"))
                                 .style(ButtonStyle::Outlined)
                                 .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
                                 .disabled(self.track.clicks.is_empty())
@@ -1268,7 +1269,7 @@ impl StudioEditor {
                                 })),
                         )
                         .when(edited, |row| {
-                            row.child(Button::new("uncut", "Вернуть всё видео").style(ButtonStyle::Subtle).on_click(cx.listener(|this, _, _, cx| {
+                            row.child(Button::new("uncut", t("Вернуть всё видео")).style(ButtonStyle::Subtle).on_click(cx.listener(|this, _, _, cx| {
                                 this.project.trim = (0., this.probe.duration);
                                 this.project.cuts.clear();
                                 this.select_cut(None);
@@ -1293,9 +1294,9 @@ impl StudioEditor {
                 }))
             })
             .collect::<Vec<_>>();
-        let presets = section("Пресеты")
+        let presets = section(t("Пресеты"))
             .when(self.presets.is_empty(), |s| {
-                s.child(Label::new("Сохрани текущий вид (фон, отступы, курсор, экспорт), чтобы включать его одним кликом").size(LabelSize::XSmall).color(Color::Muted))
+                s.child(Label::new(t("Сохрани текущий вид (фон, отступы, курсор, экспорт), чтобы включать его одним кликом")).size(LabelSize::XSmall).color(Color::Muted))
             })
             .child(h_flex().flex_wrap().gap_1().children(preset_chips))
             .child(
@@ -1303,7 +1304,7 @@ impl StudioEditor {
                     .gap_1()
                     .when(active.is_none(), |row| {
                         row.child(
-                            Button::new("save-preset", "Сохранить как пресет")
+                            Button::new("save-preset", t("Сохранить как пресет"))
                                 .style(ButtonStyle::Subtle)
                                 .start_icon(Icon::new(IconName::Plus).size(IconSize::Small))
                                 .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
@@ -1311,7 +1312,7 @@ impl StudioEditor {
                     })
                     .when_some(active, |row, i| {
                         row.child(
-                            Button::new("delete-preset", "Удалить пресет")
+                            Button::new("delete-preset", t("Удалить пресет"))
                                 .style(ButtonStyle::Subtle)
                                 .color(Color::Muted)
                                 .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Muted))
@@ -1325,7 +1326,7 @@ impl StudioEditor {
             );
 
         let aspects = ASPECTS.iter().enumerate().map(|(i, (label, _))| {
-            chip(SharedString::from(format!("aspect-{i}")), (*label).into(), self.project.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
+            chip(SharedString::from(format!("aspect-{i}")), t(label).into(), self.project.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
                 this.project.aspect = i;
                 this.changed(cx);
             }))
@@ -1368,7 +1369,7 @@ impl StudioEditor {
         })
         .collect::<Vec<_>>();
         let custom = self.project.wallpaper.as_ref().filter(|w| !self.walls.iter().any(|(p, _)| p == *w)).map(|w| {
-            Label::new(format!("Своя: {}", w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).size(LabelSize::XSmall).color(Color::Muted).truncate()
+            Label::new(tr!("Своя: {}", w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).size(LabelSize::XSmall).color(Color::Muted).truncate()
         });
 
         let has_clicks = !self.track.clicks.is_empty();
@@ -1384,11 +1385,11 @@ impl StudioEditor {
         let keys_on = self.project.keys && has_keys;
         let key_style = h_flex()
             .gap_1()
-            .child(chip("keys-bottom".into(), "Снизу".into(), !self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
+            .child(chip("keys-bottom".into(), t("Снизу").into(), !self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
                 this.project.keys_top = false;
                 this.changed(cx);
             })))
-            .child(chip("keys-top".into(), "Сверху".into(), self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
+            .child(chip("keys-top".into(), t("Сверху").into(), self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
                 this.project.keys_top = true;
                 this.changed(cx);
             })))
@@ -1415,7 +1416,7 @@ impl StudioEditor {
         })
         .collect::<Vec<_>>();
         let rates = FRAME_RATES.iter().enumerate().map(|(i, (label, _))| {
-            chip(SharedString::from(format!("fps-{i}")), (*label).into(), self.project.frame_rate == i).on_click(cx.listener(move |this, _, _, cx| {
+            chip(SharedString::from(format!("fps-{i}")), t(label).into(), self.project.frame_rate == i).on_click(cx.listener(move |this, _, _, cx| {
                 this.project.frame_rate = i;
                 this.changed(cx);
             }))
@@ -1426,7 +1427,7 @@ impl StudioEditor {
             .iter()
             .enumerate()
             .map(|(i, (label, _))| {
-                chip(SharedString::from(format!("blur-{i}")), (*label).into(), self.project.motion_blur == i).on_click(cx.listener(move |this, _, _, cx| {
+                chip(SharedString::from(format!("blur-{i}")), t(label).into(), self.project.motion_blur == i).on_click(cx.listener(move |this, _, _, cx| {
                     this.project.motion_blur = i;
                     this.changed(cx);
                 }))
@@ -1436,7 +1437,7 @@ impl StudioEditor {
             .iter()
             .enumerate()
             .map(|(i, (label, _))| {
-                chip(SharedString::from(format!("quality-{i}")), (*label).into(), self.project.quality == i).on_click(cx.listener(move |this, _, _, cx| {
+                chip(SharedString::from(format!("quality-{i}")), t(label).into(), self.project.quality == i).on_click(cx.listener(move |this, _, _, cx| {
                     this.project.quality = i;
                     this.changed(cx);
                 }))
@@ -1449,16 +1450,16 @@ impl StudioEditor {
                 .iter()
                 .enumerate()
                 .map(|(i, label)| {
-                    chip(SharedString::from(format!("cursor-style-{i}")), (*label).into(), self.project.cursor_style == i).on_click(cx.listener(move |this, _, _, cx| {
+                    chip(SharedString::from(format!("cursor-style-{i}")), t(label).into(), self.project.cursor_style == i).on_click(cx.listener(move |this, _, _, cx| {
                         this.project.cursor_style = i;
                         this.changed(cx);
                     }))
                 })
                 .collect::<Vec<_>>();
-            section("Курсор")
+            section(t("Курсор"))
                 .child(toggle_row(
-                    "Показывать курсор",
-                    "Записан отдельно, его можно менять",
+                    t("Показывать курсор"),
+                    t("Записан отдельно, его можно менять"),
                     Switch::new("cursor", ToggleState::from(self.project.cursor)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
                         this.project.cursor = *state == ToggleState::Selected;
                         this.changed(cx);
@@ -1466,19 +1467,19 @@ impl StudioEditor {
                 ))
                 .when(self.project.cursor, |s| {
                     s.child(h_flex().gap_1().children(styles))
-                        .child(caption("Размер"))
+                        .child(caption(t("Размер")))
                         .child(self.slider(
                             Knob::CursorSize,
                             (self.project.cursor_size - 0.5) / (MAX_CURSOR - 0.5),
-                            format!("×{:.1}", self.project.cursor_size).replace('.', ","),
+                            crate::i18n::decimal(format!("×{:.1}", self.project.cursor_size)),
                             cx,
                         ))
-                        .child(caption("Плавность движения"))
+                        .child(caption(t("Плавность движения")))
                         .child(self.slider(Knob::CursorSmooth, self.project.cursor_smooth, format!("{}%", (self.project.cursor_smooth * 100.).round()), cx))
                 })
         } else {
-            section("Курсор").child(
-                Label::new("Чтобы менять размер и плавность курсора, записывай в режиме студии (кнопка-искра на панели записи)")
+            section(t("Курсор")).child(
+                Label::new(t("Чтобы менять размер и плавность курсора, записывай в режиме студии (кнопка-искра на панели записи)"))
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
             )
@@ -1495,30 +1496,30 @@ impl StudioEditor {
             .pb_4()
                         .child(context)
             .child(presets)
-            .child(section("Формат").child(h_flex().flex_wrap().gap_1().children(aspects)))
+            .child(section(t("Формат")).child(h_flex().flex_wrap().gap_1().children(aspects)))
             .child(
-                section("Фон")
+                section(t("Фон"))
                     .child(h_flex().flex_wrap().gap_1().children(gradients))
                     .child(h_flex().flex_wrap().gap_1().children(walls))
                     .children(custom)
                     .child(
-                        Button::new("own-wallpaper", "Своя картинка…")
+                        Button::new("own-wallpaper", t("Своя картинка…"))
                             .style(ButtonStyle::Subtle)
                             .start_icon(Icon::new(IconName::Image).size(IconSize::Small))
                             .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx))),
                     ),
             )
             .child(
-                section("Оформление")
-                    .child(caption("Отступ"))
+                section(t("Оформление"))
+                    .child(caption(t("Отступ")))
                     .child(self.slider(Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), cx))
-                    .child(caption("Скругление углов"))
+                    .child(caption(t("Скругление углов")))
                     .child(self.slider(Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), cx))
-                    .child(caption("Тень"))
+                    .child(caption(t("Тень")))
                     .child(self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx))
-                    .child(caption("Размытие в движении"))
+                    .child(caption(t("Размытие в движении")))
                     .child(h_flex().gap_1().children(blurs))
-                    .child(Label::new("При зумах, сдвигах камеры и быстром курсоре. Видно в предпросмотре и экспорте").size(LabelSize::XSmall).color(Color::Muted)),
+                    .child(Label::new(t("При зумах, сдвигах камеры и быстром курсоре. Видно в предпросмотре и экспорте")).size(LabelSize::XSmall).color(Color::Muted)),
             )
             .child(cursor)
             .children(self.cam_file.as_ref().map(|_| {
@@ -1550,42 +1551,42 @@ impl StudioEditor {
                     }).collect();
                     grid = grid.child(h_flex().gap_1().children(cells));
                 }
-                section("Камера")
+                section(t("Камера"))
                     .child(toggle_row(
-                        "Показывать камеру",
-                        "Записана отдельно, её можно менять",
+                        t("Показывать камеру"),
+                        t("Записана отдельно, её можно менять"),
                         Switch::new("cam", ToggleState::from(self.project.cam)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
                             this.project.cam = *state == ToggleState::Selected;
                             this.changed(cx);
                         })),
                     ))
                     .when(self.project.cam, |s| {
-                        s.child(caption("Размер"))
+                        s.child(caption(t("Размер")))
                             .child(self.slider(
                                 Knob::CamSize,
                                 (self.project.cam_size - studio::MIN_CAM) / (studio::MAX_CAM - studio::MIN_CAM),
                                 format!("{}%", (self.project.cam_size * 100.).round()),
                                 cx,
                             ))
-                            .child(caption("Скругление"))
+                            .child(caption(t("Скругление")))
                             .child(self.slider(Knob::CamRound, self.project.cam_round, format!("{}%", (self.project.cam_round * 100.).round()), cx))
-                            .child(caption("Где"))
+                            .child(caption(t("Где")))
                             .child(grid)
                     })
             }))
             .child(
-                section("Поверх видео")
+                section(t("Поверх видео"))
                     .child(toggle_row(
-                        "Клики",
-                        if has_clicks { "Кольца там, где кликал" } else { "В записи нет кликов" },
+                        t("Клики"),
+                        if has_clicks { t("Кольца там, где кликал") } else { t("В записи нет кликов") },
                         Switch::new("clicks", ToggleState::from(self.project.clicks && has_clicks)).disabled(!has_clicks).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
                             this.project.clicks = *state == ToggleState::Selected;
                             this.changed(cx);
                         })),
                     ))
                     .child(toggle_row(
-                        "Сочетания клавиш",
-                        if has_keys { "Плашка с нажатыми сочетаниями" } else { "Запиши с включёнными «Клавишами»" },
+                        t("Сочетания клавиш"),
+                        if has_keys { t("Плашка с нажатыми сочетаниями") } else { t("Запиши с включёнными «Клавишами»") },
                         Switch::new("keys", ToggleState::from(keys_on)).disabled(!has_keys).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
                             this.project.keys = *state == ToggleState::Selected;
                             this.changed(cx);
@@ -1594,14 +1595,14 @@ impl StudioEditor {
                     .when(keys_on, |s| s.child(key_style)),
             )
             .child(
-                section("Звук").child(toggle_row(
-                    "Звук записи",
+                section(t("Звук")).child(toggle_row(
+                    t("Звук записи"),
                     if !self.probe.audio {
-                        "В записи нет звука"
+                        t("В записи нет звука")
                     } else if gif {
-                        "В GIF звука не бывает"
+                        t("В GIF звука не бывает")
                     } else {
-                        "Микрофон и система, как записались"
+                        t("Микрофон и система, как записались")
                     },
                     Switch::new("audio", ToggleState::from(self.project.audio && self.probe.audio && !gif)).disabled(!self.probe.audio || gif).on_click(cx.listener(
                         |this, state: &ToggleState, _, cx| {
@@ -1612,14 +1613,14 @@ impl StudioEditor {
                 )),
             )
             .child(
-                section("Экспорт")
-                    .child(caption("Файл"))
+                section(t("Экспорт"))
+                    .child(caption(t("Файл")))
                     .child(h_flex().gap_1().children(formats))
-                    .child(caption("Размер"))
+                    .child(caption(t("Размер")))
                     .child(h_flex().flex_wrap().gap_1().children(resolutions))
-                    .child(caption("Кадров в секунду"))
+                    .child(caption(t("Кадров в секунду")))
                     .child(h_flex().flex_wrap().gap_1().children(rates))
-                    .when(!gif, |s| s.child(caption("Сжатие")).child(h_flex().flex_wrap().gap_1().children(qualities)))
+                    .when(!gif, |s| s.child(caption(t("Сжатие"))).child(h_flex().flex_wrap().gap_1().children(qualities)))
                     .child(
                         h_flex()
                             .mt_1()
@@ -1711,10 +1712,10 @@ fn clock(t: f64) -> String {
 /// "до 12 МБ" for MP4 (a ceiling), "≈ 30 МБ" for GIF (a guess).
 fn size_label(project: &Project, probe: &Probe) -> String {
     let size = studio::human_size(project.estimate(probe));
-    if project.format == Format::Gif { format!("≈ {size}") } else { format!("до {size}") }
+    if project.format == Format::Gif { format!("≈ {size}") } else { tr!("до {}", size) }
 }
 
 /// "1,2 с"
 fn seconds(t: f64) -> String {
-    format!("{t:.1} с").replace('.', ",")
+    tr!("{} с", crate::i18n::decimal(format!("{:.1}", t)))
 }

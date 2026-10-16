@@ -17,6 +17,7 @@ use crate::track::{self, Track};
 use crate::job::{self, Job};
 use crate::settings::Settings;
 use crate::{cards, palette, util};
+use crate::i18n::t;
 
 /// Seconds to ease the zoom in or out.
 pub const RAMP: f64 = 0.8;
@@ -506,11 +507,11 @@ fn gif_size(l: &Layout) -> (u32, u32) {
 pub fn human_size(bytes: f64) -> String {
     let mb = bytes / 1_048_576.;
     if mb < 1. {
-        format!("{} КБ", (bytes / 1024.).round().max(1.))
+        tr!("{} КБ", (bytes / 1024.).round().max(1.))
     } else if mb < 10. {
-        format!("{mb:.1} МБ").replace('.', ",")
+        tr!("{} МБ", crate::i18n::decimal(format!("{:.1}", mb)))
     } else {
-        format!("{} МБ", mb.round())
+        tr!("{} МБ", mb.round())
     }
 }
 
@@ -810,7 +811,7 @@ fn preview_path(video: &Path) -> PathBuf {
 pub fn render(video: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx| {
         let Some(p) = probe(&video).await else {
-            return util::notify("Не удалось открыть видео", &video.display().to_string());
+            return util::notify(t("Не удалось открыть видео"), &video.display().to_string());
         };
         let track = Track::load(&video).unwrap_or_else(|| Track { rect: (0.0, 0.0, p.w, p.h), ..Default::default() });
         let project = Project::load(&video, &track, &p);
@@ -822,7 +823,7 @@ pub fn render(video: PathBuf, cx: &mut App) {
 /// Render `project`; the full export lands in a card, the quick preview
 /// (720p) opens in the player.
 pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
-    let title = if preview { "Готовлю предпросмотр" } else { "Экспортирую видео" };
+    let title = if preview { t("Готовлю предпросмотр") } else { t("Экспортирую видео") };
     let running = job::start(title, if preview { IconName::PlayFilled } else { IconName::Sparkle }, cx);
     cx.spawn(async move |cx| {
         let out = if preview { preview_path(&video) } else { output_path(&video, project.format) };
@@ -836,7 +837,7 @@ pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
                 let _ = cx.update(|cx| cards::show(out, cx));
             }
             Ok(false) => {}
-            Err(e) => util::notify("Не удалось собрать видео", &e),
+            Err(e) => util::notify(t("Не удалось собрать видео"), &e),
         }
     })
     .detach();
@@ -914,14 +915,14 @@ fn keep_expr(kept: &[(f64, f64)]) -> String {
 
 /// Ok(false) when cancelled.
 async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progress: &Job) -> Result<bool, String> {
-    let p = probe(video).await.ok_or("ffprobe не смог прочитать видео")?;
+    let p = probe(video).await.ok_or(t("ffprobe не смог прочитать видео"))?;
     let track = Track::load(video).unwrap_or_else(|| Track { rect: (0.0, 0.0, p.w, p.h), ..Default::default() });
     let l = layout(&p, project, preview);
     let camera = Camera::new(&track, &p, &project.segments);
     let (z, x, y) = (simplify(&camera.zoom, 0.004), simplify(&camera.x, 2.0), simplify(&camera.y, 2.0));
     let kept = project.kept();
     if kept.is_empty() {
-        return Err("После обрезки ничего не осталось".into());
+        return Err(t("После обрезки ничего не осталось").into());
     }
     let whole = kept.len() == 1 && kept[0].0 <= 0.01 && kept[0].1 >= p.duration - 0.01;
     let length = project.kept_duration();
@@ -940,7 +941,7 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     // shortcut pills on the finished frame. Inputs 0 and 1 are the video and
     // the backdrop; the overlays follow.
     let cursor = if track.cursor_hidden && project.cursor {
-        let (png, hot, _) = cursor_image(project.cursor_style, cursor_height(&track, &p, project.cursor_size)).ok_or("не получилось нарисовать курсор")?;
+        let (png, hot, _) = cursor_image(project.cursor_style, cursor_height(&track, &p, project.cursor_size)).ok_or(t("не получилось нарисовать курсор"))?;
         let file = tmp.join("cursor.png");
         std::fs::write(&file, png).map_err(|e| e.to_string())?;
         Some((file, hot, cursor_path(&track, &p, project.cursor_smooth)))

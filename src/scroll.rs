@@ -14,6 +14,7 @@ use crate::kit::{self, Hold, InputRegion, LayerSpec};
 use crate::settings::Settings;
 use crate::util::{self, Mon};
 use crate::capture;
+use crate::i18n::t;
 
 /// Rows taller than this stop growing the picture.
 const MAX_HEIGHT: usize = 40_000;
@@ -217,14 +218,14 @@ pub fn start(area: Option<String>, cx: &mut App) {
             return;
         }
         let Some(picture) = picture else {
-            return util::notify("Не удалось снять область", "grim ничего не вернул");
+            return util::notify(t("Не удалось снять область"), t("grim ничего не вернул"));
         };
         let settings = Settings::load();
         let dir = settings.screenshot_dir();
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(format!("screenshot-{}.png", util::timestamp()));
         if let Err(e) = picture.save(&path) {
-            return util::notify("Не удалось сохранить", &e.to_string());
+            return util::notify(t("Не удалось сохранить"), &e.to_string());
         }
         let _ = cx.update(|cx| capture::deliver(path, &settings, cx));
         drop(hold);
@@ -303,10 +304,10 @@ impl Render for ScrollBar {
                         .p_1()
                         .pl_3()
                         .elevation_3(cx)
-                        .child(Label::new("Прокручивай — kadr склеит").color(Color::Muted))
+                        .child(Label::new(t("Прокручивай — kadr склеит")).color(Color::Muted))
                         .child(div().w(px(90.)).font_family(kit::MONO_FONT).text_color(cx.theme().colors().text_muted).child(format!("{height} px")))
                         .child(
-                            Button::new("cancel", "Отмена")
+                            Button::new("cancel", t("Отмена"))
                                 .style(ButtonStyle::Subtle)
                                 .size(ButtonSize::Large)
                                 .on_click(move |_, _, _| {
@@ -315,7 +316,7 @@ impl Render for ScrollBar {
                                 }),
                         )
                         .child(
-                            Button::new("done", "Готово")
+                            Button::new("done", t("Готово"))
                                 .style(ButtonStyle::Accent)
                                 .size(ButtonSize::Large)
                                 .tooltip(Tooltip::text("Или нажми горячую клавишу ещё раз"))

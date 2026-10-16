@@ -65,10 +65,10 @@ fn parse_bind(line: &str) -> Option<(String, String)> {
 /// Write kadr's binds and have Hyprland pick them up.
 pub fn save(keys: &[Vec<String>]) -> std::io::Result<()> {
     let first = !own_file().exists();
-    let mut out = String::from("-- kadr's hotkeys, written by its settings (Клавиши). Loaded by hypr/kadr.lua.\n");
+    let mut out = String::from("-- kadr's hotkeys, written by its settings (Shortcuts). Loaded by hypr/kadr.lua.\n");
     for (action, specs) in ACTIONS.iter().zip(keys) {
         for spec in specs {
-            out.push_str(&format!("o.bind(\"{spec}\", \"{} (kadr)\", \"{}\")\n", action.title, action.command));
+            out.push_str(&format!("o.bind(\"{spec}\", \"{} (kadr)\", \"{}\")\n", crate::i18n::t(action.title), action.command));
         }
     }
     std::fs::write(own_file(), out)?;

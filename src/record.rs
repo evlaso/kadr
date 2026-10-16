@@ -23,6 +23,7 @@ use crate::ui::{Divider, IconButtonShape, Tooltip, prelude::*};
 use crate::util::{self, Mon};
 use crate::cards;
 use crate::webcam;
+use crate::i18n::t;
 
 /// The recording bar sits where the panel's bar was: this far under the
 /// area, assuming this height (the panel's).
@@ -227,7 +228,7 @@ pub fn command(mode: Option<String>, opts: Option<Opts>, cx: &mut App) {
 /// `kadr record area "X,Y WxH"`: the recording bar for a given area.
 pub fn command_area(geometry: &str, cx: &mut App) {
     let Some(target) = parse_area(geometry) else {
-        return util::notify("kadr", "Область задаётся как \"X,Y WxH\"");
+        return util::notify("kadr", t("Область задаётся как \"X,Y WxH\""));
     };
     recorder(cx).update(cx, |rec, cx| {
         if matches!(rec.state, State::Idle)
@@ -335,7 +336,7 @@ impl Recorder {
                     rec.state = State::Idle;
                     webcam::hide(cx);
                     if let Some(err) = err {
-                        util::notify("Запись не запустилась", &err);
+                        util::notify(t("Запись не запустилась"), &err);
                     }
                 }
             });
@@ -436,7 +437,7 @@ impl Recorder {
             if s.discard || !has_data {
                 let _ = std::fs::remove_file(&file);
                 if !s.discard {
-                    util::notify("Запись не сохранилась", &log_tail());
+                    util::notify(t("Запись не сохранилась"), &log_tail());
                 }
             } else {
                 if let Some(tracker) = s.tracker.take() {
@@ -480,7 +481,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     let mons = util::monitors();
     let target = match area {
         Area::Fullscreen => {
-            let focused = mons.iter().find(|m| m.focused).ok_or_else(|| Some("не найден активный монитор".to_string()))?;
+            let focused = mons.iter().find(|m| m.focused).ok_or_else(|| Some(t("не найден активный монитор").to_string()))?;
             Target::Monitor(focused.name.clone())
         }
         Area::Pick => pick_target(cx).await.ok_or(None)?,
@@ -599,7 +600,7 @@ pub fn show_bubble(target: &Target, mons: &[Mon], cx: &mut App) {
 /// when its first frame was written, to line it up with the screen.
 async fn record_camera(video: &std::path::Path, cx: &mut AsyncApp) -> Option<(u32, std::time::Instant)> {
     let Some(device) = webcam::device() else {
-        util::notify("Камера не найдена", "Запись пойдёт без камеры");
+        util::notify(t("Камера не найдена"), t("Запись пойдёт без камеры"));
         return None;
     };
     let size = webcam::capture_size(&device);
@@ -621,7 +622,7 @@ async fn record_camera(video: &std::path::Path, cx: &mut AsyncApp) -> Option<(u3
         cx.background_executor().timer(Duration::from_millis(50)).await;
     }
     util::signal(pid, util::Signal::Terminate);
-    util::notify("Камера не запустилась", "Запись пойдёт без камеры");
+    util::notify(t("Камера не запустилась"), t("Запись пойдёт без камеры"));
     None
 }
 
@@ -779,14 +780,14 @@ impl Render for RecBar {
                 )
                 .child(Divider::vertical().h_5().mx_1())
                 .child(
-                    button("pause", if paused { IconName::PlayFilled } else { IconName::DebugPause }, if paused { "Продолжить" } else { "Пауза" })
+                    button("pause", if paused { IconName::PlayFilled } else { IconName::DebugPause }, if paused { t("Продолжить") } else { t("Пауза") })
                         .on_click(with_rec(false, |rec, cx| {
                             rec.toggle_pause();
                             cx.notify();
                         })),
                 )
-                .child(button("stop", IconName::Stop, "Остановить и сохранить").icon_color(Color::Error).on_click(with_rec(true, |rec, cx| rec.stop(false, cx))))
-                .child(button("discard", IconName::Trash, "Остановить и удалить").on_click(with_rec(true, |rec, cx| rec.stop(true, cx))))
+                .child(button("stop", IconName::Stop, t("Остановить и сохранить")).icon_color(Color::Error).on_click(with_rec(true, |rec, cx| rec.stop(false, cx))))
+                .child(button("discard", IconName::Trash, t("Остановить и удалить")).on_click(with_rec(true, |rec, cx| rec.stop(true, cx))))
                 .child(self.region.mark());
         kit::root(cx)
             .relative()
@@ -845,7 +846,7 @@ fn log_tail() -> String {
     let log = std::fs::read_to_string(log_file()).unwrap_or_default();
     let lines: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
     let tail = lines[lines.len().saturating_sub(3)..].join("\n");
-    if tail.is_empty() { "gpu-screen-recorder завершился без вывода".into() } else { tail }
+    if tail.is_empty() { t("gpu-screen-recorder завершился без вывода").into() } else { tail }
 }
 
 /// A countdown over the area before recording starts, like CleanShot's.
@@ -954,7 +955,7 @@ impl Render for Countdown {
                     .elevation_3(cx)
                     .rounded(px(side * 0.28))
                     .child(div().text_size(px(side * 0.46)).line_height(px(side * 0.56)).font_weight(gpui::FontWeight::SEMIBOLD).child(n.to_string()))
-                    .child(Label::new("Esc — отменить").size(LabelSize::XSmall).color(Color::Muted)),
+                    .child(Label::new(t("Esc — отменить")).size(LabelSize::XSmall).color(Color::Muted)),
             )
     }
 }

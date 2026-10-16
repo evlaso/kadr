@@ -44,6 +44,7 @@ pub struct Settings {
     /// Delete kadr's captures older than this many days; 0 keeps them.
     pub cleanup_days: u32,
     pub theme: ThemeMode,
+    pub language: crate::i18n::Lang,
     pub studio_zoom: f64,
     pub studio_backdrop: usize,
     pub studio_padding: usize,
@@ -74,6 +75,7 @@ impl Default for Settings {
             editor_window: true,
             cleanup_days: 0,
             theme: ThemeMode::System,
+            language: crate::i18n::Lang::En,
             studio_zoom: 1.8,
             studio_backdrop: 0,
             studio_padding: 2,
@@ -108,6 +110,7 @@ impl Settings {
             region_frame: bool_or("region_frame", d.region_frame),
             editor_window: bool_or("editor_window", d.editor_window),
             cleanup_days: num_or("cleanup_days", d.cleanup_days as u64) as u32,
+            language: crate::i18n::Lang::from_code(v["language"].as_str().unwrap_or("en")),
             theme: match v["theme"].as_str() {
                 Some("dark") => ThemeMode::Dark,
                 Some("light") => ThemeMode::Light,
@@ -135,6 +138,7 @@ impl Settings {
             "region_frame": self.region_frame,
             "editor_window": self.editor_window,
             "cleanup_days": self.cleanup_days,
+            "language": self.language.code(),
             "theme": match self.theme {
                 ThemeMode::System => "system",
                 ThemeMode::Dark => "dark",

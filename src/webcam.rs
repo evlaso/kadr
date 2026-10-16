@@ -11,6 +11,7 @@ use gpui::{App, Context, Global, MouseButton, MouseDownEvent, MouseMoveEvent, Re
 use crate::kit::{self, Anchor, InputRegion, KeyboardInteractivity, LayerSpec};
 use crate::ui::{ButtonLike, Divider, IconButtonShape, Tooltip, prelude::*};
 use crate::util::{self, Mon};
+use crate::i18n::t;
 
 /// Where the camera can sit, as fractions across the free room: corners and
 /// the middles of the edges, clockwise from the top left.
@@ -111,7 +112,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
         Ok(source) => vec!["-f".into(), "lavfi".into(), "-i".into(), source],
         Err(_) => {
             let Some(device) = device() else {
-                return util::notify("Камера не найдена", "Запись пойдёт без камеры");
+                return util::notify(t("Камера не найдена"), t("Запись пойдёт без камеры"));
             };
             let capture = capture_size(&device);
             ["-f", "v4l2", "-framerate", "30", "-video_size", capture, "-i", &device].map(String::from).to_vec()
@@ -125,7 +126,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
         .stderr(std::process::Stdio::null())
         .spawn()
     else {
-        return util::notify("Камера не запустилась", "Нужен ffmpeg");
+        return util::notify(t("Камера не запустилась"), t("Нужен ffmpeg"));
     };
     let pid = child.id();
     let (mut tx, mut rx) = futures::channel::mpsc::channel::<Vec<u8>>(2);
@@ -294,7 +295,7 @@ impl Render for CameraView {
                     .size(ButtonSize::Large)
                     .toggle_state(on)
                     .child(div().px_1().child(div().size(px(14.)).rounded(px(7. * r as f32)).border_2().border_color(cx.theme().colors().text)))
-                    .tooltip(Tooltip::text(["Круг", "Скруглённая", "Квадрат"][i]))
+                    .tooltip(Tooltip::text([t("Круг"), t("Скруглённая"), t("Квадрат")][i]))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.look.round = ROUNDS[i];
                         this.look.save();

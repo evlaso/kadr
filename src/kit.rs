@@ -13,6 +13,7 @@ use gpui::{
 use crate::ui::{ActiveTheme, KeyBinding, LabelSize};
 
 use crate::util::Mon;
+use crate::i18n::t;
 
 /// Base size of kadr's components (rems). Zed uses 16px; kadr's overlays are
 /// read at a glance over other windows, so everything is a notch larger.
@@ -21,7 +22,12 @@ pub const REM: f32 = 19.;
 pub const SCALE: f32 = REM / 16.;
 
 /// Zed's UI font, bundled so kadr looks the same without Zed installed.
-pub(crate) const UI_FONT: &str = "IBM Plex Sans";
+/// The system's own UI font: San Francisco, Segoe UI, or the desktop's sans
+/// on Linux.
+pub(crate) const UI_FONT: &str = ".SystemUIFont";
+/// Text drawn onto screenshots: bundled, so it looks the same everywhere
+/// and matches the editor's own rasteriser.
+pub(crate) const ANNOTATION_FONT: &str = "IBM Plex Sans";
 /// Zed's monospace font, for timers and numbers.
 pub const MONO_FONT: &str = "Lilex";
 
@@ -230,7 +236,7 @@ pub fn open_layer<V: Render + 'static>(
     }) {
         Ok(handle) => Some(handle),
         Err(e) => {
-            crate::util::notify("kadr: не удалось открыть окно", &e.to_string());
+            crate::util::notify(t("kadr: не удалось открыть окно"), &e.to_string());
             None
         }
     }
@@ -260,7 +266,7 @@ pub fn open_window<V: Render + 'static>(
     }) {
         Ok(handle) => Some(handle),
         Err(e) => {
-            crate::util::notify("kadr: не удалось открыть окно", &e.to_string());
+            crate::util::notify(t("kadr: не удалось открыть окно"), &e.to_string());
             None
         }
     }

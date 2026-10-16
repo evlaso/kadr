@@ -14,6 +14,7 @@ use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::record::{self, Opts, PanelChoice, Target};
 use crate::util::{self, Mon};
+use crate::i18n::t;
 
 /// Height of the bar, for placing it around the area.
 const BAR_HEIGHT: f32 = 56. * kit::SCALE;
@@ -98,8 +99,8 @@ impl Panel {
             .iter()
             .find(|(name, _)| *name == default_name)
             .map(|(_, d)| d.clone())
-            .unwrap_or_else(|| "системный".into());
-        let mut mics = vec![(String::new(), format!("По умолчанию — {default_desc}"))];
+            .unwrap_or_else(|| t("системный").into());
+        let mut mics = vec![(String::new(), tr!("По умолчанию — {}", default_desc))];
         mics.extend(found);
         Panel { opts, mics, target, mon, rect, level: 0., meter: None, region: InputRegion::default(), focus }
     }
@@ -195,7 +196,7 @@ impl Panel {
             window.set_rem_size(px(kit::REM));
             cx.new(|_| MicMenu { panel, entries, selected })
         }) {
-            util::notify("kadr: меню не открылось", &e.to_string());
+            util::notify(t("kadr: меню не открылось"), &e.to_string());
         }
     }
 }
@@ -229,7 +230,7 @@ impl Render for Panel {
         let is_region = matches!(self.target, Target::Region { .. });
         let (x, y, w, h) = self.rect;
         let (mw, mh) = (self.mon.w as f32, self.mon.h as f32);
-        let on_off = |on: bool| Some(SharedString::from(if on { "Включено" } else { "Выключено" }));
+        let on_off = |on: bool| Some(SharedString::from(if on { t("Включено") } else { t("Выключено") }));
 
         self.sync_meter(cx);
         self.region.reset();
@@ -249,7 +250,7 @@ impl Render for Panel {
                     .size(ButtonSize::Large)
                     .toggle_state(self.opts.mic)
                     .child(h_flex().px_1().gap_1p5().child(Icon::new(IconName::Mic).size(IconSize::Small)).children(bars))
-                    .tooltip(tip("Микрофон", if self.opts.mic { mic_desc } else { on_off(false) }, None))
+                    .tooltip(tip(t("Микрофон"), if self.opts.mic { mic_desc } else { on_off(false) }, None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.mic = !this.opts.mic;
                         cx.notify();
@@ -279,7 +280,7 @@ impl Render for Panel {
             .child(self.region.mark())
             .child(
                 action("cancel", Icon::new(IconName::Close))
-                    .tooltip(tip("Отмена", None, Some("escape")))
+                    .tooltip(tip(t("Отмена"), None, Some("escape")))
                     .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Cancel, window, cx))),
             )
             .child(
@@ -292,11 +293,11 @@ impl Render for Panel {
             )
             .child(Divider::vertical().h_5().mx_1())
             .child(mic)
-            .child(toggle("audio", Icon::new(IconName::AudioOn), self.opts.audio).tooltip(tip("Звук системы", on_off(self.opts.audio), None)).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("audio", Icon::new(IconName::AudioOn), self.opts.audio).tooltip(tip(t("Звук системы"), on_off(self.opts.audio), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.audio = !this.opts.audio;
                 cx.notify();
             })))
-            .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), self.opts.webcam).tooltip(tip("Камера", on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), self.opts.webcam).tooltip(tip(t("Камера"), on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.webcam = !this.opts.webcam;
                 if this.opts.webcam {
                     crate::webcam::show(&this.mon, this.rect, cx);
@@ -307,7 +308,7 @@ impl Render for Panel {
             })))
             .child(
                 toggle("keys", Icon::new(IconName::Keyboard), self.opts.keys)
-                    .tooltip(tip("Сочетания клавиш", Some("Покажутся в студии. Обычный набор текста не записывается".into()), None))
+                    .tooltip(tip(t("Сочетания клавиш"), Some(t("Покажутся в студии. Обычный набор текста не записывается").into()), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.keys = !this.opts.keys;
                         cx.notify();
@@ -315,7 +316,7 @@ impl Render for Panel {
             )
             .child(
                 toggle("studio", Icon::new(IconName::Sparkle), self.opts.studio)
-                    .tooltip(tip("Режим студии", Some("Курсор нарисует kadr: крупный и плавный, с настройкой в студии. После записи сразу откроется студия".into()), None))
+                    .tooltip(tip(t("Режим студии"), Some(t("Курсор нарисует kadr: крупный и плавный, с настройкой в студии. После записи сразу откроется студия").into()), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.studio = !this.opts.studio;
                         cx.notify();
@@ -335,7 +336,7 @@ impl Render for Panel {
                             .child(Icon::from_path("icons/kadr/timer.svg").size(IconSize::Small))
                             .when(n > 0, |row| row.child(Label::new(format!("{n}")).size(LabelSize::Small))),
                     )
-                    .tooltip(tip("Отсчёт перед записью", Some(if n > 0 { format!("{n} с, Esc отменяет").into() } else { "Выключен".into() }), None))
+                    .tooltip(tip(t("Отсчёт перед записью"), Some(if n > 0 { tr!("{} с, Esc отменяет", n).into() } else { t("Выключен").into() }), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         let i = record::COUNTDOWNS.iter().position(|&c| c == this.opts.countdown).unwrap_or(0);
                         this.opts.countdown = record::COUNTDOWNS[(i + 1) % record::COUNTDOWNS.len()];
@@ -345,13 +346,13 @@ impl Render for Panel {
             .child(Divider::vertical().h_5().mx_1())
             .child(
                 action("repick", Icon::new(IconName::Crosshair))
-                    .tooltip(tip("Другая область", None, Some("r")))
+                    .tooltip(tip(t("Другая область"), None, Some("r")))
                     .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Repick, window, cx))),
             )
             .when(is_region, |bar| {
                 bar.child(
                     action("fullscreen", Icon::new(IconName::Screen))
-                        .tooltip(tip("Весь экран", None, Some("f")))
+                        .tooltip(tip(t("Весь экран"), None, Some("f")))
                         .on_click(cx.listener(|this, _, window, cx| {
                             let choice = this.fullscreen();
                             this.choose(choice, window, cx)
@@ -360,7 +361,7 @@ impl Render for Panel {
             })
             .child(div().w_1())
             .child(
-                Button::new("record", "Записать")
+                Button::new("record", t("Записать"))
                     .style(ButtonStyle::Accent)
                     .size(ButtonSize::Large)
                     .start_icon(Icon::new(IconName::Circle).size(IconSize::Small).color(Color::Error))

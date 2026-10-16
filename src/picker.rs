@@ -15,6 +15,7 @@ use gpui::{
 use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{fill, outline, prelude::*, quad};
 use crate::util::{self, Mon};
+use crate::i18n::t;
 
 /// Rectangle in the monitor's logical coordinates: x, y, w, h.
 type Rect = (f32, f32, f32, f32);
@@ -207,7 +208,7 @@ impl Picker {
                 None if self.color => {
                     if let Some(hex) = self.color_at(local(e.position)) {
                         crate::platform::copy_text(&hex);
-                        crate::platform::notify("Цвет скопирован", &hex);
+                        crate::platform::notify(t("Цвет скопирован"), &hex);
                     }
                     None
                 }

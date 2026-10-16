@@ -14,6 +14,7 @@ mod sni {
     use ksni::menu::StandardItem;
     use ksni::{Icon, MenuItem, ToolTip};
 
+    use crate::i18n::t;
     use crate::settings::Settings;
     use crate::util;
 
@@ -47,7 +48,7 @@ mod sni {
         }
 
         fn tool_tip(&self) -> ToolTip {
-            ToolTip { title: "kadr".into(), description: "Клик — настройки, правый клик — меню".into(), ..Default::default() }
+            ToolTip { title: "kadr".into(), description: t("Клик — настройки, правый клик — меню").into(), ..Default::default() }
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
@@ -59,14 +60,14 @@ mod sni {
                 StandardItem { label: label.into(), activate: Box::new(move |_: &mut Self| kadr(args)), ..Default::default() }.into()
             };
             vec![
-                item("Скриншот", &["shot", "smart"]),
-                item("Запись экрана", &["record"]),
-                item("Распознать текст", &["text"]),
-                item("Скриншот с прокруткой", &["shot", "scroll"]),
-                item("Настройки", &["settings"]),
+                item(t("Скриншот"), &["shot", "smart"]),
+                item(t("Запись экрана"), &["record"]),
+                item(t("Распознать текст"), &["text"]),
+                item(t("Скриншот с прокруткой"), &["shot", "scroll"]),
+                item(t("Настройки"), &["settings"]),
                 MenuItem::Separator,
                 StandardItem {
-                    label: "Убрать из трея".into(),
+                    label: t("Убрать из трея").into(),
                     activate: Box::new(|_: &mut Self| {
                         let mut settings = Settings::load();
                         settings.tray = false;
@@ -87,7 +88,7 @@ mod sni {
             return;
         }
         let Ok(mut lock) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(lock_path()) else {
-            return eprintln!("kadr: не удалось создать {}", lock_path().display());
+            return eprintln!("kadr: can't create {}", lock_path().display());
         };
         // The lock is held for the life of the process, so the kernel frees it
         // even after a crash.
@@ -99,7 +100,7 @@ mod sni {
 
         let tray = Tray { icon: [22, 32, 48, 64].into_iter().filter_map(icon).collect() };
         if let Err(e) = tray.spawn() {
-            return eprintln!("kadr: иконка в трее: {e}");
+            return eprintln!("kadr: tray icon: {e}");
         }
         loop {
             std::thread::park();
@@ -160,7 +161,7 @@ pub use sni::{run, start, stop};
 /// Not ported to this system yet: there is no tray icon.
 #[cfg(not(target_os = "linux"))]
 pub fn run() {
-    crate::platform::unsupported("Иконка в трее");
+    crate::platform::unsupported(t("Иконка в трее"));
 }
 
 #[cfg(not(target_os = "linux"))]

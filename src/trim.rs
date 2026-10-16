@@ -20,6 +20,7 @@ use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 use crate::ui::{fill, outline};
 use crate::kit::{self, LayerSpec};
 use crate::{cards, job, track, util};
+use crate::i18n::t;
 
 const THUMBS: usize = 14;
 const STRIP_HEIGHT: f32 = 56.;
@@ -117,7 +118,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx| {
         let _hold = hold;
         let Some(p) = probe(&path).await else {
-            return util::notify("Не удалось открыть видео", &path.display().to_string());
+            return util::notify(t("Не удалось открыть видео"), &path.display().to_string());
         };
         let Some(mon) = util::focused_monitor() else { return };
         let fit = (mon.w as f32 * 0.7 / p.w as f32).min(mon.h as f32 * 0.5 / p.h as f32);
@@ -314,7 +315,7 @@ impl Trimmer {
                     .justify_between()
                     .px_0p5()
                     .child(Label::new(clock(self.start)).size(LabelSize::XSmall).color(Color::Muted))
-                    .child(Label::new(format!("Выбрано {}", clock(self.end - self.start))).size(LabelSize::XSmall))
+                    .child(Label::new(tr!("Выбрано {}", clock(self.end - self.start))).size(LabelSize::XSmall))
                     .child(Label::new(clock(self.end)).size(LabelSize::XSmall).color(Color::Muted)),
             )
     }
@@ -354,29 +355,29 @@ impl Trimmer {
                     .gap_1()
                     .child(Label::new("GIF").size(LabelSize::Small).color(Color::Muted))
                     .child(chips("w", GIF_WIDTHS.iter().map(|w| format!("{w}px")).collect(), self.gif_width, |t, i| t.gif_width = i, cx))
-                    .child(chips("fps", GIF_FPS.iter().map(|f| format!("{f} к/с")).collect(), self.gif_fps, |t, i| t.gif_fps = i, cx))
+                    .child(chips("fps", GIF_FPS.iter().map(|f| tr!("{} к/с", f)).collect(), self.gif_fps, |t, i| t.gif_fps = i, cx))
                     .child(Divider::vertical().h_5().mx_1())
                     .child(
-                        Button::new("play", "Проиграть")
+                        Button::new("play", t("Проиграть"))
                             .style(ButtonStyle::Subtle)
                             .key_binding(kit::keys("space"))
                             .on_click(cx.listener(|this, _, _, _| this.play())),
                     )
                     .child(
-                        Button::new("cancel", "Отмена")
+                        Button::new("cancel", t("Отмена"))
                             .style(ButtonStyle::Subtle)
                             .color(Color::Muted)
                             .key_binding(kit::keys("escape"))
                             .on_click(|_, window, _| window.remove_window()),
                     )
                     .child(
-                        Button::new("gif", "Сохранить GIF")
+                        Button::new("gif", t("Сохранить GIF"))
                             .style(ButtonStyle::Subtle)
                             .key_binding(kit::keys("g"))
                             .on_click(cx.listener(|this, _, window, cx| this.gif(window, cx))),
                     )
                     .child(
-                        Button::new("save", "Сохранить")
+                        Button::new("save", t("Сохранить"))
                             .style(ButtonStyle::Accent)
                             .disabled(!self.trimmed())
                             .tooltip(Tooltip::text("Новым файлом, оригинал останется"))
@@ -470,7 +471,7 @@ pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
                 track::trim(&path, &out, start, end);
                 let _ = cx.update(|cx| cards::show(out, cx));
             }
-            Err(e) => util::notify("Не удалось обрезать видео", &e),
+            Err(e) => util::notify(crate::i18n::t("Не удалось обрезать видео"), &e),
         }
     })
     .detach();
@@ -500,7 +501,7 @@ pub fn export_gif(path: PathBuf, start: f64, end: f64, width: u32, fps: u32, cx:
             Ok(()) => {
                 let _ = cx.update(|cx| cards::show(out, cx));
             }
-            Err(e) => util::notify("Не удалось сделать GIF", &e),
+            Err(e) => util::notify(crate::i18n::t("Не удалось сделать GIF"), &e),
         }
     })
     .detach();

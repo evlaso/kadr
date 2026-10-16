@@ -2,7 +2,9 @@
 
 CleanShot X–style screenshots and screen recording in Rust on GPUI CE (the community fork of Zed's GPUI). The main target is Linux: Omarchy (Arch, Hyprland, Wayland). macOS and Windows build in CI, and their system pieces are still stubs (see Platforms).
 
-The user talks in Russian. All UI text is Russian. Code, comments and commit messages are in English.
+The user talks in Russian. Code, comments and commit messages are in English.
+
+UI text is written in Russian in the code and goes through `i18n`: `t("…")` for plain text, `tr!("… {} …", args)` for text with values (plain `{}` slots only). The Russian text is the key; English lives in `data/i18n/en.json`, and a test checks that its slots match. Add every new string there. English is the default language; the README is English, with the Russian one in `docs/README.ru.md`.
 
 ## Build, run, check
 
@@ -33,7 +35,8 @@ The user talks in Russian. All UI text is Russian. Code, comments and commit mes
 - ab_glyph's `PxScale` is the font's full height, not the em. Always go through `editor::em()` so measured and drawn text match GPUI's.
 - libplacebo asserts on fractional crops. Keep studio crop sizes whole, even pixels.
 - Sizes for kadr's own overlays multiply by `kit::SCALE`. Component sizes use `ui::rems_from_px`.
-- Unusual glyphs (✦, ▣) may have no fallback font in GPUI CE. Prefer words or icons.
+- Unusual glyphs (✦, ▣) may have no fallback font in GPUI CE. Prefer words or icons. GPUI CE doesn't fall back to other fonts for missing glyphs at all: a script the UI font lacks (e.g. Chinese) shows as boxes.
+- The UI uses the system font (`.SystemUIFont`). Text drawn onto screenshots uses the bundled IBM Plex (`kit::ANNOTATION_FONT`), on the canvas too, so it matches the editor's rasteriser.
 
 ## Conventions
 

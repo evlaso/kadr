@@ -1,84 +1,83 @@
 # kadr
 
-Скриншоты и запись экрана в духе CleanShot X для Linux, на Rust и GPUI CE. Написан под [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland). Тёмная и светлая темы встроены, по умолчанию следуют системе.
+Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI CE. Made for Linux on [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland). Dark and light themes are built in and follow the system by default. English and Russian.
 
-## Что умеет
+[Читать по-русски](docs/README.ru.md)
 
-- **Скриншоты** области, окна или экрана, а также длинные с прокруткой (`kadr shot scroll`: выбираешь область и прокручиваешь, kadr склеивает). После снимка в углу появляется карточка: копировать, редактировать, закрепить поверх окон, распознать текст, перетащить файл в чат.
-- **Редактор скриншотов:**
-  - стрелки, прямоугольники и эллипсы (контуром или с заливкой), линии, карандаш, маркер;
-  - текст (обычный, на плашке или с обводкой), нумерация шагов, пикселизация, прожектор, обрезка;
-  - фон с градиентом или обоями, отступами, скруглением, тенью и выбором формата;
-  - картинки поверх снимка: перетащи файл в редактор или вставь через Ctrl+V;
-  - масштаб холста.
-- **Запись экрана:**
-  - панель выбора области, микрофон, звук системы, камера, лог нажатых сочетаний клавиш;
-  - режим студии: системный курсор не попадает в запись, kadr рисует свой, крупный и плавный.
-- **Студия** (видеоредактор):
-  - воспроизведение прямо в редакторе;
-  - зумы к кликам, обрезка начала и конца, вырезание кусков;
-  - фон, отступы, скругление, тень, форматы 16:9, 1:1, 4:5, 9:16;
-  - кольца на месте кликов, плашки с сочетаниями клавиш, курсор нужного размера и плавности, размытие в движении;
-  - экспорт в MP4 или GIF с выбором сжатия и предварительной оценкой размера файла.
-- **Остальное:**
-  - обрезка записи и GIF прямо из карточки;
-  - распознавание текста (русский и английский);
-  - история снимков и записей;
-  - настройки;
-  - иконка в трее.
+## What it does
 
-## Установка
+- **One bar for everything** (`kadr capture`): area, fullscreen, window, scrolling, self-timer, text recognition and recording behind a single hotkey.
+- **Screenshots** of an area, a window or the screen, and long scrolling ones (`kadr shot scroll`: pick an area and scroll, kadr stitches it). After a capture a thumbnail shows in the corner: copy, edit, pin on top, recognize text, drag the file into a chat. A click without selecting copies the color under the pointer.
+- **Screenshot editor:**
+  - arrows (bendable) and lines, rectangles and ellipses (outlined or filled), pencil, highlighter;
+  - text (plain, on a plate or outlined), step numbers, pixelation, spotlight, crop;
+  - a background with a gradient or wallpaper, padding, rounding, shadow and an output format;
+  - pictures on top: drop a file into the editor or paste with Ctrl+V;
+  - one size slider for every tool, zoomable canvas.
+- **Screen recording:**
+  - a bar by the selected area: microphone (with a level meter), system audio, camera, logged shortcuts, a countdown;
+  - a camera bubble you set up before recording: drag it (it snaps to corners and edges), resize it, round it;
+  - studio mode: the system cursor stays out of the video, kadr draws its own, large and smooth; the camera is recorded separately.
+- **Studio** (video editor):
+  - playback in the editor;
+  - zooms on clicks, trimming the start and end, cutting pieces out;
+  - background, padding, rounding, shadow, 16:9, 1:1, 4:5, 9:16;
+  - click rings, shortcut badges, a cursor of any size and smoothness, motion blur;
+  - the camera as a circle, rounded or square, in any of eight spots;
+  - MP4 or GIF export with compression and a file-size estimate.
+- **The rest:**
+  - trimming a recording and making a GIF right from its thumbnail;
+  - text recognition (English and Russian);
+  - history of captures;
+  - settings, including hotkeys, storage use and automatic clean-up of old captures;
+  - a tray icon.
 
-Нужны `gpu-screen-recorder`, `ffmpeg`, `tesseract` (с данными для английского), `wl-clipboard` и `mpv` для камеры. В Omarchy всё это либо уже есть, либо ставится через `pacman`. Rust нужен версии 1.95 или новее.
+## Install
+
+kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `grim` and `wl-clipboard`. On Omarchy they're either there already or come from `pacman`. Building needs Rust 1.95 or newer.
 
 ```sh
 cargo build --release
 install -m755 target/release/kadr ~/.local/bin/kadr
 ```
 
-Подключи хук Hyprland: с ним редактор открывается плавающим окном, а в режиме студии записываются клики и клавиши:
+Add the Hyprland hook: it floats kadr's windows, loads the hotkeys set in kadr's settings, and logs clicks and keys for the studio.
 
 ```sh
 cp data/hypr/kadr.lua ~/.config/hypr/kadr.lua
 ```
 
-Затем добавь в `~/.config/hypr/hyprland.lua` строку `require("hypr.kadr")`.
-
-Горячие клавиши и иконка в трее тоже настраиваются в конфиге Hyprland. Например, в `bindings.lua` и `autostart.lua`:
+Then add `require("hypr.kadr")` to `~/.config/hypr/hyprland.lua`. Set hotkeys in kadr's settings (Shortcuts); start the tray icon from `autostart.lua`:
 
 ```lua
-o.bind("CTRL + SHIFT + code:10", "Screenshot region (kadr)", "kadr shot region")
-o.bind("CTRL + SHIFT + code:11", "Screen recording (kadr)", "kadr record")
-o.bind("CTRL + SHIFT + code:12", "Copy text from area (kadr)", "kadr text")
-o.bind("CTRL + SHIFT + code:13", "Capture history (kadr)", "kadr history")
-o.bind("CTRL + SHIFT + code:14", "kadr settings", "kadr settings")
 o.launch_on_start("kadr tray")
 ```
 
-## Команды
+## Commands
 
 ```
-kadr capture                                   все режимы на одной панели
-kadr shot [smart|region|windows|fullscreen|timer]  скриншот
-kadr record                                    панель записи (повторный вызов — стоп)
-kadr record region|fullscreen [--studio] …     начать запись сразу
-kadr edit <картинка>                           редактор скриншотов
-kadr studio <видео>                            студия
-kadr text [картинка]                           распознать текст
-kadr history                                   история
-kadr settings                                  настройки
-kadr tray                                      иконка в трее
+kadr capture                                       every mode on one bar
+kadr shot [smart|region|windows|fullscreen|timer]  screenshot
+kadr shot scroll                                   scrolling screenshot
+kadr record                                        recording bar (again to stop)
+kadr record region|fullscreen [--studio] …         start recording at once
+kadr edit <image>                                  screenshot editor
+kadr studio <video>                                studio
+kadr text [image]                                  recognize text
+kadr history                                       history
+kadr settings                                      settings
+kadr tray                                          tray icon
 ```
 
-Все команды показывает `kadr --help`.
+`kadr --help` lists all of them.
 
-## Платформы
+## Platforms
 
-- **Linux** (Wayland, Hyprland): всё работает.
-- **macOS и Windows:** собираются в CI, интерфейс запускается, а снимки, запись и трей пока не перенесены. Всё, что зависит от системы, вынесено в `src/platform/`, и переносить можно по одной функции.
+- **Linux** (Wayland, Hyprland): everything works.
+- **macOS and Windows:** they build in CI and the interface runs; capture, recording and the tray aren't ported yet. Everything system-specific lives in `src/platform/`, so it can be ported one function at a time.
 
-Сборки под все три системы лежат в [Actions](../../actions) у каждого коммита в `main`.
+Builds for all three systems are attached to every commit on `main` in [Actions](https://github.com/vlasmn/kadr/actions).
 
-## Разработка
+## Development
 
-Устройство кода, договорённости и известные подводные камни описаны в [CLAUDE.md](CLAUDE.md).
+How the code is laid out, the conventions and the known pitfalls are in [CLAUDE.md](CLAUDE.md).

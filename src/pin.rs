@@ -18,6 +18,7 @@ use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 use crate::cards::image_preview;
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::util;
+use crate::i18n::t;
 
 pub struct Pin {
     image: Arc<Image>,
@@ -33,7 +34,7 @@ pub struct Pin {
 
 pub fn open(path: PathBuf, cx: &mut App) {
     let Some((image, w, h)) = image_preview(&path) else {
-        return util::notify("Не удалось открыть картинку", &path.display().to_string());
+        return util::notify(t("Не удалось открыть картинку"), &path.display().to_string());
     };
     let Some(mon) = util::focused_monitor() else { return };
     let (mw, mh) = (mon.w as f32, mon.h as f32);

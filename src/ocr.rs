@@ -14,6 +14,7 @@ use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::util;
+use crate::i18n::t;
 
 const TOAST_TIME: Duration = Duration::from_secs(7);
 
@@ -161,13 +162,13 @@ impl Render for Toast {
         let (title, body): (&str, SharedString) = match &self.text {
             Some(text) => {
                 let preview: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).take(4).collect();
-                ("Текст скопирован", preview.join("\n").into())
+                (t("Текст скопирован"), preview.join("\n").into())
             }
             None if !has_russian() => (
-                "Текст не найден",
-                "Для русского текста поставь пакет tesseract-data-rus".into(),
+                t("Текст не найден"),
+                t("Для русского текста поставь пакет tesseract-data-rus").into(),
             ),
-            None => ("Текст не найден", "Попробуй выделить область покрупнее".into()),
+            None => (t("Текст не найден"), t("Попробуй выделить область покрупнее").into()),
         };
         let found = self.text.clone().map(Rc::<str>::from);
         let chars = self.text.as_ref().map(|t| t.chars().count());
@@ -187,7 +188,7 @@ impl Render for Toast {
                         .gap_1p5()
                         .child(Icon::new(IconName::CaseSensitive).size(IconSize::Small).color(if found.is_some() { Color::Accent } else { Color::Muted }))
                         .child(div().flex_1().child(Label::new(title).size(LabelSize::Small)))
-                        .when_some(chars, |row, n| row.child(Label::new(format!("{n} симв.")).size(LabelSize::XSmall).color(Color::Muted)))
+                        .when_some(chars, |row, n| row.child(Label::new(tr!("{} симв.", n)).size(LabelSize::XSmall).color(Color::Muted)))
                         .child(
                             IconButton::new("close", IconName::Close)
                                 .shape(IconButtonShape::Square)
@@ -208,7 +209,7 @@ impl Render for Toast {
                 .when_some(found, |col, text| {
                     col.child(
                         h_flex().justify_end().pr_1().child(
-                            Button::new("again", "Скопировать ещё раз")
+                            Button::new("again", t("Скопировать ещё раз"))
                                 .style(ButtonStyle::Subtle)
                                 .start_icon(Icon::new(IconName::Copy).size(IconSize::Small))
                                 .on_click(move |_, window, _| {
@@ -229,7 +230,7 @@ pub async fn download_russian() -> Result<(), String> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .ok_or("нет домашней папки")?;
+        .ok_or(t("нет домашней папки"))?;
     let dir = base.join("kadr/tessdata");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     for lang in ["eng", "osd"] {
@@ -245,7 +246,7 @@ pub async fn download_russian() -> Result<(), String> {
         Some((true, _)) => Ok(()),
         _ => {
             let _ = std::fs::remove_file(&out);
-            Err("не удалось скачать модель".into())
+            Err(t("не удалось скачать модель").into())
         }
     }
 }

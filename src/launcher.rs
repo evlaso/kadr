@@ -7,6 +7,7 @@ use gpui::{App, Context, FocusHandle, Global, KeyDownEvent, MouseButton, Window,
 use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{ButtonLike, Divider, prelude::*};
 use crate::util;
+use crate::i18n::t;
 
 /// A mode: its icon, its name and the `kadr` arguments it runs.
 struct Mode {
@@ -101,7 +102,7 @@ impl Render for Launcher {
                             .gap_1p5()
                             .items_center()
                             .child(Icon::from_path(mode.icon).size(IconSize::Large))
-                            .child(Label::new(mode.label).color(if on { Color::Default } else { Color::Muted })),
+                            .child(Label::new(t(mode.label)).color(if on { Color::Default } else { Color::Muted })),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| this.run(i, window, cx))),
             );
@@ -109,7 +110,7 @@ impl Render for Launcher {
                 bar = bar.child(Divider::vertical().h(px(44.)).mx_1());
             }
         }
-        let hint = Label::new("1–7, ← → и Enter · Esc — закрыть").size(LabelSize::Small).color(Color::Muted);
+        let hint = Label::new(t("1–7, ← → и Enter · Esc — закрыть")).size(LabelSize::Small).color(Color::Muted);
         kit::root(cx)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
