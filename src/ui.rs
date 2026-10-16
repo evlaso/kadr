@@ -529,7 +529,6 @@ pub enum ButtonSize {
     Large,
     #[default]
     Default,
-    Compact,
 }
 
 impl ButtonSize {
@@ -537,14 +536,13 @@ impl ButtonSize {
         rems_from_px(match self {
             ButtonSize::Large => 32.,
             ButtonSize::Default => 22.,
-            ButtonSize::Compact => 18.,
         })
     }
 
     fn padding(self) -> Rems {
         rems_from_px(match self {
             ButtonSize::Large => 8.,
-            ButtonSize::Default | ButtonSize::Compact => 4.,
+            ButtonSize::Default => 4.,
         })
     }
 }

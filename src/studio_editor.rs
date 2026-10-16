@@ -12,7 +12,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, RenderImage,
@@ -21,7 +20,7 @@ use gpui::{
 };
 use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
-use crate::kit::{self, LayerSpec};
+use crate::kit;
 use crate::ui::fill;
 use crate::studio::{
     self, ASPECTS, CURSOR_RATE, CURSOR_STYLES, MOTION_BLUR, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_CURSOR, MAX_PADDING, MAX_RADIUS, Probe, Project, QUALITIES,
@@ -95,6 +94,8 @@ pub struct StudioEditor {
     placing: bool,
     /// Room for the preview (it fits the output's shape inside).
     stage: (f32, f32),
+    /// The preview area measured in the last layout; `stage` follows it.
+    stage_cell: Rc<Cell<(f32, f32)>>,
     /// Timeline x origin and width, and the segment lane's top, in window
     /// coordinates.
     timeline: Rc<Cell<(f32, f32, f32)>>,
@@ -124,16 +125,8 @@ pub fn open(video: PathBuf, cx: &mut App) {
         let frame = trim::frame(&video, project.trim.0, (stage.0 * 2.) as u32, 0).await;
         let walls = wallpaper_thumbs().await;
         let _ = cx.update(|cx| {
-            let spec = LayerSpec {
-                namespace: "kadr-studio",
-                anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-                margin: (0., 0., 0., 0.),
-                size: (mon.w as f32, mon.h as f32),
-                keyboard: KeyboardInteractivity::Exclusive,
-                ignore_zones: true,
-                monitor: Some(mon),
-            };
-            kit::open_layer(cx, spec, |window, cx| {
+            let size = (stage.0 + 2. * STAGE_PAD + SIDEBAR, stage.1 + chrome_h - 80.);
+            kit::open_window(cx, "kadr-studio", Some(&mon), size, |window, cx| {
                 cx.new(|cx| {
                     let focus = cx.focus_handle();
                     window.focus(&focus, cx);
@@ -175,6 +168,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         drag: None,
                         placing: false,
                         stage,
+                        stage_cell: Rc::new(Cell::new(stage)),
                         timeline: Rc::new(Cell::new((0., 1., 0.))),
                         video_box: Rc::new(Cell::new((0., 0., 1., 1.))),
                         sliders: Rc::new(RefCell::new(HashMap::new())),
@@ -1005,23 +999,15 @@ impl StudioEditor {
             .w_full()
             .justify_between()
             .gap_2()
-            .px_1p5()
-            .py_1()
+            // Clear of the window's rounded corners.
+            .px_3()
+            .py_1p5()
             .bg(cx.theme().colors().title_bar_background)
-            .rounded_t(px(kit::RADIUS - 1.))
-            .rounded_smoothing(crate::ui::SMOOTHING)
             .child(
                 h_flex()
                     .min_w_0()
                     .gap_2()
-                    .child(
-                        IconButton::new("close", IconName::Close)
-                            .shape(IconButtonShape::Square)
-                            .size(ButtonSize::Large)
-                            .tooltip(|_, cx| cx.new(|_| Tooltip::new("Закрыть").key_binding(kit::keys("escape"))).into())
-                            .on_click(|_, window, _| window.remove_window()),
-                    )
-                    .child(div().min_w_0().child(Label::new(name).size(LabelSize::Small).truncate()))
+                    .child(div().min_w_0().child(Label::new(name).truncate()))
                     .child(Label::new(clock(self.project.kept_duration())).size(LabelSize::Small).color(Color::Muted)),
             )
             .child(
@@ -1030,7 +1016,8 @@ impl StudioEditor {
                     .gap_1()
                     .child(
                         Button::new("preview", "Предпросмотр")
-                            .style(ButtonStyle::Subtle)
+                            .style(ButtonStyle::Filled)
+                            .size(ButtonSize::Large)
                             .tooltip(Tooltip::text("Собрать 720p со всеми эффектами и открыть в плеере"))
                             .on_click(cx.listener(|this, _, _, cx| studio::export(this.video.clone(), this.project.clone(), true, cx))),
                     )
@@ -1038,6 +1025,7 @@ impl StudioEditor {
                     .child(
                         Button::new("export", if gif { "Экспорт GIF" } else { "Экспорт" })
                             .style(ButtonStyle::Accent)
+                            .size(ButtonSize::Large)
                             .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
                             .key_binding(kit::keys("ctrl-s"))
                             .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
@@ -1053,7 +1041,7 @@ impl StudioEditor {
             .w_full()
             .justify_between()
             .px_3()
-            .py_1()
+            .py_1p5()
             .child(div().w(px(180.)).child(mono(format!("{} / {}", clock(self.playhead), clock(self.probe.duration)))))
             .child(
                 h_flex()
@@ -1061,6 +1049,7 @@ impl StudioEditor {
                     .child(
                         IconButton::new("back", IconName::ChevronLeft)
                             .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Large)
                             .tooltip(Tooltip::text("Назад на полсекунды (←)"))
                             .on_click(cx.listener(|this, _, _, cx| this.seek(this.playhead - 0.5, cx))),
                     )
@@ -1074,6 +1063,7 @@ impl StudioEditor {
                     .child(
                         IconButton::new("forward", IconName::ChevronRight)
                             .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Large)
                             .tooltip(Tooltip::text("Вперёд на полсекунды (→)"))
                             .on_click(cx.listener(|this, _, _, cx| this.seek(this.playhead + 0.5, cx))),
                     ),
@@ -1086,7 +1076,7 @@ impl StudioEditor {
                     .child(
                         Button::new("cut", "Вырезать")
                             .style(ButtonStyle::Subtle)
-                            .size(ButtonSize::Compact)
+                            .size(ButtonSize::Large)
                             .start_icon(Icon::new(IconName::Scissors).size(IconSize::Small))
                             .tooltip(|_, cx| cx.new(|_| Tooltip::new("Вырезать кусок с этого места").meta("Потом тяни его края на раскадровке").key_binding(kit::keys("x"))).into())
                             .on_click(cx.listener(|this, _, _, cx| this.add_cut(cx))),
@@ -1583,42 +1573,59 @@ impl Render for StudioEditor {
         for old in self.stale.drain(..) {
             let _ = window.drop_image(old);
         }
-        let width = self.stage.0 + 2. * STAGE_PAD + SIDEBAR;
-        let body_h = self.stage.1 + 2. * STAGE_PAD;
+        // The preview takes whatever room the window leaves it.
+        self.stage = self.stage_cell.get();
+        let cell = self.stage_cell.clone();
+        let measure = canvas(
+            move |bounds, window, _| {
+                let room = ((f32::from(bounds.size.width) - 2. * STAGE_PAD).max(160.), (f32::from(bounds.size.height) - 2. * STAGE_PAD).max(90.));
+                let old = cell.get();
+                if (room.0 - old.0).abs() > 0.5 || (room.1 - old.1).abs() > 0.5 {
+                    cell.set(room);
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
         kit::root(cx)
-            .bg(rgba(0x00000059))
             .flex()
-            .items_center()
-            .justify_center()
+            .flex_col()
+            .bg(cx.theme().colors().panel_background)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.drag = None))
+            .child(self.render_titlebar(cx))
             .child(
-                v_flex()
-                    .w(px(width))
-                    .rounded(px(kit::RADIUS))
-                    .rounded_smoothing(crate::ui::SMOOTHING)
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .shadow(kit::shadow())
-                    .bg(cx.theme().colors().panel_background)
-                    .child(self.render_titlebar(cx))
+                h_flex()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .items_start()
                     .child(
-                        h_flex()
-                            .w_full()
-                            .items_start()
+                        v_flex()
+                            .flex_1()
+                            .h_full()
                             .child(
-                                v_flex()
+                                div()
+                                    .relative()
+                                    .w_full()
                                     .flex_1()
-                                    .child(div().w_full().h(px(body_h)).flex().items_center().justify_center().bg(cx.theme().colors().editor_background).child(self.render_preview(cx)))
-                                    .child(self.render_transport(cx)),
+                                    .min_h_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child(measure)
+                                    .child(self.render_preview(cx)),
                             )
-                            .child(div().h(px(body_h + 44.)).child(self.render_sidebar(cx))),
+                            .child(self.render_transport(cx)),
                     )
-                    .child(self.render_timeline(cx)),
+                    .child(div().h_full().child(self.render_sidebar(cx))),
             )
+            .child(self.render_timeline(cx))
     }
 }
 

@@ -120,9 +120,9 @@ hl.on("input.keyboard.key", function(ev, a2, a3)
   end
 end)
 
--- kadr's editor and settings are ordinary windows: float them in the middle of the screen
+-- kadr's editor, studio and settings are ordinary windows: float them in the middle of the screen
 -- instead of tiling them.
-hl.window_rule({ match = { class = "^kadr-(editor|settings)$" }, float = true, center = true })
+hl.window_rule({ match = { class = "^kadr-(editor|settings|studio)$" }, float = true, center = true })
 
 -- Hotkeys set in kadr's settings (Клавиши).
 local keys = (os.getenv("HOME") or "") .. "/.config/hypr/kadr-keys.lua"

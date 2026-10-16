@@ -19,7 +19,7 @@ The user talks in Russian. All UI text is Russian. Code, comments and commit mes
 - `platform.rs` + `platform/{linux,macos,windows}.rs`: everything OS-specific (clipboard, notifications, files, monitors, IPC, overlay windows, screenshots, signals). Put new OS-dependent code there, not inline.
 - `ui.rs`: kadr's own components (Button, IconButton, ButtonLike, Label, Icon, Switch, Tooltip, KeyBinding, ProgressBar, Divider), the theme, and color/quad helpers. Don't add Zed's `ui`/`theme` crates back: they are GPL, and these replaced them on purpose.
 - `palette.rs`: the theme comes from the current Omarchy theme's `colors.toml`. Control fills and separators are the text color at a low opacity.
-- `kit.rs`: assets (icons and fonts are compiled in), `REM`/`SCALE`, `open_layer` overlays, `open_window` for ordinary windows (the screenshot editor; it floats by the rule in `data/hypr/kadr.lua`), `InputRegion`.
+- `kit.rs`: assets (icons and fonts are compiled in), `REM`/`SCALE`, `open_layer` overlays, `open_window` for ordinary windows (editor, studio, settings; they float by the rule in `data/hypr/kadr.lua`), `InputRegion`.
 - Screens: `cards` (quick-access card), `editor` (screenshot annotation), `studio` + `studio_editor` (zooms, trim and cuts, cursor, export through ffmpeg/libplacebo), `record` + `panel` + `track` (recording through gpu-screen-recorder, click/key log from the Hyprland Lua hook `data/hypr/kadr.lua`), `trim`, `history`, `settings` + `settings_view`, `ocr` (tesseract), `pin`, `job` (ffmpeg progress toast), `tray` (`kadr tray`, a separate process with no GPUI).
 
 ## Traps already hit
