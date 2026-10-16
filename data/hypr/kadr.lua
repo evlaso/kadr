@@ -107,3 +107,7 @@ hl.on("input.keyboard.key", function(ev, a2)
     append("k")
   end
 end)
+
+-- kadr's editor is an ordinary window: float it in the middle of the screen
+-- instead of tiling it.
+hl.window_rule({ match = { class = "^kadr-editor$" }, float = true, center = true })

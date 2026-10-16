@@ -228,6 +228,36 @@ pub fn open_layer<V: Render + 'static>(
     }
 }
 
+/// An ordinary app window (it floats by the Hyprland rule in
+/// `data/hypr/kadr.lua`), centred on `mon`. `app_id` names it for rules.
+pub fn open_window<V: Render + 'static>(
+    cx: &mut App,
+    app_id: &str,
+    mon: Option<&crate::util::Mon>,
+    size: (f32, f32),
+    build: impl FnOnce(&mut Window, &mut App) -> gpui::Entity<V>,
+) -> Option<WindowHandle<V>> {
+    let display = mon.and_then(|m| m.display(cx));
+    let options = WindowOptions {
+        titlebar: None,
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display, gpui::size(px(size.0), px(size.1)), cx))),
+        app_id: Some(app_id.into()),
+        display_id: display,
+        window_min_size: Some(gpui::size(px(640.), px(420.))),
+        ..Default::default()
+    };
+    match cx.open_window(options, |window, cx| {
+        window.set_rem_size(px(REM));
+        build(window, cx)
+    }) {
+        Ok(handle) => Some(handle),
+        Err(e) => {
+            crate::util::notify("kadr: не удалось открыть окно", &e.to_string());
+            None
+        }
+    }
+}
+
 /// Where a layer with this anchor, margin and size would sit, as window
 /// bounds on its display, for systems without layer-shell.
 #[cfg_attr(target_os = "linux", allow(dead_code))]

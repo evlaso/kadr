@@ -36,7 +36,7 @@ cargo build --release
 install -m755 target/release/kadr ~/.local/bin/kadr
 ```
 
-Чтобы в режиме студии записывались клики и клавиши, подключи хук Hyprland:
+Подключи хук Hyprland: с ним редактор открывается плавающим окном, а в режиме студии записываются клики и клавиши:
 
 ```sh
 cp data/hypr/kadr.lua ~/.config/hypr/kadr.lua

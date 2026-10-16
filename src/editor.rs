@@ -12,7 +12,6 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
-use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     FillOptions, PathStyle,
     App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
@@ -23,7 +22,7 @@ use gpui::{
 use image::RgbaImage;
 use crate::ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
-use crate::kit::{self, LayerSpec};
+use crate::kit;
 use crate::ui::{fill, outline};
 use crate::{cards, ocr, palette, studio_editor, util};
 
@@ -48,6 +47,9 @@ const MARKER_ALPHA: f32 = 0.4;
 const FRAME_PAD: f32 = 0.06;
 /// Grab distance for shapes and handles, in screen pixels.
 const GRAB: f32 = 7.;
+/// Toolbar and footer together, roughly: the first layout's guess at the
+/// stage height, measured from then on.
+const CHROME: f32 = 110. * kit::SCALE;
 /// Width of the background panel.
 const PANEL: f32 = 300. * kit::SCALE;
 /// Slider ranges, as fractions of the picture's longer side.
@@ -540,6 +542,8 @@ pub struct Editor {
     sliders: Rc<RefCell<HashMap<Knob, (f32, f32)>>>,
     /// Picture origin in window coordinates, updated every frame.
     origin: Rc<Cell<(f32, f32)>>,
+    /// Height the stage got in the last layout; the picture fits into it.
+    stage_h: Rc<Cell<f32>>,
     focus: FocusHandle,
 }
 
@@ -561,16 +565,11 @@ pub fn open(path: PathBuf, cx: &mut App) {
     let disp = (natural.0 * fit, natural.1 * fit);
 
     let image = Arc::new(Image::from_bytes(ImageFormat::Png, bytes.clone()));
-    let spec = LayerSpec {
-        namespace: "kadr-editor",
-        anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-        margin: (0., 0., 0., 0.),
-        size: (mw, mh),
-        keyboard: KeyboardInteractivity::Exclusive,
-        ignore_zones: true,
-        monitor: Some(mon),
-    };
-    kit::open_layer(cx, spec, |window, cx| {
+    // A window around the picture with its backdrop margin, the stage
+    // padding and the bars; the picture refits whenever the window resizes.
+    let pad = disp.0.max(disp.1) * FRAME_PAD * 2.;
+    let size = ((disp.0 + pad + 48.).max(1180. * kit::SCALE).min(mw - 80.), (disp.1 + pad + 48. + CHROME).min(mh - 80.));
+    kit::open_window(cx, "kadr-editor", Some(&mon), size, |window, cx| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
@@ -620,6 +619,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 natural: disp,
                 sliders: Rc::new(RefCell::new(HashMap::new())),
                 origin: Rc::new(Cell::new((0., 0.))),
+                stage_h: Rc::new(Cell::new(size.1 - CHROME)),
                 focus,
             }
         })
@@ -1305,7 +1305,6 @@ impl Editor {
             .bg(cx.theme().colors().title_bar_background)
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
-            .rounded_t(px(kit::RADIUS - 1.))
             .rounded_smoothing(crate::ui::SMOOTHING)
             .child(history)
             .child(tools)
@@ -1351,7 +1350,6 @@ impl Editor {
             .pr_1p5()
             .py_1()
             .bg(cx.theme().colors().status_bar_background)
-            .rounded_b(px(kit::RADIUS - 1.))
             .rounded_smoothing(crate::ui::SMOOTHING)
             .child(
                 h_flex()
@@ -1899,11 +1897,11 @@ impl Render for Editor {
             self.frame.remember();
             self.remembered = frame;
         }
-        // One CleanShot-like window: tools on top, the picture on a stage
+        // A CleanShot-like window: tools on top, the picture on a stage
         // (with the background panel beside it when open), actions at the
-        // bottom. The picture shrinks to make room for its background.
+        // bottom. The picture fits the stage, its background included.
         let viewport = window.viewport_size();
-        let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+        let vw = f32::from(viewport.width);
         let panel = if self.panel { PANEL } else { 0. };
         let box_of = |frame: &Frame, (w, h): (f32, f32)| {
             if frame.on() {
@@ -1914,18 +1912,31 @@ impl Render for Editor {
             }
         };
         let full = box_of(&self.frame, self.natural);
-        let room = (vw - 32. - 48. - panel, vh - 230. * kit::SCALE);
+        let room = (vw - 48. - panel, self.stage_h.get() - 48.);
         let k = (room.0 / full.0).min(room.1 / full.1).min(1.);
         let fit = (self.natural.0 * k, self.natural.1 * k);
         self.disp = (fit.0 * self.zoom, fit.1 * self.zoom);
-        // The window keeps its fitted size; a zoomed canvas scrolls inside it.
-        let frame = box_of(&self.frame, fit);
-        let stage_w = (frame.0 + 48.).max(1180. * kit::SCALE - panel);
-        let width = (stage_w + panel).min(vw - 32.);
-        let stage_h = frame.1 + 48.;
+        // The picture fits the stage; a zoomed canvas scrolls inside it.
+        let width = vw;
+        let stage_h = self.stage_h.clone();
+        let measure = canvas(
+            move |bounds, window, _| {
+                let h = f32::from(bounds.size.height);
+                if (h - stage_h.get()).abs() > 0.5 {
+                    stage_h.set(h);
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
         let stage = h_flex()
+            .relative()
             .w_full()
-            .h(px(stage_h))
+            .flex_1()
+            .min_h_0()
+            .child(measure)
             .child(
                 div()
                     .id("stage")
@@ -1949,12 +1960,11 @@ impl Render for Editor {
                     // zoomed canvas is bigger, so all of it can be scrolled to.
                     .child(div().flex_none().min_w(relative(1.)).min_h(relative(1.)).flex().p(px(24.)).child(div().m_auto().child(self.render_canvas(cx)))),
             )
-            .when(self.panel, |row| row.child(self.render_panel(stage_h, cx)));
+            .when(self.panel, |row| row.child(self.render_panel(self.stage_h.get(), cx)));
         kit::root(cx)
-            .bg(rgba(0x00000040))
+            .bg(cx.theme().colors().editor_background)
             .flex()
-            .items_center()
-            .justify_center()
+            .flex_col()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
@@ -1964,19 +1974,9 @@ impl Render for Editor {
             // The pointer stays with this surface while the button is held.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.mouse_up(cx)))
-            .child(
-                v_flex()
-                    .w(px(width))
-                    .rounded(px(kit::RADIUS))
-                    .rounded_smoothing(crate::ui::SMOOTHING)
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .shadow(kit::shadow())
-                    .child(self.render_toolbar(width, cx))
-                    .child(stage)
-                    .child(self.render_footer(width, cx)),
-            )
+            .child(self.render_toolbar(width, cx))
+            .child(stage)
+            .child(self.render_footer(width, cx))
     }
 }
 
