@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
-    MouseButton, MouseDownEvent, ObjectFit, SharedString, Window, WindowHandle, div, ease_out_quint,
+    MouseButton, MouseDownEvent, ObjectFit, Window, WindowHandle, div, ease_out_quint,
     img, layer_shell::*, px, rgba,
 };
 use ui::{IconButtonShape, Tooltip, prelude::*};
