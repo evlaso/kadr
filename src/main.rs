@@ -12,6 +12,7 @@ mod studio;
 mod studio_editor;
 mod track;
 mod trim;
+mod ui;
 mod job;
 mod kit;
 mod ocr;

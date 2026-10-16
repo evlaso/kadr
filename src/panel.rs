@@ -8,7 +8,7 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
     layer_shell::*, point, popup::*, px, rgba, size,
 };
-use ui::{ButtonLike, Divider, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::record::{self, Opts, PanelChoice, Target};

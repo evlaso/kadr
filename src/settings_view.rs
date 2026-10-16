@@ -7,7 +7,7 @@ use gpui::{
     App, Context, FocusHandle, Hsla, KeyDownEvent, MouseButton, PathPromptOptions, Window, div,
     layer_shell::*, linear_color_stop, linear_gradient, px, rgba,
 };
-use ui::{ButtonLike, Divider, Switch, ToggleState, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, Divider, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side};

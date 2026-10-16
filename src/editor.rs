@@ -20,7 +20,7 @@ use gpui::{
     point, px, rgba, size,
 };
 use image::RgbaImage;
-use ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::{cards, ocr, palette, studio_editor, util};

@@ -11,7 +11,7 @@ use gpui::{
     MouseDownEvent, ObjectFit, ScrollHandle, SharedString, Window, div, img, layer_shell::*, px,
     rgba,
 };
-use ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::{editor, pin, trim, util};

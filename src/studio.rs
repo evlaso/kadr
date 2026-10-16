@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{App, Hsla};
 use serde_json::json;
-use ui::IconName;
+use crate::ui::IconName;
 
 use crate::track::{self, Track};
 use crate::job::{self, Job};

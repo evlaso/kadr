@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{App, Context, SharedString, Window, WindowHandle, div, layer_shell::*, px};
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::util;

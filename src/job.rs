@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use futures::{AsyncBufReadExt, StreamExt, io::BufReader};
 use gpui::{App, AsyncApp, Context, SharedString, Window, WindowHandle, layer_shell::*};
-use ui::{IconButtonShape, ProgressBar, Tooltip, prelude::*};
+use crate::ui::{IconButtonShape, ProgressBar, Tooltip, prelude::*};
 
 use crate::kit::{self, Hold, InputRegion, LayerSpec};
 use crate::util;

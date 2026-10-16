@@ -7,9 +7,8 @@ edition = "2024"
 # GPUI isn't published past 0.2.2; track it from Zed's release tags.
 gpui = { git = "https://github.com/zed-industries/zed", tag = "v1.24.2" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", tag = "v1.24.2", features = ["wayland"] }
+smallvec = { version = "1", features = ["union"] }
 # Zed's own component library and theme, for the editor's look.
-theme = { git = "https://github.com/zed-industries/zed", tag = "v1.24.2" }
-ui = { git = "https://github.com/zed-industries/zed", tag = "v1.24.2" }
 async-process = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 futures = "0.3"

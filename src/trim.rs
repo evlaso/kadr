@@ -14,7 +14,7 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Window, canvas, div, fill, img,
     layer_shell::*, outline, point, px, rgba, size,
 };
-use ui::{ButtonLike, Divider, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::{cards, job, track, util};

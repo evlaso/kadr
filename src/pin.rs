@@ -12,7 +12,7 @@ use gpui::{
     App, Context, FocusHandle, Image, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     Pixels, Point, ScrollWheelEvent, Window, div, img, layer_shell::*, point, px,
 };
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::cards::image_preview;
 use crate::kit::{self, InputRegion, LayerSpec};

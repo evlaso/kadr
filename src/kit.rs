@@ -1,28 +1,27 @@
-//! Window plumbing for kadr's overlays, plus the setup that Zed's `ui`
-//! components expect: theme, UI font and icon assets.
+//! Window plumbing for kadr's overlays, plus the setup kadr's components
+//! expect: theme, UI font and icon assets.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Font, KeybindingKeystroke, Keystroke, Global, Pixels, Render, SharedString, Window,
+    AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Global, Pixels, Render, SharedString, Window,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
-    font, hsla, layer_shell::*, point, prelude::*, px, size,
+    hsla, layer_shell::*, point, prelude::*, px, size,
 };
-use theme::{ActiveTheme, LoadThemes, ThemeSettingsProvider, UiDensity};
-use ui::StyledTypography;
+use crate::ui::{ActiveTheme, KeyBinding, LabelSize};
 
 use crate::util::Mon;
 
-/// Base size of Zed's components (rems). Zed uses 16px; kadr's overlays are
+/// Base size of kadr's components (rems). Zed uses 16px; kadr's overlays are
 /// read at a glance over other windows, so everything is a notch larger.
 pub const REM: f32 = 19.;
 /// Scale for kadr's own fixed pixel sizes, to match `REM`.
 pub const SCALE: f32 = REM / 16.;
 
 /// Zed's UI font, bundled so kadr looks the same without Zed installed.
-const UI_FONT: &str = "IBM Plex Sans";
+pub(crate) const UI_FONT: &str = "IBM Plex Sans";
 /// Zed's monospace font, for timers and numbers.
 pub const MONO_FONT: &str = "Lilex";
 
@@ -93,33 +92,6 @@ impl AssetSource for Assets {
     }
 }
 
-/// What Zed's settings would normally provide to `ui`.
-struct Settings {
-    font: Font,
-}
-
-impl ThemeSettingsProvider for Settings {
-    fn ui_font<'a>(&'a self, _: &'a App) -> &'a Font {
-        &self.font
-    }
-
-    fn buffer_font<'a>(&'a self, _: &'a App) -> &'a Font {
-        &self.font
-    }
-
-    fn ui_font_size(&self, _: &App) -> Pixels {
-        px(17.)
-    }
-
-    fn buffer_font_size(&self, _: &App) -> Pixels {
-        px(14.)
-    }
-
-    fn ui_density(&self, _: &App) -> UiDensity {
-        UiDensity::Default
-    }
-}
-
 pub fn init(cx: &mut App) {
     let fonts = vec![
         Cow::Borrowed(include_bytes!("../data/zed/fonts/IBMPlexSans-Regular.ttf").as_slice()),
@@ -129,11 +101,8 @@ pub fn init(cx: &mut App) {
     if let Err(e) = cx.text_system().add_fonts(fonts) {
         eprintln!("kadr: fonts: {e}");
     }
-    // Zed's built-in dark theme; no theme files or settings needed.
-    theme::init(LoadThemes::JustBase, cx);
-    theme::set_theme_settings_provider(Box::new(Settings { font: font(UI_FONT) }), cx);
-    // The user's Omarchy theme colors on top of Zed's component styling.
-    crate::palette::apply(cx);
+    // The user's Omarchy theme colors.
+    cx.set_global(crate::palette::theme());
     cx.set_global(Busy::default());
 }
 
@@ -150,18 +119,13 @@ pub fn shadow() -> Vec<BoxShadow> {
 }
 
 /// A key hint drawn the way Zed shows shortcuts, e.g. `keys("enter")`.
-pub fn keys(source: &str) -> ui::KeyBinding {
-    let strokes: Vec<KeybindingKeystroke> = source
-        .split_whitespace()
-        .filter_map(|k| Keystroke::parse(k).ok())
-        .map(KeybindingKeystroke::from_keystroke)
-        .collect();
-    ui::KeyBinding::from_keystrokes(strokes.into(), false)
+pub fn keys(source: &str) -> KeyBinding {
+    KeyBinding::new(source)
 }
 
 /// Root of every overlay: Zed's UI font and text color.
 pub fn root(cx: &App) -> Div {
-    div().size_full().font_family(UI_FONT).text_ui(cx).text_color(cx.theme().colors().text)
+    div().size_full().font_family(UI_FONT).text_size(LabelSize::Default.rems()).text_color(cx.theme().colors().text)
 }
 
 /// Element bounds gathered during prepaint become the window's input region,

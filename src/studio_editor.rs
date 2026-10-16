@@ -18,7 +18,7 @@ use gpui::{
     Window, canvas, div, fill, img, layer_shell::*, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
 };
-use ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
 use crate::studio::{

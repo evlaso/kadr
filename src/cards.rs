@@ -11,7 +11,7 @@ use gpui::{
     MouseButton, MouseDownEvent, ObjectFit, Stateful, hsla, Window, WindowHandle, div, ease_out_quint,
     img, layer_shell::*, px, rgba,
 };
-use ui::{Tooltip, prelude::*};
+use crate::ui::{Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::settings::{Settings, Side};

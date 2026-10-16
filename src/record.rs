@@ -18,7 +18,7 @@ use crate::panel::{self, Panel};
 use crate::settings::Settings;
 use crate::track::Tracker;
 use crate::kit::{self, Hold, InputRegion, LayerSpec};
-use ui::{Divider, IconButtonShape, Tooltip, prelude::*};
+use crate::ui::{Divider, IconButtonShape, Tooltip, prelude::*};
 use crate::util::{self, Mon};
 use crate::cards;
 

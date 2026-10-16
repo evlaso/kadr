@@ -1,13 +1,12 @@
 //! kadr takes its colors from the current Omarchy theme (the user's Sumi
-//! Dark / Sumi Light), mapped onto Zed's theme slots so Zed's components
-//! pick them up. Read once per run; kadr exits when idle, so a theme switch
+//! Dark / Sumi Light), mapped onto the slots kadr's components draw with. Read once per run; kadr exits when idle, so a theme switch
 //! applies from the next capture.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use gpui::{App, Hsla, rgb};
-use theme::{Appearance, GlobalTheme};
+use gpui::{Hsla, hsla, rgb};
+
+use crate::ui::{Colors, Status, Theme};
 
 fn colors_file() -> std::path::PathBuf {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
@@ -33,16 +32,12 @@ fn read_palette() -> Option<(bool, HashMap<String, Hsla>)> {
     Some((light, colors))
 }
 
-fn with_alpha(mut c: Hsla, a: f32) -> Hsla {
-    c.a = a;
-    c
-}
-
-pub fn apply(cx: &mut App) {
-    let Some((light, p)) = read_palette() else { return };
+/// kadr's theme from the Omarchy palette; a neutral dark one without it.
+pub fn theme() -> Theme {
+    let Some((light, p)) = read_palette() else { return fallback() };
     let get = |key: &str, fallback: &str| p.get(key).or_else(|| p.get(fallback)).copied();
     let (Some(bg), Some(fg), Some(accent)) = (get("background", "background"), get("foreground", "foreground"), get("accent", "blue")) else {
-        return;
+        return fallback();
     };
     let muted = get("muted", "muted").unwrap_or(fg);
     let selection = get("selection", "muted").unwrap_or(muted);
@@ -54,59 +49,67 @@ pub fn apply(cx: &mut App) {
         (get("lighter_background", "background").unwrap_or(bg), selection, selection, get("dark_foreground", "muted").unwrap_or(muted))
     };
     let red = get("red", "accent").unwrap_or(accent);
-
-    let mut theme = (**GlobalTheme::theme(cx)).clone();
-    theme.name = if light { "Omarchy Light".into() } else { "Omarchy Dark".into() };
-    theme.appearance = if light { Appearance::Light } else { Appearance::Dark };
-
-    let c = &mut theme.styles.colors;
-    for slot in [&mut c.background, &mut c.surface_background, &mut c.panel_background, &mut c.editor_background, &mut c.status_bar_background, &mut c.title_bar_background, &mut c.toolbar_background, &mut c.tab_bar_background] {
-        *slot = bg;
+    Theme {
+        light,
+        colors: Colors {
+            panel_background: bg,
+            editor_background: bg,
+            title_bar_background: bg,
+            status_bar_background: bg,
+            elevated_surface_background: surface,
+            border,
+            border_variant: border,
+            border_focused: accent,
+            element_background: hover,
+            element_hover: hover,
+            element_active: selection,
+            element_selected: selection,
+            ghost_element_hover: hover,
+            ghost_element_active: selection,
+            ghost_element_selected: selection,
+            text: fg,
+            text_muted,
+            text_placeholder: muted,
+            text_disabled: muted,
+            text_accent: accent,
+        },
+        status: Status {
+            error: red,
+            warning: get("yellow", "accent").unwrap_or(accent),
+            info: accent,
+        },
     }
-    c.elevated_surface_background = surface;
-    c.border = border;
-    c.border_variant = border;
-    c.border_focused = accent;
-    c.border_selected = accent;
-    c.border_disabled = with_alpha(border, 0.5);
-    c.element_background = hover;
-    c.element_hover = hover;
-    c.element_active = selection;
-    c.element_selected = selection;
-    c.element_disabled = with_alpha(hover, 0.5);
-    c.ghost_element_hover = hover;
-    c.ghost_element_active = selection;
-    c.ghost_element_selected = selection;
-    c.drop_target_background = with_alpha(accent, 0.15);
-    c.text = fg;
-    c.text_muted = text_muted;
-    c.text_placeholder = muted;
-    c.text_disabled = muted;
-    c.text_accent = accent;
-    c.icon = fg;
-    c.icon_muted = text_muted;
-    c.icon_placeholder = muted;
-    c.icon_disabled = muted;
-    c.icon_accent = accent;
-    c.scrollbar_thumb_background = with_alpha(muted, 0.4);
+}
 
-    let s = &mut theme.styles.status;
-    s.error = red;
-    s.error_background = with_alpha(red, 0.15);
-    s.error_border = with_alpha(red, 0.4);
-    s.info = accent;
-    s.info_background = with_alpha(accent, 0.18);
-    s.info_border = with_alpha(accent, 0.45);
-    s.hint = muted;
-    if let Some(yellow) = get("yellow", "accent") {
-        s.warning = yellow;
-        s.warning_background = with_alpha(yellow, 0.15);
+fn fallback() -> Theme {
+    let grey = |l: f32| hsla(0., 0., l, 1.);
+    let accent = hsla(0.58, 0.6, 0.62, 1.);
+    Theme {
+        light: false,
+        colors: Colors {
+            panel_background: grey(0.1),
+            editor_background: grey(0.1),
+            title_bar_background: grey(0.1),
+            status_bar_background: grey(0.1),
+            elevated_surface_background: grey(0.14),
+            border: grey(0.22),
+            border_variant: grey(0.22),
+            border_focused: accent,
+            element_background: grey(0.2),
+            element_hover: grey(0.22),
+            element_active: grey(0.27),
+            element_selected: grey(0.27),
+            ghost_element_hover: grey(0.2),
+            ghost_element_active: grey(0.25),
+            ghost_element_selected: grey(0.25),
+            text: grey(0.9),
+            text_muted: grey(0.62),
+            text_placeholder: grey(0.45),
+            text_disabled: grey(0.45),
+            text_accent: accent,
+        },
+        status: Status { error: hsla(0.01, 0.6, 0.55, 1.), warning: hsla(0.12, 0.7, 0.5, 1.), info: accent },
     }
-    if let Some(green) = get("green", "accent") {
-        s.success = green;
-    }
-
-    GlobalTheme::update_theme(cx, Arc::new(theme));
 }
 
 /// Annotation colors for the editor: the theme's accents when it has them,
