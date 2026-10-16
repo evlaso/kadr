@@ -23,8 +23,10 @@ use crate::ui::{Divider, IconButtonShape, Tooltip, prelude::*};
 use crate::util::{self, Mon};
 use crate::cards;
 
-const PILL_WIDTH: i32 = 240;
-const PILL_HEIGHT: i32 = 60;
+/// The recording bar sits where the panel's bar was: this far under the
+/// area, assuming this height (the panel's).
+const BAR_GAP: f32 = 14.;
+const BAR_HEIGHT: f32 = 56. * kit::SCALE;
 
 /// Microphones as gpu-screen-recorder names them: (source name, description).
 pub fn microphones() -> Vec<(String, String)> {
@@ -448,19 +450,21 @@ impl Recorder {
     /// in the video. With a whole single monitor recorded there is nowhere to
     /// put them; the Omarchy bar indicator and the hotkey still work.
     fn open_indicator(&self, target: &Target, clock: Rc<Clock>, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
-        let (mon, top, left) = placement(target, &util::monitors())?;
+        let (mon, top, center) = placement(target, &util::monitors())?;
+        // A whole-monitor layer, clickable only on the bar, so the bar can sit
+        // exactly where the panel's was and its shadow isn't clipped.
         let spec = LayerSpec {
             namespace: "kadr-recording",
-            anchor: Anchor::TOP | Anchor::LEFT,
-            margin: (top as f32, 0., 0., left as f32),
-            size: (PILL_WIDTH as f32 * kit::SCALE, PILL_HEIGHT as f32 * kit::SCALE),
+            anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+            margin: (0., 0., 0., 0.),
+            size: (mon.w as f32, mon.h as f32),
             keyboard: KeyboardInteractivity::None,
             // Position relative to the monitor itself, not the bar's reserved area.
             ignore_zones: true,
             monitor: Some(mon),
         };
         let recorder = cx.weak_entity();
-        kit::open_layer(cx, spec, |window, cx| cx.new(|cx| RecBar::new(recorder, clock, window, cx))).map(Into::into)
+        kit::open_layer(cx, spec, move |window, cx| cx.new(|cx| RecBar::new(recorder, clock, (top, center), window, cx))).map(Into::into)
     }
 }
 
@@ -542,23 +546,24 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
 }
 
 /// Top-left margins of the control pill, relative to the monitor it goes on.
-fn placement(target: &Target, mons: &[Mon]) -> Option<(Mon, i32, i32)> {
-    // The pill's window grows with the UI scale.
-    let (pill_w, pill_h) = ((PILL_WIDTH as f32 * kit::SCALE) as i32, (PILL_HEIGHT as f32 * kit::SCALE) as i32);
+/// Where the recording bar goes, in the monitor's coordinates: its top and
+/// horizontal centre. Under the area like the panel's bar, or above it; when
+/// the whole monitor is recorded (or there's no room), on another monitor.
+fn placement(target: &Target, mons: &[Mon]) -> Option<(Mon, f32, f32)> {
     let elsewhere = |name: &str| {
         let m = mons.iter().find(|m| m.name != name)?;
-        Some((m.clone(), 48, (m.w - pill_w) / 2))
+        Some((m.clone(), 48., m.w as f32 / 2.))
     };
     match *target {
         Target::Monitor(ref name) => elsewhere(name),
         Target::Region { x, y, w, h } => {
             let mon = mons.iter().find(|m| m.contains(x + w / 2, y + h / 2))?;
-            let left = (x + w / 2 - pill_w / 2 - mon.x).clamp(0, (mon.w - pill_w).max(0));
-            let gap = 6;
-            if y + h + gap + pill_h <= mon.y + mon.h {
-                Some((mon.clone(), y + h + gap - mon.y, left))
-            } else if y - gap - pill_h >= mon.y {
-                Some((mon.clone(), y - gap - pill_h - mon.y, left))
+            let (x, y, w, h) = ((x - mon.x) as f32, (y - mon.y) as f32, w as f32, h as f32);
+            let center = x + w / 2.;
+            if y + h + BAR_GAP + BAR_HEIGHT <= mon.h as f32 - 8. {
+                Some((mon.clone(), y + h + BAR_GAP, center))
+            } else if y - BAR_GAP - BAR_HEIGHT >= 8. {
+                Some((mon.clone(), y - BAR_GAP - BAR_HEIGHT, center))
             } else {
                 elsewhere(&mon.name)
             }
@@ -621,11 +626,13 @@ impl Render for Frame {
 struct RecBar {
     recorder: gpui::WeakEntity<Recorder>,
     clock: Rc<Clock>,
+    /// The bar's top and horizontal centre on the monitor.
+    at: (f32, f32),
     region: InputRegion,
 }
 
 impl RecBar {
-    fn new(recorder: gpui::WeakEntity<Recorder>, clock: Rc<Clock>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(recorder: gpui::WeakEntity<Recorder>, clock: Rc<Clock>, at: (f32, f32), window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(250)).await;
@@ -635,7 +642,7 @@ impl RecBar {
             }
         })
         .detach();
-        RecBar { recorder, clock, region: InputRegion::default() }
+        RecBar { recorder, clock, at, region: InputRegion::default() }
     }
 }
 
@@ -654,8 +661,9 @@ impl Render for RecBar {
                 let _ = recorder.update(cx, |rec, cx| f(rec, cx));
             }
         };
+        // The same buttons as the recording panel's bar.
         let button = |id: &'static str, icon: IconName, tip: &'static str| {
-            IconButton::new(id, icon).shape(IconButtonShape::Square).icon_size(IconSize::Small).tooltip(Tooltip::text(tip))
+            IconButton::new(id, icon).shape(IconButtonShape::Square).size(ButtonSize::Large).icon_size(IconSize::Small).tooltip(Tooltip::text(tip))
         };
 
         let colors = cx.theme().status();
@@ -671,23 +679,25 @@ impl Render for RecBar {
             .into_any_element()
         };
 
-        kit::root(cx).flex().items_center().justify_center().child(
-            h_flex()
-                .relative()
-                .gap_1()
-                .pl_2p5()
-                .pr_1()
-                .py_1()
+        let (top, center) = self.at;
+        let room = 600. * kit::SCALE;
+        let bar = h_flex()
+                .gap_0p5()
+                .p_1()
                 .elevation_3(cx)
-                .child(dot)
+                // Compact, so it stays out of the video right above it.
+                .shadow(vec![
+                    gpui::BoxShadow { color: gpui::hsla(0., 0., 0., 0.35).into(), offset: gpui::point(px(0.), px(4.)), blur_radius: px(12.), spread_radius: px(0.), inset: false },
+                    gpui::BoxShadow { color: gpui::hsla(0., 0., 0., 0.2).into(), offset: gpui::point(px(0.), px(1.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
+                ])
                 .child(
-                    div()
-                        .min_w(px(44.))
-                        .font_family(kit::MONO_FONT)
-                        .text_sm()
-                        .child(util::format_duration(elapsed)),
+                    h_flex()
+                        .gap_2()
+                        .px_2()
+                        .child(dot)
+                        .child(div().min_w(px(44.)).font_family(kit::MONO_FONT).text_sm().child(util::format_duration(elapsed))),
                 )
-                .child(Divider::vertical().h_4())
+                .child(Divider::vertical().h_5().mx_1())
                 .child(
                     button("pause", if paused { IconName::PlayFilled } else { IconName::DebugPause }, if paused { "Продолжить" } else { "Пауза" })
                         .on_click(with_rec(false, |rec, cx| {
@@ -697,8 +707,10 @@ impl Render for RecBar {
                 )
                 .child(button("stop", IconName::Stop, "Остановить и сохранить").icon_color(Color::Error).on_click(with_rec(true, |rec, cx| rec.stop(false, cx))))
                 .child(button("discard", IconName::Trash, "Остановить и удалить").on_click(with_rec(true, |rec, cx| rec.stop(true, cx))))
-                .child(self.region.mark()),
-        )
+                .child(self.region.mark());
+        kit::root(cx)
+            .relative()
+            .child(div().absolute().left(px(center - room / 2.)).w(px(room)).top(px(top)).flex().justify_center().child(bar))
     }
 }
 

@@ -59,13 +59,10 @@ mod sni {
                 StandardItem { label: label.into(), activate: Box::new(move |_: &mut Self| kadr(args)), ..Default::default() }.into()
             };
             vec![
-                item("Снимок области", &["shot", "region"]),
-                item("Снимок экрана", &["shot", "fullscreen"]),
-                item("Снимок с прокруткой", &["shot", "scroll"]),
+                item("Скриншот", &["shot", "smart"]),
                 item("Запись экрана", &["record"]),
                 item("Распознать текст", &["text"]),
-                MenuItem::Separator,
-                item("История", &["history"]),
+                item("Скриншот с прокруткой", &["shot", "scroll"]),
                 item("Настройки", &["settings"]),
                 MenuItem::Separator,
                 StandardItem {

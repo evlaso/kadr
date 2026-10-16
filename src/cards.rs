@@ -20,7 +20,8 @@ use crate::{editor, ocr, pin, studio_editor, track, trim, util};
 
 const CARD_WIDTH: f32 = 240. * kit::SCALE;
 const THUMB_WIDTH: f32 = CARD_WIDTH;
-const THUMB_MAX: f32 = 176. * kit::SCALE;
+/// Cards are always 4:3; the picture is cropped to fill them, centred.
+const THUMB_MAX: f32 = THUMB_WIDTH * 3. / 4.;
 const CHROME: f32 = 0.;
 const GAP: f32 = 14.;
 /// Room above and to the right of the stack so card shadows aren't cut off by
@@ -50,11 +51,9 @@ struct Card {
     video: Option<f64>,
     deadline: Instant,
     hovered: bool,
-    /// When it started sliding away; it's dropped once off screen.
-    leaving: Option<Instant>,
 }
 
-/// How long a card takes to slide in or out from the screen edge.
+/// How long a card takes to slide in from the screen edge.
 const SLIDE: Duration = Duration::from_millis(280);
 
 pub struct CardStack {
@@ -107,7 +106,7 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
 
 fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
     let settings = Settings::load();
-    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: dismiss_at(&settings), hovered: false, leaving: None });
+    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: dismiss_at(&settings), hovered: false });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
@@ -115,12 +114,8 @@ fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &m
             card.id = stack.next_id;
             stack.next_id += 1;
             stack.cards.push(card);
-            // Too many: the oldest still on screen slides away.
-            let staying = stack.cards.iter().filter(|c| c.leaving.is_none()).count();
-            if staying > stack.settings.max_cards
-                && let Some(oldest) = stack.cards.iter_mut().find(|c| c.leaving.is_none())
-            {
-                oldest.leaving = Some(Instant::now());
+            if stack.cards.len() > stack.settings.max_cards {
+                stack.cards.remove(0);
             }
             cx.notify();
         });
@@ -158,14 +153,7 @@ impl CardStack {
                     let now = Instant::now();
                     let before = stack.cards.len();
                     let inside = window.is_window_hovered();
-                    // Expired cards start sliding out; ones already off screen go.
-                    for card in stack.cards.iter_mut().filter(|c| c.leaving.is_none()) {
-                        if !(card.hovered && inside) && now >= card.deadline {
-                            card.leaving = Some(now);
-                            cx.notify();
-                        }
-                    }
-                    stack.cards.retain(|c| c.leaving.is_none_or(|t| now.duration_since(t) < SLIDE));
+                    stack.cards.retain(|c| (c.hovered && inside) || now < c.deadline);
                     if stack.cards.len() != before {
                         cx.notify();
                     }
@@ -184,10 +172,10 @@ impl CardStack {
         .detach();
     }
 
-    /// Slide a card away; the ticker drops it once it's off screen.
-    fn remove(&mut self, id: usize, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(card) = self.cards.iter_mut().find(|c| c.id == id && c.leaving.is_none()) {
-            card.leaving = Some(Instant::now());
+    fn remove(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.cards.retain(|c| c.id != id);
+        if self.cards.is_empty() {
+            window.remove_window();
         }
         cx.notify();
     }
@@ -205,14 +193,9 @@ impl CardStack {
     /// hovering shows the main actions in the middle and the rest in the
     /// corners. Drag it out as a file; double-click to edit.
     fn render_card(&self, card: &Card, inside: bool, cx: &mut Context<Self>) -> AnyElement {
-        let shown = card.hovered && inside && card.leaving.is_none();
-        // Off-screen offset toward the card's edge, and how far a leaving
-        // card has already gone (eased in, so it speeds up as it leaves).
+        let shown = card.hovered && inside;
+        // Off-screen offset toward the card's edge, to come in from.
         let away = (CARD_WIDTH + EDGE + PAD) * if self.settings.card_side == Side::Right { 1. } else { -1. };
-        let gone = card.leaving.map_or(0., |t| {
-            let k = (t.elapsed().as_secs_f32() / SLIDE.as_secs_f32()).min(1.);
-            away * k * k
-        });
         let id = card.id;
         let path = card.path.clone();
         let video = card.video.is_some();
@@ -312,7 +295,9 @@ impl CardStack {
             .inset_0()
             .rounded(px(kit::RADIUS))
             .opacity(if shown { 1. } else { 0. })
-            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000066)))
+            // The picture blurs and dims behind the buttons (only while shown,
+            // so an idle card costs nothing).
+            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000052)).when(shown, |d| d.backdrop_blur(px(10.))))
             .flex()
             .items_center()
             .justify_center()
@@ -369,7 +354,7 @@ impl CardStack {
             })
         };
 
-        div()
+        let card_el = div()
             .id(("card", id))
             .relative()
             .flex_none()
@@ -390,10 +375,9 @@ impl CardStack {
             .on_drag(path, |_: &PathBuf, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(|path: &PathBuf, _, _| {
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
-            })
-            // In and out from the screen edge the cards sit on.
-            .with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d) + gone)))
-            .into_any_element()
+            });
+        // In from the screen edge the cards sit on.
+        card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
     }
 }
 
@@ -411,9 +395,6 @@ impl Render for CardStack {
         }
         self.inside = inside;
         let cards: Vec<_> = self.cards.iter().map(|c| self.render_card(c, inside, cx)).collect();
-        if self.cards.iter().any(|c| c.leaving.is_some_and(|t| t.elapsed() < SLIDE)) {
-            window.request_animation_frame();
-        }
         kit::root(cx)
             .flex()
             .flex_col()
@@ -479,7 +460,7 @@ pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
 fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
     let src = image::load_from_memory(bytes).ok()?;
     let (w, h) = (src.width().max(1), src.height().max(1));
-    let height = (THUMB_WIDTH * h as f32 / w as f32).clamp(96. * kit::SCALE, THUMB_MAX);
+    let height = THUMB_MAX;
     let aspect = THUMB_WIDTH / height;
     let (cw, ch) = if (w as f32 / h as f32) > aspect {
         ((h as f32 * aspect).round() as u32, h)
@@ -515,4 +496,21 @@ async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Imag
     let (image, height, _) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
     let seconds: f64 = duration.trim().parse().unwrap_or(0.0);
     Some((image, height, Some(seconds)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thumbnails_are_always_four_by_three() {
+        for (w, h) in [(1600u32, 400u32), (400, 1600), (800, 600)] {
+            let mut png = Vec::new();
+            image::RgbaImage::from_pixel(w, h, image::Rgba([10, 20, 30, 255]))
+                .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .unwrap();
+            let (_, height, _) = card_thumbnail(&png).unwrap();
+            assert!((height / THUMB_WIDTH - 0.75).abs() < 1e-4, "{w}x{h}: {height}");
+        }
+    }
 }
