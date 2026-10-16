@@ -344,7 +344,9 @@ impl CardStack {
                         .px_2()
                         .py_0p5()
                         .rounded_full()
-                        .bg(rgba(0x000000b3))
+                        // Frosted, like the hover overlay under the buttons.
+                        .bg(rgba(0x00000066))
+                        .backdrop_blur(px(8.))
                         .child(Icon::new(IconName::PlayFilled).size(IconSize::XSmall).color(Color::Custom(gpui::white())))
                         .child(Label::new(util::format_duration(secs)).size(LabelSize::Small).color(Color::Custom(gpui::white()))),
                 )
