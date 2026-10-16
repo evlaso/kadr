@@ -72,10 +72,10 @@ impl Panel {
         let panel = cx.weak_entity();
         let entries = self.mics.clone();
         let selected = self.opts.mic_device.clone();
-        let height = 12. + 34. * entries.len() as f32;
+        let height = (12. + 34. * entries.len() as f32) * kit::SCALE;
         let options = WindowOptions {
             titlebar: None,
-            window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.), px(0.)), size: size(px(380.), px(height)) })),
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.), px(0.)), size: size(px(380. * kit::SCALE), px(height)) })),
             window_background: WindowBackgroundAppearance::Transparent,
             kind: WindowKind::AnchoredPopup(PopupOptions {
                 parent: window.window_handle(),
@@ -89,7 +89,10 @@ impl Panel {
             }),
             ..Default::default()
         };
-        if let Err(e) = cx.open_window(options, |_, cx| cx.new(|_| MicMenu { panel, entries, selected })) {
+        if let Err(e) = cx.open_window(options, |window, cx| {
+            window.set_rem_size(px(kit::REM));
+            cx.new(|_| MicMenu { panel, entries, selected })
+        }) {
             util::notify("kadr: меню не открылось", &e.to_string());
         }
     }

@@ -15,6 +15,12 @@ use ui::StyledTypography;
 
 use crate::util::Mon;
 
+/// Base size of Zed's components (rems). Zed uses 16px; kadr's overlays are
+/// read at a glance over other windows, so everything is a notch larger.
+pub const REM: f32 = 19.;
+/// Scale for kadr's own fixed pixel sizes, to match `REM`.
+pub const SCALE: f32 = REM / 16.;
+
 /// Zed's UI font, bundled so kadr looks the same without Zed installed.
 const UI_FONT: &str = "IBM Plex Sans";
 /// Zed's monospace font, for timers and numbers.
@@ -94,7 +100,7 @@ impl ThemeSettingsProvider for Settings {
     }
 
     fn ui_font_size(&self, _: &App) -> Pixels {
-        px(15.)
+        px(17.)
     }
 
     fn buffer_font_size(&self, _: &App) -> Pixels {
@@ -197,11 +203,15 @@ pub fn open_layer<V: Render + 'static>(
     build: impl FnOnce(&mut Window, &mut App) -> gpui::Entity<V>,
 ) -> Option<WindowHandle<V>> {
     let (t, r, b, l) = spec.margin;
+    // Fixed-size overlays grow with the components inside them; full-monitor
+    // and anchored-to-fill ones are sized by the compositor anyway.
+    let fills = spec.anchor.contains(Anchor::LEFT | Anchor::RIGHT) || spec.anchor.contains(Anchor::TOP | Anchor::BOTTOM);
+    let size_scale = if fills { 1. } else { SCALE };
     let options = WindowOptions {
         titlebar: None,
         window_bounds: Some(WindowBounds::Windowed(Bounds {
             origin: point(px(0.), px(0.)),
-            size: size(px(spec.size.0), px(spec.size.1)),
+            size: size(px(spec.size.0 * size_scale), px(spec.size.1 * size_scale)),
         })),
         app_id: Some("kadr".into()),
         window_background: WindowBackgroundAppearance::Transparent,
@@ -217,7 +227,10 @@ pub fn open_layer<V: Render + 'static>(
         }),
         ..Default::default()
     };
-    match cx.open_window(options, build) {
+    match cx.open_window(options, |window, cx| {
+        window.set_rem_size(px(REM));
+        build(window, cx)
+    }) {
         Ok(handle) => Some(handle),
         Err(e) => {
             crate::util::notify("kadr: не удалось открыть окно", &e.to_string());

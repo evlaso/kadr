@@ -466,20 +466,22 @@ async fn begin(mode: &str, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
 
 /// Top-left margins of the control pill, relative to the monitor it goes on.
 fn placement(target: &Target, mons: &[Mon]) -> Option<(Mon, i32, i32)> {
+    // The pill's window grows with the UI scale.
+    let (pill_w, pill_h) = ((PILL_WIDTH as f32 * kit::SCALE) as i32, (PILL_HEIGHT as f32 * kit::SCALE) as i32);
     let elsewhere = |name: &str| {
         let m = mons.iter().find(|m| m.name != name)?;
-        Some((m.clone(), 48, (m.w - PILL_WIDTH) / 2))
+        Some((m.clone(), 48, (m.w - pill_w) / 2))
     };
     match *target {
         Target::Monitor(ref name) => elsewhere(name),
         Target::Region { x, y, w, h } => {
             let mon = mons.iter().find(|m| m.contains(x + w / 2, y + h / 2))?;
-            let left = (x + w / 2 - PILL_WIDTH / 2 - mon.x).clamp(0, (mon.w - PILL_WIDTH).max(0));
+            let left = (x + w / 2 - pill_w / 2 - mon.x).clamp(0, (mon.w - pill_w).max(0));
             let gap = 6;
-            if y + h + gap + PILL_HEIGHT <= mon.y + mon.h {
+            if y + h + gap + pill_h <= mon.y + mon.h {
                 Some((mon.clone(), y + h + gap - mon.y, left))
-            } else if y - gap - PILL_HEIGHT >= mon.y {
-                Some((mon.clone(), y - gap - PILL_HEIGHT - mon.y, left))
+            } else if y - gap - pill_h >= mon.y {
+                Some((mon.clone(), y - gap - pill_h - mon.y, left))
             } else {
                 elsewhere(&mon.name)
             }
