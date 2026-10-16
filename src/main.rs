@@ -2,6 +2,7 @@ mod capture;
 mod cards;
 mod editor;
 mod history;
+mod hotkeys;
 mod palette;
 mod picker;
 mod platform;

@@ -225,6 +225,27 @@ impl Render for Panel {
                         cx.notify();
                     })),
             )
+            .child({
+                // Off → 3 s → 5 s: counts down over the area before recording.
+                let n = self.opts.countdown;
+                ButtonLike::new("countdown")
+                    .style(if n > 0 { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(n > 0)
+                    .child(
+                        h_flex()
+                            .px_1()
+                            .gap_1()
+                            .child(Icon::from_path("icons/kadr/timer.svg").size(IconSize::Small))
+                            .when(n > 0, |row| row.child(Label::new(format!("{n}")).size(LabelSize::Small))),
+                    )
+                    .tooltip(tip("Отсчёт перед записью", Some(if n > 0 { format!("{n} с, Esc отменяет").into() } else { "Выключен".into() }), None))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let i = record::COUNTDOWNS.iter().position(|&c| c == this.opts.countdown).unwrap_or(0);
+                        this.opts.countdown = record::COUNTDOWNS[(i + 1) % record::COUNTDOWNS.len()];
+                        cx.notify();
+                    }))
+            })
             .child(Divider::vertical().h_5().mx_1())
             .child(
                 action("repick", Icon::new(IconName::Crosshair))
@@ -289,7 +310,7 @@ impl Render for Panel {
                     .child(dim().top(px(y + h)).left_0().right_0().bottom_0())
                     .child(dim().top(px(y)).left_0().w(px(x)).h(px(h)))
                     .child(dim().top(px(y)).left(px(x + w)).right_0().h(px(h)))
-                    .child(div().absolute().left(px(x - 2.)).top(px(y - 2.)).w(px(w + 4.)).h(px(h + 4.)).border_2().border_color(cx.theme().status().error))
+                    .child(div().absolute().left(px(x - 2.)).top(px(y - 2.)).w(px(w + 4.)).h(px(h + 4.)).border_2().border_color(gpui::white()))
             })
             .child(div().absolute().left(px(bar_x)).top(px(bar_y)).w(px(room)).flex().justify_center().child(bar))
     }

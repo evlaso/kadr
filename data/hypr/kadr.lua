@@ -108,6 +108,20 @@ hl.on("input.keyboard.key", function(ev, a2)
   end
 end)
 
--- kadr's editor is an ordinary window: float it in the middle of the screen
--- instead of tiling it.
-hl.window_rule({ match = { class = "^kadr-editor$" }, float = true, center = true })
+-- kadr's editor and settings are ordinary windows: float them in the middle of the screen
+-- instead of tiling them.
+hl.window_rule({ match = { class = "^kadr-(editor|settings)$" }, float = true, center = true })
+
+-- Hotkeys set in kadr's settings (Клавиши).
+local keys = (os.getenv("HOME") or "") .. "/.config/hypr/kadr-keys.lua"
+local found = io.open(keys, "r")
+if found then
+  found:close()
+  dofile(keys)
+end
+
+-- While a shortcut is recorded in the settings kadr switches to this submap:
+-- it binds nothing real, so the keys pressed don't fire their binds.
+hl.define_submap("kadr-keys", function()
+  hl.bind("SUPER + CTRL + ALT + SHIFT + F24", hl.dsp.submap("reset"))
+end)

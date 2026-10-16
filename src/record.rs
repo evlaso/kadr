@@ -64,7 +64,12 @@ pub struct Opts {
     /// Studio mode: leave the cursor out of the video (the studio draws its
     /// own from the track) and open the studio editor afterwards.
     pub studio: bool,
+    /// Seconds to count down before recording; 0 starts at once.
+    pub countdown: u32,
 }
+
+/// Countdown choices, cycled by the panel's timer button.
+pub const COUNTDOWNS: [u32; 3] = [0, 3, 5];
 
 impl Opts {
     fn path() -> PathBuf {
@@ -79,7 +84,8 @@ impl Opts {
             .unwrap_or_default();
         let get = |k: &str| v[k].as_bool().unwrap_or(false);
         let mic_device = v["mic_device"].as_str().unwrap_or_default().to_owned();
-        Opts { mic: get("mic"), mic_device, audio: get("audio"), webcam: get("webcam"), keys: get("keys"), studio: get("studio") }
+        let countdown = v["countdown"].as_u64().map(|n| n as u32).filter(|n| COUNTDOWNS.contains(n)).unwrap_or(3);
+        Opts { mic: get("mic"), mic_device, audio: get("audio"), webcam: get("webcam"), keys: get("keys"), studio: get("studio"), countdown }
     }
 
     pub fn save(&self) {
@@ -87,7 +93,7 @@ impl Opts {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam, "keys": self.keys, "studio": self.studio });
+        let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam, "keys": self.keys, "studio": self.studio, "countdown": self.countdown });
         let _ = std::fs::write(path, v.to_string());
     }
 
@@ -481,7 +487,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     };
 
     // 3, 2, 1 over the area; Esc there cancels.
-    if !countdown(&target, Settings::load().countdown, &mons, cx).await {
+    if !countdown(&target, opts.countdown, &mons, cx).await {
         return Err(None);
     }
 
@@ -828,16 +834,17 @@ async fn countdown(target: &Target, seconds: u32, mons: &[Mon], cx: &mut AsyncAp
     if seconds == 0 {
         return true;
     }
-    let (mon, center) = match *target {
+    let (mon, area) = match *target {
         Target::Region { x, y, w, h } => {
             let Some(mon) = mons.iter().find(|m| m.contains(x + w / 2, y + h / 2)) else { return true };
-            (mon.clone(), ((x + w / 2 - mon.x) as f32, (y + h / 2 - mon.y) as f32))
+            (mon.clone(), Some(((x - mon.x) as f32, (y - mon.y) as f32, w as f32, h as f32)))
         }
         Target::Monitor(ref name) => {
             let Some(mon) = mons.iter().find(|m| &m.name == name) else { return true };
-            (mon.clone(), (mon.w as f32 / 2., mon.h as f32 / 2.))
+            (mon.clone(), None)
         }
     };
+    let center = area.map(|(x, y, w, h)| (x + w / 2., y + h / 2.)).unwrap_or((mon.w as f32 / 2., mon.h as f32 / 2.));
     let left = Rc::new(Cell::new(seconds));
     let cancelled = Rc::new(Cell::new(false));
     let spec = LayerSpec {
@@ -855,7 +862,7 @@ async fn countdown(target: &Target, seconds: u32, mons: &[Mon], cx: &mut AsyncAp
             cx.new(|cx| {
                 let focus = cx.focus_handle();
                 window.focus(&focus, cx);
-                Countdown { left: shown_left, cancelled: shown_cancel, center, focus }
+                Countdown { left: shown_left, cancelled: shown_cancel, center, area, focus }
             })
         })
     });
@@ -885,6 +892,9 @@ struct Countdown {
     cancelled: Rc<Cell<bool>>,
     /// Middle of the area, on the monitor.
     center: (f32, f32),
+    /// The area on the monitor, framed like in the panel; None for a whole
+    /// monitor.
+    area: Option<(f32, f32, f32, f32)>,
     focus: gpui::FocusHandle,
 }
 
@@ -893,6 +903,7 @@ impl Render for Countdown {
         let n = self.left.get();
         let side = 150. * kit::SCALE;
         let cancelled = self.cancelled.clone();
+        let dim = || div().absolute().bg(gpui::rgba(0x00000073));
         kit::root(cx)
             .relative()
             .track_focus(&self.focus)
@@ -900,6 +911,14 @@ impl Render for Countdown {
                 if e.keystroke.key == "escape" {
                     cancelled.set(true);
                 }
+            })
+            // The same frame as in the panel; it turns red once recording starts.
+            .when_some(self.area, |root, (x, y, w, h)| {
+                root.child(dim().top_0().left_0().right_0().h(px(y)))
+                    .child(dim().top(px(y + h)).left_0().right_0().bottom_0())
+                    .child(dim().top(px(y)).left_0().w(px(x)).h(px(h)))
+                    .child(dim().top(px(y)).left(px(x + w)).right_0().h(px(h)))
+                    .child(div().absolute().left(px(x - 2.)).top(px(y - 2.)).w(px(w + 4.)).h(px(h + 4.)).border_2().border_color(gpui::white()))
             })
             .child(
                 // Only the digit changes from second to second, like CleanShot.

@@ -3,17 +3,16 @@
 
 use std::path::PathBuf;
 
-use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
-    App, Context, FocusHandle, KeyDownEvent, MouseButton, PathPromptOptions, Window, div,
-    linear_color_stop, linear_gradient, px, rgba,
+    App, Context, FocusHandle, KeyDownEvent, PathPromptOptions, Window, div,
+    linear_color_stop, linear_gradient, px,
 };
 use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 
-use crate::kit::{self, LayerSpec};
-use crate::settings::{CARD_SECONDS, COUNTDOWNS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
+use crate::kit;
+use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
 use crate::studio::{PADDINGS, ZOOMS};
-use crate::{ocr, palette, tray, util};
+use crate::{ocr, palette, tray, util, hotkeys};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -60,43 +59,27 @@ pub struct SettingsView {
     /// Installed OCR languages, e.g. "rus+eng".
     languages: String,
     downloading: bool,
-    /// (description, keys) of kadr's Hyprland bindings.
-    bindings: Vec<(String, String)>,
+    /// Hyprland key specs for each of `hotkeys::ACTIONS`.
+    keys: Vec<Vec<String>>,
+    /// The action a new shortcut is being recorded for; binds are paused.
+    recording: Option<usize>,
     focus: FocusHandle,
 }
 
 pub fn open(cx: &mut App) {
-    let Some(mon) = util::focused_monitor() else { return };
-    let spec = LayerSpec {
-        namespace: "kadr-settings",
-        anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-        margin: (0., 0., 0., 0.),
-        size: (mon.w as f32, mon.h as f32),
-        keyboard: KeyboardInteractivity::Exclusive,
-        ignore_zones: true,
-        monitor: Some(mon),
-    };
-    kit::open_layer(cx, spec, |window, cx| {
+    // Already open: bring it forward instead of a second one.
+    if let Some(window) = cx.windows().into_iter().find_map(|w| w.downcast::<SettingsView>()) {
+        let _ = window.update(cx, |_, window, _| window.activate());
+        return;
+    }
+    let mon = util::focused_monitor();
+    kit::open_window(cx, "kadr-settings", mon.as_ref(), (820. * kit::SCALE, 560. * kit::SCALE), |window, cx| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, bindings: kadr_bindings(), focus }
+            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, focus }
         })
     });
-}
-
-/// kadr's lines from Omarchy's keybinding list.
-fn kadr_bindings() -> Vec<(String, String)> {
-    let out = std::process::Command::new("omarchy")
-        .args(["menu", "keybindings", "--print"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
-    out.lines()
-        .filter(|l| l.contains("(kadr)"))
-        .filter_map(|l| l.split_once('→'))
-        .map(|(keys, desc)| (desc.trim().trim_end_matches("(kadr)").trim().to_owned(), keys.split_whitespace().collect::<Vec<_>>().join(" ")))
-        .collect()
 }
 
 impl SettingsView {
@@ -215,13 +198,23 @@ impl SettingsView {
                     chips(cx, "max", MAX_CARDS.iter().map(|n| n.to_string()).collect(), MAX_CARDS.iter().position(|&n| n == s.max_cards), |s, i| s.max_cards = MAX_CARDS[i]),
                 ),
             ],
-            Tab::Screenshots => vec![row("Папка для скриншотов", "По умолчанию та же, что у Omarchy", folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true))],
+            Tab::Screenshots => {
+                let mut rows = vec![row("Папка для скриншотов", "По умолчанию та же, что у Omarchy", folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true))];
+                // A choice only where windows tile; elsewhere it's a window.
+                if cfg!(target_os = "linux") {
+                    rows.push(row(
+                        "Редактор",
+                        "Окно не мешает снимать другие экраны, а поверх всего закрывает экран целиком",
+                        chips(cx, "editor", vec!["Окно".into(), "Поверх всего".into()], Some((!s.editor_window) as usize), |s, i| s.editor_window = i == 0),
+                    ));
+                }
+                rows
+            }
             Tab::Recording => vec![
                 row("Папка для записей", "По умолчанию «Видео»", folder(cx, s.video_dir(), s.video_dir.is_some(), false)),
                 row("Частота кадров", "60 — плавнее, 30 — файлы меньше", chips(cx, "fps", FPS.iter().map(|f| format!("{f} к/с")).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
                 row("Качество", "Выше — чётче мелкий текст, но файлы больше", chips(cx, "quality", QUALITIES.iter().map(|q| q.1.to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
                 row("Рамка вокруг области", "Подсвечивать записываемую область (в запись не попадает)", switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
-                row("Отсчёт перед записью", "Цифры над областью, Esc отменяет", chips(cx, "countdown", COUNTDOWNS.iter().map(|&n| if n == 0 { "Нет".into() } else { format!("{n} с") }).collect(), COUNTDOWNS.iter().position(|&n| n == s.countdown), |s, i| s.countdown = COUNTDOWNS[i])),
             ],
             Tab::Studio => {
                 let ring = cx.theme().colors().text;
@@ -261,24 +254,8 @@ impl SettingsView {
                     row("Русский язык", "Официальная модель Tesseract, ставится в папку kadr без sudo", action),
                 ]
             }
-            Tab::Shortcuts => {
-                let mut rows: Vec<AnyElement> = self
-                    .bindings
-                    .iter()
-                    .map(|(desc, keys)| row(desc, "", div().font_family(kit::MONO_FONT).text_sm().child(keys.clone()).into_any_element()))
-                    .collect();
-                rows.push(row("Изменить сочетания",
-                    "Сочетания задаются в конфиге Hyprland",
-                    Button::new("bindings", "Открыть bindings.lua")
-                        .style(ButtonStyle::Subtle)
-                        .on_click(|_, _, _| {
-                            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-                            util::open_file(&home.join(".config/hypr/bindings.lua"));
-                        })
-                        .into_any_element(),
-                ));
-                rows
-            }
+            Tab::Shortcuts if cfg!(target_os = "linux") => hotkeys::ACTIONS.iter().enumerate().map(|(i, action)| row(action.title, "", self.render_keys(i, cx))).collect(),
+            Tab::Shortcuts => vec![row("Сочетания клавиш", "Пока настраиваются только в Hyprland", div().into_any_element())],
             Tab::About => vec![
                 row("kadr", "Скриншоты и запись экрана", Label::new(format!("версия {}", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
                 row("Интерфейс", "GPUI CE и свои компоненты, цвета из темы Omarchy", Label::new("GPUI CE").color(Color::Muted).into_any_element()),
@@ -319,7 +296,7 @@ fn row(title: &str, description: &str, control: AnyElement) -> AnyElement {
             v_flex()
                 .min_w_0()
                 .gap_0p5()
-                .child(Label::new(title.to_owned()))
+                .child(div().whitespace_nowrap().child(Label::new(title.to_owned())))
                 .when(!description.is_empty(), |c| c.child(Label::new(description.to_owned()).size(LabelSize::Small).color(Color::Muted))),
         )
         .child(div().flex_none().child(control))
@@ -373,15 +350,88 @@ fn folder(cx: &mut Context<SettingsView>, dir: PathBuf, custom: bool, screenshot
         .into_any_element()
 }
 
+impl SettingsView {
+    /// An action's shortcuts: click one to remove it, "+" records another.
+    fn render_keys(&self, i: usize, cx: &mut Context<Self>) -> AnyElement {
+        let chips = self.keys[i].iter().enumerate().map(|(k, spec)| {
+            ButtonLike::new(SharedString::from(format!("key-{i}-{k}")))
+                .style(ButtonStyle::Filled)
+                .child(div().px_1().font_family(kit::MONO_FONT).text_sm().child(hotkeys::label(spec)))
+                .tooltip(Tooltip::text("Убрать сочетание"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.keys[i].remove(k);
+                    this.save_keys();
+                    cx.notify();
+                }))
+                .into_any_element()
+        });
+        let add = if self.recording == Some(i) {
+            Label::new("Нажми сочетание… (Esc — отмена)").size(LabelSize::Small).color(Color::Accent).into_any_element()
+        } else {
+            IconButton::new(SharedString::from(format!("add-key-{i}")), IconName::Plus)
+                .tooltip(Tooltip::text("Добавить сочетание"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.recording.is_none() {
+                        hotkeys::quiet(true);
+                    }
+                    this.recording = Some(i);
+                    cx.notify();
+                }))
+                .into_any_element()
+        };
+        h_flex().gap_1().children(chips).child(add).into_any_element()
+    }
+
+    fn record_key(&mut self, e: &KeyDownEvent, cx: &mut Context<Self>) {
+        let Some(i) = self.recording else { return };
+        let k = &e.keystroke;
+        let m = &k.modifiers;
+        if k.key == "escape" && !(m.control || m.alt || m.shift || m.platform) {
+            self.stop_recording();
+            return cx.notify();
+        }
+        // Modifiers alone: wait for the key.
+        let Some(spec) = hotkeys::spec(&k.key, m.control, m.alt, m.shift, m.platform) else { return };
+        // A shortcut belongs to one action.
+        for keys in &mut self.keys {
+            keys.retain(|s| *s != spec);
+        }
+        self.keys[i].push(spec);
+        self.stop_recording();
+        self.save_keys();
+        cx.notify();
+    }
+
+    fn stop_recording(&mut self) {
+        if self.recording.take().is_some() {
+            hotkeys::quiet(false);
+        }
+    }
+
+    fn save_keys(&self) {
+        if let Err(e) = hotkeys::save(&self.keys) {
+            util::notify("Не удалось сохранить сочетания", &e.to_string());
+        }
+    }
+}
+
+/// Closing mid-recording must not leave every bind paused.
+impl Drop for SettingsView {
+    fn drop(&mut self) {
+        self.stop_recording();
+    }
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         kit::root(cx)
-            .bg(rgba(0x00000099))
+            .bg(cx.theme().colors().elevated_surface_background)
             .flex()
-            .items_center()
-            .justify_center()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if this.recording.is_some() {
+                    return this.record_key(e, cx);
+                }
                 let i = Tab::ALL.iter().position(|t| *t == this.tab).unwrap_or(0);
                 match e.keystroke.key.as_str() {
                     "escape" => window.remove_window(),
@@ -391,15 +441,10 @@ impl Render for SettingsView {
                 }
                 cx.notify();
             }))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.remove_window())
             .child(
                 v_flex()
                     .id("settings")
-                    .w(px(820. * kit::SCALE))
-                    .h(px(560. * kit::SCALE))
-                    .elevation_3(cx)
-                    .overflow_hidden()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .size_full()
                     .child(
                         h_flex()
                             .size_full()

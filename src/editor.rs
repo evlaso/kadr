@@ -22,7 +22,7 @@ use gpui::{
 use image::RgbaImage;
 use crate::ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
-use crate::kit;
+use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{fill, outline};
 use crate::{cards, ocr, palette, studio_editor, util};
 
@@ -544,6 +544,9 @@ pub struct Editor {
     origin: Rc<Cell<(f32, f32)>>,
     /// Height the stage got in the last layout; the picture fits into it.
     stage_h: Rc<Cell<f32>>,
+    /// An ordinary window, or a panel of `size` over everything (a layer).
+    windowed: bool,
+    size: (f32, f32),
     focus: FocusHandle,
 }
 
@@ -569,7 +572,17 @@ pub fn open(path: PathBuf, cx: &mut App) {
     // padding and the bars; the picture refits whenever the window resizes.
     let pad = disp.0.max(disp.1) * FRAME_PAD * 2.;
     let size = ((disp.0 + pad + 48.).max(1180. * kit::SCALE).min(mw - 80.), (disp.1 + pad + 48. + CHROME).min(mh - 80.));
-    kit::open_window(cx, "kadr-editor", Some(&mon), size, |window, cx| {
+    let windowed = !cfg!(target_os = "linux") || crate::settings::Settings::load().editor_window;
+    let layer = LayerSpec {
+        namespace: "kadr-editor",
+        anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+        margin: (0., 0., 0., 0.),
+        size: (mw, mh),
+        keyboard: KeyboardInteractivity::Exclusive,
+        ignore_zones: true,
+        monitor: Some(mon.clone()),
+    };
+    let build = move |window: &mut Window, cx: &mut App| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
@@ -620,10 +633,17 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 sliders: Rc::new(RefCell::new(HashMap::new())),
                 origin: Rc::new(Cell::new((0., 0.))),
                 stage_h: Rc::new(Cell::new(size.1 - CHROME)),
+                windowed,
+                size,
                 focus,
             }
         })
-    });
+    };
+    if windowed {
+        kit::open_window(cx, "kadr-editor", Some(&mon), size, build);
+    } else {
+        kit::open_layer(cx, layer, build);
+    }
 }
 
 impl Editor {
@@ -1300,9 +1320,10 @@ impl Editor {
             .w(px(width))
             .justify_between()
             .gap_2()
-            .px_1p5()
+            .px_2p5()
             .py_1()
             .bg(cx.theme().colors().title_bar_background)
+            .when(!self.windowed, |d| d.rounded_t(px(kit::RADIUS - 1.)))
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
             .rounded_smoothing(crate::ui::SMOOTHING)
@@ -1346,10 +1367,11 @@ impl Editor {
             .w(px(width))
             .justify_between()
             .gap_2()
-            .pl_2p5()
-            .pr_1p5()
-            .py_1()
+            // Clear of the window's rounded corners.
+            .px_3()
+            .py_1p5()
             .bg(cx.theme().colors().status_bar_background)
+            .when(!self.windowed, |d| d.rounded_b(px(kit::RADIUS - 1.)))
             .rounded_smoothing(crate::ui::SMOOTHING)
             .child(
                 h_flex()
@@ -1917,7 +1939,7 @@ impl Render for Editor {
         let fit = (self.natural.0 * k, self.natural.1 * k);
         self.disp = (fit.0 * self.zoom, fit.1 * self.zoom);
         // The picture fits the stage; a zoomed canvas scrolls inside it.
-        let width = vw;
+        let width = if self.windowed { vw } else { self.size.0 };
         let stage_h = self.stage_h.clone();
         let measure = canvas(
             move |bounds, window, _| {
@@ -1961,8 +1983,27 @@ impl Render for Editor {
                     .child(div().flex_none().min_w(relative(1.)).min_h(relative(1.)).flex().p(px(24.)).child(div().m_auto().child(self.render_canvas(cx)))),
             )
             .when(self.panel, |row| row.child(self.render_panel(self.stage_h.get(), cx)));
+        let border = cx.theme().colors().border;
+        let bars = |el: Div| el.child(self.render_toolbar(width, cx)).child(stage).child(self.render_footer(width, cx));
+        let content = if self.windowed {
+            bars(v_flex().size_full())
+        } else {
+            // Over everything: a panel on a dimmed screen.
+            bars(
+                v_flex()
+                    .w(px(width))
+                    .h(px(self.size.1))
+                    .rounded(px(kit::RADIUS))
+                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(border)
+                    .shadow(kit::shadow()),
+            )
+        };
         kit::root(cx)
-            .bg(cx.theme().colors().editor_background)
+            .when(self.windowed, |d| d.bg(cx.theme().colors().editor_background))
+            .when(!self.windowed, |d| d.bg(rgba(0x00000040)).items_center().justify_center())
             .flex()
             .flex_col()
             .track_focus(&self.focus)
@@ -1974,9 +2015,7 @@ impl Render for Editor {
             // The pointer stays with this surface while the button is held.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.mouse_up(cx)))
-            .child(self.render_toolbar(width, cx))
-            .child(stage)
-            .child(self.render_footer(width, cx))
+            .child(content)
     }
 }
 
