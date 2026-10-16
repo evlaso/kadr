@@ -546,6 +546,8 @@ pub struct Editor {
     stage_h: Rc<Cell<f32>>,
     /// An ordinary window, or a panel of `size` over everything (a layer).
     windowed: bool,
+    /// The colour dropdown in the toolbar is open.
+    colors_open: bool,
     size: (f32, f32),
     focus: FocusHandle,
 }
@@ -634,6 +636,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 origin: Rc::new(Cell::new((0., 0.))),
                 stage_h: Rc::new(Cell::new(size.1 - CHROME)),
                 windowed,
+                colors_open: false,
                 size,
                 focus,
             }
@@ -939,7 +942,8 @@ impl Editor {
         }
 
         match (k.key.as_str(), ctrl, shift) {
-            // Esc steps back: selection first, then the editor.
+            // Esc steps back: the colour menu, the selection, then the editor.
+            ("escape", _, _) if self.colors_open => self.colors_open = false,
             ("escape", _, _) if self.selected.is_some() => self.selected = None,
             ("escape", _, _) => window.remove_window(),
             ("delete" | "backspace", false, _) => self.delete_selected(),
@@ -1200,11 +1204,13 @@ impl Editor {
         let crop = tool_button(Tool::Crop, cx);
 
         let ring = cx.theme().colors().text;
+        let current = self.current_color();
+        // Colours sit in a dropdown under one swatch of the current colour.
         let swatches = self.colors.iter().enumerate().map(|(i, &c)| {
             let selected = i == self.color;
             div()
                 .id(("color", i))
-                .size(px(24.))
+                .size(px(28.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1212,24 +1218,81 @@ impl Editor {
                 .border_2()
                 .border_color(if selected { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
-                .child(div().size(px(16.)).rounded_full().bg(c))
+                .child(div().size(px(20.)).rounded_full().bg(c))
                 .tooltip(Tooltip::text(format!("Цвет ({})", i + 1)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.pick_color(i);
+                    this.colors_open = false;
                     cx.notify();
                 }))
         })
             .collect::<Vec<_>>();
-        let dot = cx.theme().colors().text;
-        // A dot as thick as the stroke, then the slider.
+        let palette = div()
+            .relative()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if this.colors_open {
+                    this.colors_open = false;
+                    cx.notify();
+                }
+            }))
+            .child(
+            ButtonLike::new("colors")
+                .style(if self.colors_open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                .size(ButtonSize::Large)
+                .toggle_state(self.colors_open)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .px_1()
+                        .child(div().size(px(16.)).rounded_full().bg(current).border_1().border_color(cx.theme().colors().border))
+                        .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)),
+                )
+                .tooltip(Tooltip::text("Цвет (1–7)"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.colors_open = !this.colors_open;
+                    cx.notify();
+                })),
+        )
+        .when(self.colors_open, |d| {
+            d.child(gpui::deferred(
+                h_flex()
+                    .id("color-menu")
+                    .occlude()
+                    .absolute()
+                    .top(px(38.))
+                    .right_0()
+                    .gap_1()
+                    .p_1p5()
+                    .elevation_3(cx)
+                    .children(swatches),
+            ))
+        });
+        // A dot as thick as the stroke, in the current colour, then the slider.
         let dot_size = sized(WIDTHS, self.weight).min(16.) + 1.;
         let weights = h_flex()
             .id("weight")
-            .w(px(132.))
+            .w(px(140.))
             .h(px(32.))
-            .child(div().w(px(18.)).flex().justify_center().child(div().size(px(dot_size)).rounded_full().bg(dot)))
+            .gap_1()
+            .child(div().w(px(18.)).flex().justify_center().child(div().size(px(dot_size)).rounded_full().bg(current)))
             .child(self.slider(Knob::Weight, self.weight, String::new(), cx))
             .tooltip(Tooltip::text("Размер"));
+        let background = ButtonLike::new("background")
+            .style(if self.panel { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+            .size(ButtonSize::Large)
+            .toggle_state(self.panel)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .px_1()
+                    .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(if self.frame.on() { Color::Accent } else { Color::Default }))
+                    .child(Label::new("Фон")),
+            )
+            .tooltip(Tooltip::text("Фон, отступы, скругление, тень и формат"))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.panel = !this.panel;
+                cx.notify();
+            }));
 
         let history = h_flex()
             .gap_0p5()
@@ -1314,7 +1377,16 @@ impl Editor {
                 .child(option("text-outline", TextStyle::Outline, "С обводкой"))
                 .child(Divider::vertical().h_5().mx_1())
         });
-        let style = h_flex().gap_0p5().children(text_options).children(fill_toggle).child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).child(weights);
+        let style = h_flex()
+            .flex_1()
+            .justify_end()
+            .gap_0p5()
+            .children(text_options)
+            .children(fill_toggle)
+            .child(palette)
+            .child(weights)
+            .child(Divider::vertical().h_5().mx_1())
+            .child(background);
 
         h_flex()
             .w(px(width))
@@ -1327,13 +1399,13 @@ impl Editor {
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
             .rounded_smoothing(crate::ui::SMOOTHING)
-            .child(history)
-            .child(tools)
+            // The tools stay in the middle: the sides take equal room.
+            .child(history.flex_1())
+            .child(tools.flex_none())
             .child(style)
     }
 
-    /// CleanShot-like bottom bar: backdrop on the left, the file in the
-    /// middle, and drag-out, copy and save on the right.
+    /// CleanShot-like bottom bar.
     fn render_footer(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         // Drag the annotated picture out, rendered at the moment the drag starts.
@@ -1343,14 +1415,14 @@ impl Editor {
             .flex()
             .items_center()
             .gap_1p5()
-            .px_2()
-            .py_1()
-            .rounded(crate::ui::rems_from_px(7.))
+            .h(crate::ui::rems_from_px(32.))
+            .px_3()
+            .rounded(crate::ui::rems_from_px(9.))
             .bg(cx.theme().colors().element_background)
             .hover(|s| s.bg(cx.theme().colors().element_hover))
             .cursor_grab()
-            .child(Icon::new(IconName::Image).size(IconSize::Small).color(Color::Muted))
-            .child(Label::new("Перетащи").size(LabelSize::Small).color(Color::Muted))
+            .child(Icon::from_path("icons/kadr/grip.svg").size(IconSize::Small).color(Color::Muted))
+            .child(Label::new("Перетащи").color(Color::Muted))
             .tooltip(Tooltip::text("Утащи картинку с пометками в чат, браузер или папку"))
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
@@ -1363,9 +1435,45 @@ impl Editor {
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(out, false)])))
             });
 
+        let zoom = h_flex()
+            .child(
+                IconButton::new("zoom-out", IconName::Dash)
+                    .shape(IconButtonShape::Square)
+                    .size(ButtonSize::Large)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Отдалить (Ctrl+−)"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.zoom_by(0.8);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("zoom-fit", format!("{}%", (self.disp.0 / self.real.0 * 100.).round()))
+                    .style(ButtonStyle::Subtle)
+                    .size(ButtonSize::Large)
+                    .label_size(LabelSize::Small)
+                    .tooltip(Tooltip::text(format!("{}, {} · по размеру окна (Ctrl+0)", name, self.size_label())))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.zoom = 1.;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                IconButton::new("zoom-in", IconName::Plus)
+                    .shape(IconButtonShape::Square)
+                    .size(ButtonSize::Large)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Приблизить (Ctrl+= или Ctrl+колесо)"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.zoom_by(1.25);
+                        cx.notify();
+                    })),
+            );
+
+        // Cancel on the left, drag-out in the middle, zoom and the results
+        // on the right.
         h_flex()
             .w(px(width))
-            .justify_between()
             .gap_2()
             // Clear of the window's rounded corners.
             .px_3()
@@ -1378,25 +1486,15 @@ impl Editor {
                     .flex_1()
                     .gap_1()
                     .child(
-                        ButtonLike::new("background")
-                            .style(if self.panel { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                            .toggle_state(self.panel)
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .px_1()
-                                    .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(if self.frame.on() { Color::Accent } else { Color::Muted }))
-                                    .child(Label::new("Фон").size(LabelSize::Small)),
-                            )
-                            .tooltip(Tooltip::text("Фон, отступы, скругление, тень и формат"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.panel = !this.panel;
-                                cx.notify();
-                            })),
+                        Button::new("cancel", "Отмена")
+                            .style(ButtonStyle::Subtle)
+                            .size(ButtonSize::Large)
+                            .key_binding(kit::keys("escape"))
+                            .on_click(|_, window, _| window.remove_window()),
                     )
                     .when(self.doc.crop.is_some(), |row| {
                         row.child(
-                            Button::new("uncrop", "Без обрезки").style(ButtonStyle::Subtle).color(Color::Muted).on_click(cx.listener(|this, _, _, cx| {
+                            Button::new("uncrop", "Без обрезки").style(ButtonStyle::Subtle).size(ButtonSize::Large).color(Color::Muted).on_click(cx.listener(|this, _, _, cx| {
                                 this.checkpoint();
                                 this.doc.crop = None;
                                 cx.notify();
@@ -1404,76 +1502,32 @@ impl Editor {
                         )
                     }),
             )
-            .child(
-                h_flex()
-                    .flex_none()
-                    .max_w(px(width * 0.3))
-                    .gap_2()
-                    .child(div().min_w_0().child(Label::new(name).size(LabelSize::Small).color(Color::Muted).truncate()))
-                    .child(Label::new(self.size_label()).size(LabelSize::Small).color(Color::Muted))
-                    .child(
-                        h_flex()
-                            .child(
-                                IconButton::new("zoom-out", IconName::Dash)
-                                    .shape(IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .tooltip(Tooltip::text("Отдалить (Ctrl+−)"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.zoom_by(0.8);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("zoom-fit", format!("{}%", (self.disp.0 / self.real.0 * 100.).round()))
-                                    .style(ButtonStyle::Subtle)
-                                    .label_size(LabelSize::Small)
-                                    .tooltip(Tooltip::text("По размеру окна (Ctrl+0)"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.zoom = 1.;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                IconButton::new("zoom-in", IconName::Plus)
-                                    .shape(IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .tooltip(Tooltip::text("Приблизить (Ctrl+= или Ctrl+колесо)"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.zoom_by(1.25);
-                                        cx.notify();
-                                    })),
-                            ),
-                    ),
-            )
+            .child(drag_out.flex_none())
             .child(
                 h_flex()
                     .flex_1()
                     .justify_end()
                     .gap_1()
+                    .child(zoom)
                     .child(
                         IconButton::new("ocr", IconName::CaseSensitive)
                             .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Large)
                             .tooltip(Tooltip::text("Распознать текст"))
                             .on_click(cx.listener(|this, _, _, cx| this.read_text(cx))),
                     )
-                    .child(drag_out)
-                    .child(Divider::vertical().h_5().mx_1())
-                    .child(
-                        Button::new("cancel", "Отмена")
-                            .style(ButtonStyle::Subtle)
-                            .color(Color::Muted)
-                            .key_binding(kit::keys("escape"))
-                            .on_click(|_, window, _| window.remove_window()),
-                    )
+                    .child(div().w(px(8.)))
                     .child(
                         Button::new("copy", "Копировать")
-                            .style(ButtonStyle::Subtle)
+                            .style(ButtonStyle::Filled)
+                            .size(ButtonSize::Large)
                             .key_binding(kit::keys("ctrl-c"))
                             .on_click(cx.listener(|this, _, window, cx| this.export(Export::Copy, window, cx))),
                     )
                     .child(
                         Button::new("save", "Сохранить")
                             .style(ButtonStyle::Accent)
+                            .size(ButtonSize::Large)
                             .key_binding(kit::keys("ctrl-s"))
                             .on_click(cx.listener(|this, _, window, cx| this.export(Export::Save, window, cx))),
                     ),

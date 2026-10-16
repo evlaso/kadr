@@ -450,8 +450,8 @@ impl KeyBinding {
 
 impl RenderOnce for KeyBinding {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        // Always at the default text size, like Zed's, whatever it sits next to.
-        div().flex_none().px_0p5().text_size(LabelSize::Default.rems()).line_height(relative(1.)).text_color(self.color.unwrap_or_else(|| Color::Muted.color(cx))).child(self.text)
+        // Smaller than the label it follows, on the same line.
+        div().flex_none().px_0p5().text_size(LabelSize::Small.rems()).text_color(self.color.unwrap_or_else(|| Color::Muted.color(cx))).child(self.text)
     }
 }
 
