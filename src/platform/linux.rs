@@ -166,3 +166,35 @@ pub async fn screenshot(mode: &str, dir: &Path) -> Option<PathBuf> {
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
 }
+
+/// While alive, the compositor draws the cursor on a hardware plane, so screen
+/// capture leaves it out (studio recordings draw their own). Hyprland turns
+/// hardware cursors off on NVIDIA and then paints the cursor into every frame,
+/// where `gpu-screen-recorder -cursor no` can't remove it. The user's setting
+/// comes back when this is dropped.
+pub struct CursorOffCapture(i64);
+
+impl CursorOffCapture {
+    pub fn start() -> Option<Self> {
+        let json = hypr("j/getoption cursor:no_hardware_cursors")?;
+        let current = serde_json::from_str::<serde_json::Value>(&json).ok()?["int"].as_i64()?;
+        if current == 0 {
+            return None;
+        }
+        set_hardware_cursors(0);
+        Some(CursorOffCapture(current))
+    }
+}
+
+impl Drop for CursorOffCapture {
+    fn drop(&mut self) {
+        set_hardware_cursors(self.0);
+    }
+}
+
+fn set_hardware_cursors(value: i64) {
+    // The Lua config takes `eval`, not `keyword`; wait for it so capture
+    // starts with the new setting.
+    let script = format!("hl.config({{ cursor = {{ no_hardware_cursors = {value} }} }})");
+    let _ = std::process::Command::new("hyprctl").args(["eval", &script]).stdout(std::process::Stdio::null()).status();
+}

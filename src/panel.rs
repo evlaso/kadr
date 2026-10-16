@@ -172,7 +172,7 @@ impl Render for Panel {
                     }))
                     .child(
                         IconButton::new("mic-menu", IconName::ChevronDown)
-                            .size(ButtonSize::Compact)
+                            .size(ButtonSize::Large)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Выбрать микрофон")),

@@ -144,6 +144,8 @@ struct Session {
     windows: Vec<AnyWindowHandle>,
     tracker: Option<Tracker>,
     studio: bool,
+    /// Restores the user's cursor setting when the session ends.
+    _cursor_off: Option<crate::platform::CursorOffCapture>,
     _hold: Hold,
 }
 
@@ -188,6 +190,7 @@ impl Clock {
 struct Started {
     keys: bool,
     studio: bool,
+    cursor_off: Option<crate::platform::CursorOffCapture>,
     gsr: async_process::Child,
     file: PathBuf,
     webcam: Option<u32>,
@@ -332,7 +335,7 @@ impl Recorder {
     }
 
     fn on_started(&mut self, started: Started, hold: Hold, cx: &mut Context<Self>) {
-        let Started { keys, studio, mut gsr, file, webcam, target } = started;
+        let Started { keys, studio, cursor_off, mut gsr, file, webcam, target } = started;
         let pid = gsr.id();
         cx.spawn(async move |this, cx| {
             let _ = gsr.status().await;
@@ -359,6 +362,7 @@ impl Recorder {
             windows,
             tracker: Some(tracker),
             studio,
+            _cursor_off: cursor_off,
             _hold: hold,
         });
         refresh_omarchy_indicator();
@@ -481,6 +485,8 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
     let fps = settings.fps.to_string();
     let quality = crate::settings::QUALITIES[settings.quality].0;
+    // Studio recordings leave the cursor out; the studio draws its own.
+    let cursor_off = opts.studio.then(crate::platform::CursorOffCapture::start).flatten();
     if opts.studio {
         args.extend(["-cursor".into(), "no".into()]);
     }
@@ -531,7 +537,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         let _ = std::fs::remove_file(&file);
         return Err(Some(log_tail()));
     }
-    Ok(Started { keys: opts.keys, studio: opts.studio, gsr, file, webcam, target })
+    Ok(Started { keys: opts.keys, studio: opts.studio, cursor_off, gsr, file, webcam, target })
 }
 
 /// Top-left margins of the control pill, relative to the monitor it goes on.

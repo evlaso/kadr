@@ -90,3 +90,12 @@ pub async fn screenshot(_mode: &str, _dir: &Path) -> Option<PathBuf> {
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
     std::fs::copy(target, link).map(|_| ())
 }
+
+/// Capture leaves the cursor out on its own here; nothing to switch.
+pub struct CursorOffCapture;
+
+impl CursorOffCapture {
+    pub fn start() -> Option<Self> {
+        None
+    }
+}
