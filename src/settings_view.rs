@@ -11,7 +11,7 @@ use gpui::{
 use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
-use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
+use crate::settings::{CARD_SECONDS, COUNTDOWNS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
 use crate::studio::{PADDINGS, ZOOMS};
 use crate::{ocr, palette, tray, util};
 
@@ -221,6 +221,7 @@ impl SettingsView {
                 row("Частота кадров", "60 — плавнее, 30 — файлы меньше", chips(cx, "fps", FPS.iter().map(|f| format!("{f} к/с")).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
                 row("Качество", "Выше — чётче мелкий текст, но файлы больше", chips(cx, "quality", QUALITIES.iter().map(|q| q.1.to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
                 row("Рамка вокруг области", "Подсвечивать записываемую область (в запись не попадает)", switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
+                row("Отсчёт перед записью", "Цифры над областью, Esc отменяет", chips(cx, "countdown", COUNTDOWNS.iter().map(|&n| if n == 0 { "Нет".into() } else { format!("{n} с") }).collect(), COUNTDOWNS.iter().position(|&n| n == s.countdown), |s, i| s.countdown = COUNTDOWNS[i])),
             ],
             Tab::Studio => {
                 let ring = cx.theme().colors().text;

@@ -480,6 +480,11 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         Area::Fixed(target) => target,
     };
 
+    // 3, 2, 1 over the area; Esc there cancels.
+    if !countdown(&target, Settings::load().countdown, &mons, cx).await {
+        return Err(None);
+    }
+
     let webcam = if opts.webcam { start_webcam(&target, cx).await } else { None };
 
     let settings = Settings::load();
@@ -815,4 +820,111 @@ fn log_tail() -> String {
     let lines: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
     let tail = lines[lines.len().saturating_sub(3)..].join("\n");
     if tail.is_empty() { "gpu-screen-recorder завершился без вывода".into() } else { tail }
+}
+
+/// A countdown over the area before recording starts, like CleanShot's.
+/// False when cancelled with Esc.
+async fn countdown(target: &Target, seconds: u32, mons: &[Mon], cx: &mut AsyncApp) -> bool {
+    if seconds == 0 {
+        return true;
+    }
+    let (mon, center) = match *target {
+        Target::Region { x, y, w, h } => {
+            let Some(mon) = mons.iter().find(|m| m.contains(x + w / 2, y + h / 2)) else { return true };
+            (mon.clone(), ((x + w / 2 - mon.x) as f32, (y + h / 2 - mon.y) as f32))
+        }
+        Target::Monitor(ref name) => {
+            let Some(mon) = mons.iter().find(|m| &m.name == name) else { return true };
+            (mon.clone(), (mon.w as f32 / 2., mon.h as f32 / 2.))
+        }
+    };
+    let left = Rc::new(Cell::new(seconds));
+    let cancelled = Rc::new(Cell::new(false));
+    let spec = LayerSpec {
+        namespace: "kadr-countdown",
+        anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+        margin: (0., 0., 0., 0.),
+        size: (mon.w as f32, mon.h as f32),
+        keyboard: KeyboardInteractivity::Exclusive,
+        ignore_zones: true,
+        monitor: Some(mon),
+    };
+    let (shown_left, shown_cancel) = (left.clone(), cancelled.clone());
+    let window = cx.update(|cx| {
+        kit::open_layer(cx, spec, move |window, cx| {
+            cx.new(|cx| {
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
+                Countdown { left: shown_left, cancelled: shown_cancel, center, focus }
+            })
+        })
+    });
+    let Some(window) = window else { return true };
+    for n in (1..=seconds).rev() {
+        left.set(n);
+        let _ = window.update(cx, |_, _, cx| cx.notify());
+        // Tick in small steps so Esc answers at once.
+        for _ in 0..10 {
+            cx.background_executor().timer(Duration::from_millis(100)).await;
+            if cancelled.get() {
+                break;
+            }
+        }
+        if cancelled.get() {
+            break;
+        }
+    }
+    let _ = window.update(cx, |_, window, _| window.remove_window());
+    // Let it leave the screen before the recorder looks at it.
+    cx.background_executor().timer(Duration::from_millis(150)).await;
+    !cancelled.get()
+}
+
+struct Countdown {
+    left: Rc<Cell<u32>>,
+    cancelled: Rc<Cell<bool>>,
+    /// Middle of the area, on the monitor.
+    center: (f32, f32),
+    focus: gpui::FocusHandle,
+}
+
+impl Render for Countdown {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let n = self.left.get();
+        let side = 150. * kit::SCALE;
+        let cancelled = self.cancelled.clone();
+        kit::root(cx)
+            .relative()
+            .track_focus(&self.focus)
+            .on_key_down(move |e: &gpui::KeyDownEvent, _, _| {
+                if e.keystroke.key == "escape" {
+                    cancelled.set(true);
+                }
+            })
+            .child(
+                div()
+                    .absolute()
+                    .left(px(self.center.0 - side / 2.))
+                    .top(px(self.center.1 - side / 2.))
+                    .w(px(side))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .size(px(side))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .elevation_3(cx)
+                            .rounded(px(side * 0.28))
+                            .text_size(px(side * 0.5))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(n.to_string())
+                            .with_animation(("tick", n as usize), gpui::Animation::new(Duration::from_millis(260)).with_easing(gpui::ease_out_quint()), |el, d| el.opacity(d)),
+                    )
+                    .child(Label::new("Esc — отменить").size(LabelSize::Small).color(Color::Muted)),
+            )
+    }
 }

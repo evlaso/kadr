@@ -19,6 +19,7 @@ pub const QUALITIES: [(&str, &str); 4] = [("medium", "Среднее"), ("high",
 pub const CARD_SECONDS: [u32; 4] = [5, 10, 20, 0];
 pub const MAX_CARDS: [usize; 3] = [2, 4, 6];
 pub const FPS: [u32; 2] = [30, 60];
+pub const COUNTDOWNS: [u32; 3] = [0, 3, 5];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -38,6 +39,8 @@ pub struct Settings {
     /// Index into `QUALITIES`.
     pub quality: usize,
     pub region_frame: bool,
+    /// Seconds to count down before recording; 0 starts at once.
+    pub countdown: u32,
     pub studio_zoom: f64,
     pub studio_backdrop: usize,
     pub studio_padding: usize,
@@ -57,6 +60,7 @@ impl Default for Settings {
             fps: 60,
             quality: 2,
             region_frame: true,
+            countdown: 3,
             studio_zoom: 1.8,
             studio_backdrop: 0,
             studio_padding: 2,
@@ -89,6 +93,7 @@ impl Settings {
             fps: num_or("fps", d.fps as u64) as u32,
             quality: (num_or("quality", d.quality as u64) as usize).min(QUALITIES.len() - 1),
             region_frame: bool_or("region_frame", d.region_frame),
+            countdown: num_or("countdown", d.countdown as u64) as u32,
             studio_zoom: v["studio_zoom"].as_f64().unwrap_or(d.studio_zoom).clamp(1.0, 4.0),
             studio_backdrop: num_or("studio_backdrop", d.studio_backdrop as u64) as usize,
             studio_padding: num_or("studio_padding", d.studio_padding as u64) as usize,
@@ -109,6 +114,7 @@ impl Settings {
             "fps": self.fps,
             "quality": self.quality,
             "region_frame": self.region_frame,
+            "countdown": self.countdown,
             "studio_zoom": self.studio_zoom,
             "studio_backdrop": self.studio_backdrop,
             "studio_padding": self.studio_padding,
