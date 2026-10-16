@@ -309,8 +309,11 @@ impl Editor {
             }
         }
         d.b = b;
+        // Sample every few screen pixels: mouse events arrive with sub-pixel
+        // jitter that otherwise turns into a ragged edge.
+        let min_step = 2.5 / self.disp.0 * self.px.0 as f32;
         if let Kind::Pen(points) | Kind::Marker(points) = &mut d.kind
-            && points.last().is_none_or(|l| (l.0 - p.0).hypot(l.1 - p.1) > 1.5)
+            && points.last().is_none_or(|l| (l.0 - p.0).hypot(l.1 - p.1) > min_step)
         {
             points.push(p);
         }
@@ -686,6 +689,45 @@ fn ellipse_points(a: P, b: P) -> Vec<P> {
     .collect()
 }
 
+/// Smooth freehand points into a curve: quadratic segments between the
+/// midpoints of consecutive points, with each point as the control. Shared by
+/// screen and export so both draw the same line.
+fn smooth(raw: &[P]) -> Vec<P> {
+    if raw.len() < 3 {
+        return raw.to_vec();
+    }
+    // First average each point with its neighbours (ends stay put) to take out
+    // the hand and sensor jitter, then curve through what's left.
+    let r = 2usize;
+    let points: Vec<P> = (0..raw.len())
+        .map(|i| {
+            if i == 0 || i + 1 == raw.len() {
+                return raw[i];
+            }
+            let k = r.min(i).min(raw.len() - 1 - i);
+            let window = &raw[i - k..=i + k];
+            let n = window.len() as f32;
+            (window.iter().map(|p| p.0).sum::<f32>() / n, window.iter().map(|p| p.1).sum::<f32>() / n)
+        })
+        .collect();
+    let points = &points[..];
+    let mid = |a: P, b: P| ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
+    let mut out = vec![points[0]];
+    for w in points.windows(3) {
+        let (start, ctrl, end) = (mid(w[0], w[1]), w[1], mid(w[1], w[2]));
+        for i in 1..=6 {
+            let t = i as f32 / 6.;
+            let u = 1. - t;
+            out.push((
+                u * u * start.0 + 2. * u * t * ctrl.0 + t * t * end.0,
+                u * u * start.1 + 2. * u * t * ctrl.1 + t * t * end.1,
+            ));
+        }
+    }
+    out.push(*points.last().unwrap());
+    out
+}
+
 /// Where the shaft ends and the head triangle, shared by screen and export.
 fn arrow_geometry(a: P, b: P, w: f32) -> (P, [P; 3]) {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
@@ -720,11 +762,11 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
         Kind::Rect => stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, c, w),
         Kind::Ellipse => stroke(window, &ellipse_points(a, b), true, c, w),
         Kind::Line => stroke(window, &[a, b], false, c, w),
-        Kind::Pen(points) => stroke(window, points, false, c, w),
+        Kind::Pen(points) => stroke(window, &smooth(points), false, c, w),
         Kind::Marker(points) => {
             let mut faded = c;
             faded.a = MARKER_ALPHA;
-            stroke(window, points, false, faded, w)
+            stroke(window, &smooth(points), false, faded, w)
         }
         Kind::Arrow => {
             let (shaft, head) = arrow_geometry(a, b, w);
@@ -861,12 +903,12 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<Vec<u8>> {
                 }
             }
             Kind::Pen(points) => {
-                if let Some(path) = polyline(points, false) {
+                if let Some(path) = polyline(&smooth(points), false) {
                     pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
                 }
             }
             Kind::Marker(points) => {
-                if let Some(path) = polyline(points, false) {
+                if let Some(path) = polyline(&smooth(points), false) {
                     pm.stroke_path(&path, &paint_for(c, MARKER_ALPHA), &stroke_for(size), Transform::identity(), None);
                 }
             }
@@ -954,3 +996,38 @@ fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size: f32, color
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A wobbly mouse trace, raw and smoothed, rendered side by side.
+    #[test]
+    fn smooth_pen_render() {
+        let src = RgbaImage::from_pixel(600, 220, image::Rgba([16, 15, 15, 255]));
+        let trace = |y0: f32| -> Vec<P> {
+            (0..520).map(|i| {
+                let x = 40. + i as f32;
+                let jitter = ((i * 7919) % 13) as f32 / 13. - 0.5;
+                (x, y0 + (x / 40.).sin() * 25. + jitter * 1.4)
+            })
+            // Mimic the 2.5 px sampling.
+            .step_by(3)
+            .collect()
+        };
+        let red = gpui::hsla(0.01, 0.6, 0.54, 1.);
+        let mut shapes = Vec::new();
+        // Raw polyline (old behaviour) via a chain of lines, then the smoothed pen.
+        let raw = trace(60.);
+        for w in raw.windows(2) {
+            shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6. });
+        }
+        shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6. });
+        let png = rasterize(&src, &shapes).unwrap();
+        assert!(!png.is_empty());
+        // KADR_TEST_OUT=/path/out.png to look at the result.
+        if let Ok(out) = std::env::var("KADR_TEST_OUT") {
+            std::fs::write(out, png).unwrap();
+        }
+    }
+}
