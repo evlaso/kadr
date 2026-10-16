@@ -106,7 +106,7 @@ pub const RADIUS: f32 = 16.;
 /// plus a tighter contact shadow.
 pub fn shadow() -> Vec<BoxShadow> {
     vec![
-        BoxShadow { color: hsla(0., 0., 0., 0.38), offset: point(px(0.), px(10.)), blur_radius: px(28.), spread_radius: px(0.), inset: false },
+        BoxShadow { color: hsla(0., 0., 0., 0.38), offset: point(px(0.), px(8.)), blur_radius: px(22.), spread_radius: px(0.), inset: false },
         BoxShadow { color: hsla(0., 0., 0., 0.22), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
     ]
 }

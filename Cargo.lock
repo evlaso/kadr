@@ -2649,6 +2649,7 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "image",
  "libc",
  "serde_json",
  "theme",

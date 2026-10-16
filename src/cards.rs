@@ -21,7 +21,7 @@ const MAX_CARDS: usize = 4;
 const GAP: f32 = 14.;
 /// Room above and to the right of the stack so card shadows aren't cut off by
 /// the overlay's edge. Below and to the left is the screen edge anyway.
-const PAD: f32 = 24.;
+const PAD: f32 = 56.;
 /// Distance from the screen corner.
 const EDGE: f32 = 10.;
 const AUTO_DISMISS: Duration = Duration::from_secs(10);
@@ -55,13 +55,17 @@ pub fn show(path: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx| {
         let _hold = hold;
         let loaded = if is_video(&path) {
-            video_preview(&path).await
+            video_preview(&path, cx).await
         } else {
-            image_preview(&path).map(|(i, w, h)| (i, w, h, None))
+            let file = path.clone();
+            cx.background_executor()
+                .spawn(async move { card_thumbnail(&std::fs::read(&file).ok()?) })
+                .await
+                .map(|(image, height)| (image, height, None))
         };
         match loaded {
-            Some((image, w, h, video)) => {
-                let _ = cx.update(|cx| add(path, image, w, h, video, cx));
+            Some((image, height, video)) => {
+                let _ = cx.update(|cx| add(path, image, height, video, cx));
             }
             None => util::notify("Не удалось открыть файл", &path.display().to_string()),
         }
@@ -82,8 +86,7 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
         .unwrap_or(false)
 }
 
-fn add(path: PathBuf, image: Arc<Image>, w: u32, h: u32, video: Option<f64>, cx: &mut App) {
-    let height = (CARD_WIDTH * h as f32 / w.max(1) as f32).clamp(90., 240.);
+fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
     let mut slot = Some(Card { id: 0, path, image, height, video, deadline: Instant::now() + AUTO_DISMISS, hovered: false });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
@@ -295,8 +298,9 @@ impl CardStack {
             .overflow_hidden()
             .bg(colors.elevated_surface_background)
             .shadow(kit::shadow())
-            // GPUI clips children to a rectangle, so the image rounds its own corners.
-            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Cover).rounded(px(kit::RADIUS)))
+            // GPUI clips children to a rectangle, so the image rounds its own
+            // corners; it is pre-cropped to the card so those are the visible ones.
+            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
             .children(badge)
             .child(hover)
             .child(self.region.mark())
@@ -386,8 +390,28 @@ pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
     Some((Arc::new(Image::from_bytes(ImageFormat::Png, bytes)), w, h))
 }
 
+/// Card-sized thumbnail: center-cropped to the card's aspect and scaled to
+/// twice its width, so corners round correctly and a 4K screenshot isn't kept
+/// in memory. Returns the image and the card height.
+fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32)> {
+    let src = image::load_from_memory(bytes).ok()?;
+    let (w, h) = (src.width().max(1), src.height().max(1));
+    let height = (CARD_WIDTH * h as f32 / w as f32).clamp(90., 240.);
+    let aspect = CARD_WIDTH / height;
+    let (cw, ch) = if (w as f32 / h as f32) > aspect {
+        ((h as f32 * aspect).round() as u32, h)
+    } else {
+        (w, (w as f32 / aspect).round() as u32)
+    };
+    let cropped = src.crop_imm((w - cw.min(w)) / 2, (h - ch.min(h)) / 2, cw.min(w), ch.min(h));
+    let thumb = cropped.resize_exact((CARD_WIDTH * 2.) as u32, (height * 2.) as u32, image::imageops::FilterType::Triangle);
+    let mut png = Vec::new();
+    thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    Some((Arc::new(Image::from_bytes(ImageFormat::Png, png)), height))
+}
+
 /// First frame (scaled down) and duration in seconds.
-async fn video_preview(path: &Path) -> Option<(Arc<Image>, u32, u32, Option<f64>)> {
+async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>)> {
     use std::ffi::OsStr;
     let thumb = util::runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
     let (ok, _) = util::output::<&OsStr>(&[
@@ -395,13 +419,13 @@ async fn video_preview(path: &Path) -> Option<(Arc<Image>, u32, u32, Option<f64>
         "-vframes".as_ref(), "1".as_ref(), "-vf".as_ref(), "scale=640:-2".as_ref(), thumb.as_os_str(),
     ])
     .await?;
-    let preview = ok.then(|| image_preview(&thumb)).flatten();
+    let bytes = ok.then(|| std::fs::read(&thumb).ok()).flatten();
     let _ = std::fs::remove_file(&thumb);
     let (_, duration) = util::output::<&OsStr>(&[
         "ffprobe".as_ref(), "-v".as_ref(), "error".as_ref(), "-show_entries".as_ref(), "format=duration".as_ref(),
         "-of".as_ref(), "csv=p=0".as_ref(), path.as_os_str(),
     ])
     .await?;
-    let (image, w, h) = preview?;
-    Some((image, w, h, Some(duration.trim().parse().unwrap_or(0.0))))
+    let (image, height) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
+    Some((image, height, Some(duration.trim().parse().unwrap_or(0.0))))
 }
