@@ -185,11 +185,12 @@ impl Shape {
         }
     }
 
-    /// Resize handles: corners for boxes, ends for lines.
+    /// Resize handles: corners then edge middles for boxes, ends for lines.
     fn handles(&self) -> Vec<P> {
         let (a, b) = (self.a, self.b);
+        let mid = ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
         match self.kind {
-            Kind::Rect | Kind::Ellipse | Kind::Blur(_) => vec![a, (b.0, a.1), b, (a.0, b.1)],
+            Kind::Rect | Kind::Ellipse | Kind::Blur(_) => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
             Kind::Line | Kind::Arrow => vec![a, b],
             _ => Vec::new(),
         }
@@ -201,6 +202,10 @@ impl Shape {
             (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 2) => self.b = p,
             (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 1) => (self.b.0, self.a.1) = p,
             (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 3) => (self.a.0, self.b.1) = p,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 4) => self.a.1 = p.1,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 5) => self.b.0 = p.0,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 6) => self.b.1 = p.1,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 7) => self.a.0 = p.0,
             _ => {}
         }
         self.stale_patch();
@@ -1042,13 +1047,18 @@ impl Editor {
                     }
                     window.paint_quad(outline(area(l, t, r, bt), gpui::white(), BorderStyle::Solid));
                 }
+                // Like CleanShot: shapes that resize show only round knobs;
+                // the rest (pen, text, counters) get a light dashed frame.
                 if let Some(((l, t, r, b), handles)) = selection {
-                    let pad = 4. / s;
-                    window.paint_quad(outline(area(l - pad, t - pad, r + pad, b + pad), accent, BorderStyle::Dashed));
+                    if handles.is_empty() {
+                        let pad = 4. / s;
+                        window.paint_quad(outline(area(l - pad, t - pad, r + pad, b + pad), accent, BorderStyle::Dashed));
+                    }
                     for h in handles {
                         let c = pt(h);
-                        let knob = Bounds::new(point(c.x - px(5.), c.y - px(5.)), size(px(10.), px(10.)));
-                        window.paint_quad(gpui::quad(knob, px(2.), gpui::white(), px(1.5), accent, BorderStyle::Solid));
+                        let disc = |r: f32| Bounds::new(point(c.x - px(r), c.y - px(r)), size(px(2. * r), px(2. * r)));
+                        window.paint_quad(fill(disc(8.), rgba(0x00000033)).corner_radii(px(8.)));
+                        window.paint_quad(gpui::quad(disc(6.), px(6.), gpui::white(), px(1.5), accent, BorderStyle::Solid));
                     }
                 }
             },
