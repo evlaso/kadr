@@ -51,13 +51,19 @@ pub fn open(target: Target, cx: &mut App) -> Option<WindowHandle<Panel>> {
         ignore_zones: true,
         monitor: Some(mon.clone()),
     };
-    kit::open_layer(cx, spec, |window, cx| {
+    let shown_mon = mon.clone();
+    let handle = kit::open_layer(cx, spec, |window, cx| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
             Panel::new(target, mon, rect, focus)
         })
-    })
+    });
+    // The camera shows up right away, to set it up before recording.
+    if handle.is_some() && Opts::load().webcam {
+        crate::webcam::show(&shown_mon, rect, cx);
+    }
+    handle
 }
 
 impl Panel {
@@ -207,6 +213,11 @@ impl Render for Panel {
             })))
             .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), self.opts.webcam).tooltip(tip("Камера", on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.webcam = !this.opts.webcam;
+                if this.opts.webcam {
+                    crate::webcam::show(&this.mon, this.rect, cx);
+                } else {
+                    crate::webcam::hide(cx);
+                }
                 cx.notify();
             })))
             .child(

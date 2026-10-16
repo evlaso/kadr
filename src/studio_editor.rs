@@ -51,6 +51,7 @@ enum Knob {
     CursorSize,
     CursorSmooth,
     CamSize,
+    CamRound,
 }
 
 enum Drag {
@@ -625,6 +626,7 @@ impl StudioEditor {
             Knob::CursorSize => self.project.cursor_size = 0.5 + v * (MAX_CURSOR - 0.5),
             Knob::CursorSmooth => self.project.cursor_smooth = v,
             Knob::CamSize => self.project.cam_size = studio::MIN_CAM + v * (studio::MAX_CAM - studio::MIN_CAM),
+            Knob::CamRound => self.project.cam_round = v,
         }
         self.changed(cx);
     }
@@ -1457,34 +1459,34 @@ impl StudioEditor {
             )
             .child(cursor)
             .children(self.cam_file.as_ref().map(|_| {
-                let shapes = studio::CAM_SHAPES.iter().enumerate().map(|(i, name)| {
-                    chip(SharedString::from(format!("cam-shape-{i}")), (*name).into(), self.project.cam_shape == i).on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.cam_shape = i;
-                        this.changed(cx);
-                    }))
-                })
-                .collect::<Vec<_>>();
-                // A little frame with the camera's corner filled in.
-                let (accent, muted, edge) = (cx.theme().colors().text_accent, cx.theme().colors().text_muted, cx.theme().colors().border);
-                let corners = (0..4).map(|i| {
-                    let on = self.project.cam_corner == i;
-                    let mark = div().absolute().size(px(6.)).rounded(px(2.)).bg(if on { accent } else { muted });
-                    let mark = match i {
-                        0 => mark.top(px(2.)).left(px(2.)),
-                        1 => mark.top(px(2.)).right(px(2.)),
-                        2 => mark.bottom(px(2.)).left(px(2.)),
-                        _ => mark.bottom(px(2.)).right(px(2.)),
-                    };
-                    ButtonLike::new(SharedString::from(format!("cam-corner-{i}")))
-                        .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                        .toggle_state(on)
-                        .child(div().m_1().relative().w(px(22.)).h(px(15.)).rounded(px(3.)).border_1().border_color(edge).child(mark))
+                // A 3×3 grid without the middle: the spots the camera snaps to.
+                let (accent, edge) = (cx.theme().colors().text_accent, cx.theme().colors().border);
+                let spot = |i: usize, cx: &mut Context<Self>| {
+                    let on = self.project.cam_anchor == i;
+                    div()
+                        .id(SharedString::from(format!("cam-anchor-{i}")))
+                        .size(px(18.))
+                        .rounded(px(5.))
+                        .border_1()
+                        .border_color(if on { accent } else { edge })
+                        .when(on, |d| d.bg(accent))
+                        .cursor_pointer()
+                        .hover(|d| d.border_color(accent))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.project.cam_corner = i;
+                            this.project.cam_anchor = i;
                             this.changed(cx);
                         }))
-                })
-                .collect::<Vec<_>>();
+                        .into_any_element()
+                };
+                let rows = [[Some(0), Some(1), Some(2)], [Some(7), None, Some(3)], [Some(6), Some(5), Some(4)]];
+                let mut grid = v_flex().gap_1();
+                for row in rows {
+                    let cells: Vec<AnyElement> = row.iter().map(|cell| match cell {
+                        Some(i) => spot(*i, cx),
+                        None => div().size(px(18.)).into_any_element(),
+                    }).collect();
+                    grid = grid.child(h_flex().gap_1().children(cells));
+                }
                 section("Камера")
                     .child(toggle_row(
                         "Показывать камеру",
@@ -1495,16 +1497,17 @@ impl StudioEditor {
                         })),
                     ))
                     .when(self.project.cam, |s| {
-                        s.child(h_flex().gap_1().children(shapes))
-                            .child(caption("Размер"))
+                        s.child(caption("Размер"))
                             .child(self.slider(
                                 Knob::CamSize,
                                 (self.project.cam_size - studio::MIN_CAM) / (studio::MAX_CAM - studio::MIN_CAM),
                                 format!("{}%", (self.project.cam_size * 100.).round()),
                                 cx,
                             ))
-                            .child(caption("Угол"))
-                            .child(h_flex().gap_1().children(corners))
+                            .child(caption("Скругление"))
+                            .child(self.slider(Knob::CamRound, self.project.cam_round, format!("{}%", (self.project.cam_round * 100.).round()), cx))
+                            .child(caption("Где"))
+                            .child(grid)
                     })
             }))
             .child(

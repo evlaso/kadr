@@ -115,15 +115,14 @@ pub struct Project {
     pub motion_blur: usize,
     /// The camera recorded alongside (studio mode), laid over a corner.
     pub cam: bool,
-    /// Index into `CAM_SHAPES`.
-    pub cam_shape: usize,
+    /// 0 square … 1 circle.
+    pub cam_round: f64,
     /// Side as a share of the output's short side.
     pub cam_size: f64,
-    /// 0 top left, 1 top right, 2 bottom left, 3 bottom right.
-    pub cam_corner: usize,
+    /// Index into `webcam::ANCHORS`: a corner or an edge's middle.
+    pub cam_anchor: usize,
 }
 
-pub const CAM_SHAPES: [&str; 3] = ["Круг", "Скруглённый", "Квадрат"];
 pub const MIN_CAM: f64 = 0.12;
 pub const MAX_CAM: f64 = 0.5;
 
@@ -146,30 +145,32 @@ pub fn camera_offset(video: &Path) -> f64 {
         .max(0.)
 }
 
-pub fn save_camera_offset(video: &Path, offset: f64) {
+/// Where the camera file starts against the screen, and the bubble's look
+/// at the time, which the studio starts from.
+pub fn save_camera(video: &Path, offset: f64, look: crate::webcam::Look) {
     let mut p = track::path_for(video).into_os_string();
     p.push(".camera.json");
     let path = PathBuf::from(p);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(path, json!({ "offset": offset }).to_string());
+    let _ = std::fs::write(path, json!({ "offset": offset, "look": look.to_json() }).to_string());
+}
+
+/// The bubble's look when the recording was made.
+fn camera_look(video: &Path) -> Option<crate::webcam::Look> {
+    let mut p = track::path_for(video).into_os_string();
+    p.push(".camera.json");
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(PathBuf::from(p)).ok()?).ok()?;
+    v.get("look").map(crate::webcam::Look::from_json)
 }
 
 /// Where the camera sits on the output frame: left, top, side and corner
-/// radius, in output pixels.
+/// radius, in output pixels; placed like the bubble was on screen.
 pub fn camera_box(l: &Layout, project: &Project) -> (f64, f64, f64, f64) {
-    let short = l.ow.min(l.oh) as f64;
-    let side = ((project.cam_size * short / 2.).round() * 2.).max(8.);
-    let margin = (short * 0.04).round();
-    let x = if project.cam_corner % 2 == 0 { margin } else { l.ow as f64 - side - margin };
-    let y = if project.cam_corner < 2 { margin } else { l.oh as f64 - side - margin };
-    let radius = match project.cam_shape {
-        0 => side / 2.,
-        1 => side * 0.2,
-        _ => 0.,
-    };
-    (x, y, side, radius)
+    let (x, y, side) = crate::webcam::place(project.cam_anchor, project.cam_size, (0., 0., l.ow as f64, l.oh as f64));
+    let side = ((side / 2.).round() * 2.).max(8.);
+    (x.round(), y.round(), side, project.cam_round * side / 2.)
 }
 
 impl Project {
@@ -182,7 +183,10 @@ impl Project {
     /// The saved edit, or segments placed on the recording's clicks.
     pub fn load(video: &Path, track: &Track, p: &Probe) -> Project {
         let saved = std::fs::read_to_string(Self::path(video)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-        let d = Project::auto(track, p);
+        let mut d = Project::auto(track, p);
+        if let Some(look) = camera_look(video) {
+            (d.cam_anchor, d.cam_size, d.cam_round) = (look.anchor, look.size.clamp(MIN_CAM, MAX_CAM), look.round);
+        }
         match saved {
             Some(v) => Project::from_json(&v, d, p),
             None => d,
@@ -242,9 +246,9 @@ impl Project {
             cursor_smooth: v["cursor_smooth"].as_f64().unwrap_or(d.cursor_smooth).clamp(0., 1.),
             motion_blur: index("motion_blur", d.motion_blur, MOTION_BLUR.len()),
             cam: v["cam"].as_bool().unwrap_or(d.cam),
-            cam_shape: index("cam_shape", d.cam_shape, CAM_SHAPES.len()),
+            cam_round: v["cam_round"].as_f64().unwrap_or(d.cam_round).clamp(0., 1.),
             cam_size: v["cam_size"].as_f64().unwrap_or(d.cam_size).clamp(MIN_CAM, MAX_CAM),
-            cam_corner: index("cam_corner", d.cam_corner, 4),
+            cam_anchor: index("cam_anchor", d.cam_anchor, crate::webcam::ANCHORS.len()),
         }
     }
 
@@ -287,9 +291,9 @@ impl Project {
             "cursor_smooth": self.cursor_smooth,
             "motion_blur": self.motion_blur,
             "cam": self.cam,
-            "cam_shape": self.cam_shape,
+            "cam_round": self.cam_round,
             "cam_size": self.cam_size,
-            "cam_corner": self.cam_corner,
+            "cam_anchor": self.cam_anchor,
         })
     }
 
@@ -373,9 +377,9 @@ impl Project {
             cursor_smooth: 0.5,
             motion_blur: 1,
             cam: true,
-            cam_shape: 0,
+            cam_round: 1.,
             cam_size: 0.26,
-            cam_corner: 3,
+            cam_anchor: 4,
         };
         // The look last used in the studio carries over.
         match std::fs::read_to_string(last_look_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
@@ -873,8 +877,8 @@ fn motion_ranges(camera: &Camera, cursor: Option<&[(f64, f64, f64)]>, p: &Probe)
 /// (zooms, trim, cuts).
 const LOOK_KEYS: [&str; 24] = [
     "backdrop", "wallpaper", "pad", "radius", "shadow", "clicks", "keys", "keys_top", "keys_size", "audio", "aspect", "resolution",
-    "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "motion_blur", "cam", "cam_shape",
-    "cam_size", "cam_corner",
+    "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "motion_blur", "cam", "cam_round",
+    "cam_size", "cam_anchor",
 ];
 
 fn last_look_path() -> PathBuf {

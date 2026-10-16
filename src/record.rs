@@ -22,6 +22,7 @@ use crate::kit::{self, Hold, InputRegion, LayerSpec};
 use crate::ui::{Divider, IconButtonShape, Tooltip, prelude::*};
 use crate::util::{self, Mon};
 use crate::cards;
+use crate::webcam;
 
 /// The recording bar sits where the panel's bar was: this far under the
 /// area, assuming this height (the panel's).
@@ -40,12 +41,6 @@ pub fn microphones() -> Vec<(String, String)> {
         .filter(|(name, _)| !name.starts_with("default_") && !name.ends_with(".monitor"))
         .map(|(n, d)| (n.to_owned(), d.to_owned()))
         .collect()
-}
-
-/// Omarchy's webcam resize helper reads the recorded region from here to keep
-/// the camera inside it.
-fn region_file() -> PathBuf {
-    util::runtime_dir().join("omarchy-screenrecord-region")
 }
 
 fn log_file() -> PathBuf {
@@ -280,8 +275,11 @@ pub fn panel_done(choice: PanelChoice, opts: Opts, cx: &mut App) {
         match choice {
             // Let the bar's close animation finish so it isn't recorded.
             PanelChoice::Record(target) => rec.start(Area::Fixed(target), opts, Duration::from_millis(250), cx),
-            PanelChoice::Repick => rec.command(None, None, cx),
-            PanelChoice::Cancel => {}
+            PanelChoice::Repick => {
+                webcam::hide(cx);
+                rec.command(None, None, cx)
+            }
+            PanelChoice::Cancel => webcam::hide(cx),
         }
     });
 }
@@ -296,6 +294,7 @@ impl Recorder {
                 let handle = *handle;
                 self.state = State::Idle;
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
+                webcam::hide(cx);
             }
             // Like CleanShot: pick the area first, then show the bar by it.
             State::Idle => match mode {
@@ -334,6 +333,7 @@ impl Recorder {
                 Ok(started) => rec.on_started(started, hold, cx),
                 Err(err) => {
                     rec.state = State::Idle;
+                    webcam::hide(cx);
                     if let Some(err) = err {
                         util::notify("Запись не запустилась", &err);
                     }
@@ -426,7 +426,7 @@ impl Recorder {
         if let Some(cam) = s.webcam {
             util::signal(cam, util::Signal::Terminate);
         }
-        let _ = std::fs::remove_file(region_file());
+        webcam::hide(cx);
         refresh_omarchy_indicator();
 
         cx.spawn(async move |this, cx| {
@@ -499,12 +499,24 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     // In studio mode the camera is recorded on its own, so the studio can
     // shape, size and place it; otherwise it's a window on screen.
     let (webcam, camera_began) = match (opts.webcam, opts.studio) {
-        (false, _) => (None, None),
-        (true, false) => (start_webcam(&target, cx).await, None),
-        (true, true) => match record_camera(&file, cx).await {
-            Some((pid, began)) => (Some(pid), Some(began)),
-            None => (None, None),
-        },
+        (false, _) => {
+            cx.update(webcam::hide);
+            (None, None)
+        }
+        // The bubble is recorded where it was put.
+        (true, false) => {
+            cx.update(|cx| show_bubble(&target, &mons, cx));
+            (None, None)
+        }
+        // The camera goes to its own file; the bubble frees it first.
+        (true, true) => {
+            cx.update(webcam::hide);
+            cx.background_executor().timer(Duration::from_millis(300)).await;
+            match record_camera(&file, cx).await {
+                Some((pid, began)) => (Some(pid), Some(began)),
+                None => (None, None),
+            }
+        }
     };
 
     let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
@@ -563,21 +575,33 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         return Err(Some(log_tail()));
     }
     if let Some(began) = camera_began {
-        crate::studio::save_camera_offset(&file, began.elapsed().as_secs_f64());
+        crate::studio::save_camera(&file, began.elapsed().as_secs_f64(), webcam::Look::load());
     }
     Ok(Started { keys: opts.keys, studio: opts.studio, cursor_off, gsr, file, webcam, target })
+}
+
+/// The camera bubble over the recorded area.
+pub fn show_bubble(target: &Target, mons: &[Mon], cx: &mut App) {
+    let found = match target {
+        Target::Monitor(name) => mons.iter().find(|m| &m.name == name).map(|m| (m.clone(), (0., 0., m.w as f32, m.h as f32))),
+        Target::Region { x, y, w, h } => mons
+            .iter()
+            .find(|m| m.contains(x + w / 2, y + h / 2))
+            .map(|m| (m.clone(), ((x - m.x) as f32, (y - m.y) as f32, *w as f32, *h as f32))),
+    };
+    if let Some((mon, area)) = found {
+        webcam::show(&mon, area, cx);
+    }
 }
 
 /// Record the camera to the studio's camera file. Returns ffmpeg's pid and
 /// when its first frame was written, to line it up with the screen.
 async fn record_camera(video: &std::path::Path, cx: &mut AsyncApp) -> Option<(u32, std::time::Instant)> {
-    let (_, list) = util::output(&["omarchy-capture-webcam-list"]).await?;
-    let Some(device) = list.split_whitespace().next().map(str::to_owned) else {
+    let Some(device) = webcam::device() else {
         util::notify("Камера не найдена", "Запись пойдёт без камеры");
         return None;
     };
-    let (_, formats) = util::output(&["v4l2-ctl", "--list-formats-ext", "-d", &device]).await.unwrap_or_default();
-    let size = ["1280x720", "1920x1080", "640x480", "640x360"].into_iter().find(|r| formats.contains(r)).unwrap_or("640x480");
+    let size = webcam::capture_size(&device);
     let out = crate::studio::camera_file(video);
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -777,55 +801,6 @@ async fn pick_target(cx: &mut AsyncApp) -> Option<Target> {
     }
     let (x, y, w, h) = picked.area;
     Some(Target::Region { x, y, w, h })
-}
-
-/// Same mpv overlay as Omarchy's recorder, so its window rules and the
-/// webcam resize hotkeys apply.
-async fn start_webcam(target: &Target, cx: &mut AsyncApp) -> Option<u32> {
-    let (_, list) = util::output(&["omarchy-capture-webcam-list"]).await?;
-    let Some(device) = list.split_whitespace().next().map(str::to_owned) else {
-        util::notify("Камера не найдена", "Запись пойдёт без камеры");
-        return None;
-    };
-    let (_, formats) = util::output(&["v4l2-ctl", "--list-formats-ext", "-d", &device]).await.unwrap_or_default();
-    let mut capture = "framerate=30".to_owned();
-    if let Some(res) = ["640x360", "1280x720", "1920x1080"].into_iter().find(|r| formats.contains(r)) {
-        capture = format!("video_size={res},{capture}");
-    }
-    let webcam = util::spawn(&[
-        "mpv".to_owned(),
-        format!("av://v4l2:{device}"),
-        "--profile=low-latency".into(),
-        "--untimed".into(),
-        "--no-cache".into(),
-        format!("--demuxer-lavf-o={capture}"),
-        "--vf=lavfi=[crop=ih*8/9:ih]".into(),
-        "--title=WebcamOverlay".into(),
-        "--wayland-app-id=WebcamOverlay-medium".into(),
-        "--no-border".into(),
-        "--no-audio".into(),
-        "--no-osc".into(),
-        "--osd-level=0".into(),
-        "--really-quiet".into(),
-    ])?;
-
-    for _ in 0..40 {
-        let mapped = util::hypr("j/clients")
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.as_array().map(|a| a.iter().any(|c| c["title"] == "WebcamOverlay")))
-            .unwrap_or(false);
-        if mapped {
-            break;
-        }
-        cx.background_executor().timer(Duration::from_millis(50)).await;
-    }
-    if let Target::Region { x, y, w, h } = target {
-        let _ = std::fs::write(region_file(), format!("{w}x{h}+{x}+{y}"));
-    }
-    util::output(&["omarchy-capture-webcam-resize", "medium"]).await;
-    // Let the move settle, or the camera is recorded sliding into its corner.
-    cx.background_executor().timer(Duration::from_millis(600)).await;
-    Some(webcam)
 }
 
 /// Port of Omarchy's finalize step: trim the warmup frame and normalize audio.

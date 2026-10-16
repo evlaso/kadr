@@ -23,6 +23,7 @@ mod job;
 mod kit;
 mod ocr;
 mod util;
+mod webcam;
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
