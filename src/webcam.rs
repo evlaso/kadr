@@ -9,7 +9,7 @@ use std::sync::Arc;
 use gpui::{App, Context, Global, MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage, Window, WindowHandle, canvas, div, px};
 
 use crate::kit::{self, Anchor, InputRegion, KeyboardInteractivity, LayerSpec};
-use crate::ui::{ButtonLike, Divider, IconButtonShape, Tooltip, prelude::*};
+use crate::ui::{Tooltip, prelude::*};
 use crate::util::{self, Mon};
 use crate::i18n::t;
 
@@ -284,62 +284,64 @@ impl Render for CameraView {
             window.set_input_region(Some(&[]));
         }
         let shown = !self.locked && self.hovered && window.is_window_hovered() && self.drag.is_none();
-        // Controls under the bubble, or above it at the bottom of the area.
-        let below = top + side + 52. < self.area.1 + self.area.3 + 40.;
+        // Controls sit inside the bubble, along its bottom, while hovered:
+        // nothing to reach across, nothing for the area's edge to cut off.
         let controls = shown.then(|| {
-            let round = |i: usize| {
-                let r = ROUNDS[i];
-                let on = (self.look.round - r).abs() < 0.01;
-                ButtonLike::new(("cam-round", i))
-                    .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                    .size(ButtonSize::Large)
-                    .toggle_state(on)
-                    .child(div().px_1().child(div().size(px(14.)).rounded(px(7. * r as f32)).border_2().border_color(cx.theme().colors().text)))
-                    .tooltip(Tooltip::text([t("camera.circle"), t("camera.rounded"), t("camera.square")][i]))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.look.round = ROUNDS[i];
-                        this.look.save();
-                        cx.notify();
-                    }))
+            let ink = gpui::white();
+            let button = |id: &'static str, icon: IconName, tip: &'static str| {
+                div()
+                    .id(id)
+                    .size(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
+                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(ink)))
+                    .tooltip(Tooltip::text(t(tip)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             };
-            h_flex()
-                .id("cam-controls")
+            let next_round = ROUNDS[(ROUNDS.iter().position(|&r| (r - self.look.round).abs() < 0.01).unwrap_or(0) + 1) % ROUNDS.len()];
+            let shape = div()
+                .id("cam-round")
+                .size(px(26.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .cursor_pointer()
+                .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
+                .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).border_2().border_color(ink))
+                .tooltip(Tooltip::text(t("camera.shape")))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.look.round = next_round;
+                    this.look.save();
+                    cx.notify();
+                }));
+            div()
                 .absolute()
-                .left(px(left + side / 2. - 110.))
-                .w(px(220.))
-                .when(below, |d| d.top(px(top + side + 8.)))
-                .when(!below, |d| d.top(px(top - 48.)))
+                .left_0()
+                .right_0()
+                .bottom(px((side * 0.08).max(6.)))
+                .flex()
                 .justify_center()
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .p_1()
-                        .elevation_3(cx)
-                        .child(
-                            IconButton::new("cam-smaller", IconName::Dash)
-                                .shape(IconButtonShape::Square)
-                                .size(ButtonSize::Large)
-                                .tooltip(Tooltip::text("camera.smaller"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.resize(-1);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            IconButton::new("cam-bigger", IconName::Plus)
-                                .shape(IconButtonShape::Square)
-                                .size(ButtonSize::Large)
-                                .tooltip(Tooltip::text("camera.bigger"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.resize(1);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(Divider::vertical().h_5().mx_1())
-                        .child(round(0))
-                        .child(round(1))
-                        .child(round(2))
-                        .child(self.region.mark()),
+                        .p_0p5()
+                        .rounded_full()
+                        .bg(gpui::hsla(0., 0., 0., 0.55))
+                        .child(button("cam-smaller", IconName::Dash, "camera.smaller").on_click(cx.listener(|this, _, _, cx| {
+                            this.resize(-1);
+                            cx.notify();
+                        })))
+                        .child(button("cam-bigger", IconName::Plus, "camera.bigger").on_click(cx.listener(|this, _, _, cx| {
+                            this.resize(1);
+                            cx.notify();
+                        })))
+                        .child(shape),
                 )
         });
         kit::root(cx)
@@ -360,23 +362,6 @@ impl Render for CameraView {
             }))
             .child(
                 div()
-                    .id("cam-hover")
-                    .absolute()
-                    .left(px(left))
-                    .top(px(top))
-                    .w(px(side))
-                    .h(px(side + if below { 60. } else { 0. }))
-                    .when(!below, |d| d.top(px(top - 56.)).h(px(side + 56.)))
-                    .on_hover(cx.listener(|this, on: &bool, _, cx| {
-                        this.hovered = *on;
-                        cx.notify();
-                    }))
-                    // The bubble and the gap to its controls stay under the
-                    // pointer; the rest of the screen lets clicks through.
-                    .when(shown, |d| d.child(self.region.mark())),
-            )
-            .child(
-                div()
                     .id("cam")
                     .absolute()
                     .left(px(left))
@@ -388,8 +373,17 @@ impl Render for CameraView {
                     .shadow(kit::shadow())
                     .when(!self.locked, |d| d.cursor_grab())
                     .on_hover(cx.listener(|this, on: &bool, _, cx| {
-                        if *on {
-                            this.hovered = true;
+                        this.hovered = *on;
+                        cx.notify();
+                    }))
+                    // The wheel resizes too.
+                    .on_scroll_wheel(cx.listener(|this, e: &gpui::ScrollWheelEvent, _, cx| {
+                        if this.locked {
+                            return;
+                        }
+                        let dy = f32::from(e.delta.pixel_delta(px(20.)).y);
+                        if dy.abs() > 0.5 {
+                            this.resize(if dy > 0. { 1 } else { -1 });
                             cx.notify();
                         }
                     }))
@@ -402,9 +396,9 @@ impl Render for CameraView {
                         cx.notify();
                     }))
                     .child(picture)
+                    .children(controls)
                     .when(!self.locked, |d| d.child(self.region.mark())),
             )
-            .children(controls)
     }
 }
 

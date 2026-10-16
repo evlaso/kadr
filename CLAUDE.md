@@ -12,7 +12,7 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 - Before installing, `pkill -x kadr`: a running instance takes every new command over its socket, so the old binary would keep serving. That also kills the tray icon (`kadr tray` is a `kadr` process too); restart it afterwards with `setsid kadr tray &>/dev/null &`.
 - `cargo test --release` for the unit tests (editor raster, studio camera and layout, key hints).
 - `kadr --help` lists the commands. To try something without hotkeys, run e.g. `kadr edit <png>`, `kadr studio <mp4>`, `kadr record area "X,Y WxH"`, `kadr settings`, `kadr open <png>` (card).
-- You can't click. Check visuals with `grim -o <monitor>` (focused monitor: `hyprctl monitors -j`) and crop with `magick`. Send keys with `wtype -k …`. `hyprctl dispatch movecursor` works only while the user isn't moving the mouse. For hover states, temporarily force the state in code, take the screenshot, then revert.
+- You can't click. Check visuals with `grim -o <monitor>` (focused monitor: `hyprctl monitors -j`) and crop with `magick`. Send keys with `wtype -k …`. Move the pointer with `hyprctl eval 'hl.dispatch(hl.dsp.cursor.move({x = X, y = Y}))'` (the Lua config has no `dispatch movecursor`); it only sticks while the user isn't moving the mouse. For hover states, temporarily force the state in code, take the screenshot, then revert.
 - `cargo check --target` for macOS and Windows doesn't work here: GPUI's build scripts need Xcode or MSVC. `.github/workflows/build.yml` builds all three systems.
 
 ## Layout
