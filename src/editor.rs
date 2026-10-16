@@ -701,7 +701,9 @@ impl Editor {
         .detach();
     }
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// CleanShot-like top bar: history on the left, tools in the middle, the
+    /// current style (color, weight) on the right.
+    fn render_toolbar(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let tool_button = |tool: Tool, cx: &mut Context<Self>| {
             ButtonLike::new(SharedString::from(format!("tool-{}", tool.key())))
                 .style(if self.tool == tool { ButtonStyle::Filled } else { ButtonStyle::Subtle })
@@ -724,7 +726,7 @@ impl Editor {
             let selected = i == self.color;
             div()
                 .id(("color", i))
-                .size(px(22.))
+                .size(px(24.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -732,7 +734,7 @@ impl Editor {
                 .border_2()
                 .border_color(if selected { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
-                .child(div().size(px(14.)).rounded_full().bg(c))
+                .child(div().size(px(16.)).rounded_full().bg(c))
                 .tooltip(Tooltip::text(format!("Цвет ({})", i + 1)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.pick_color(i);
@@ -753,20 +755,8 @@ impl Editor {
                 }))
         });
 
-        h_flex()
+        let history = h_flex()
             .gap_0p5()
-            .p_1()
-            .elevation_3(cx)
-            .child(select)
-            .child(Divider::vertical().h_5().mx_1())
-            .children(drawing)
-            .child(Divider::vertical().h_5().mx_1())
-            .child(crop)
-            .child(Divider::vertical().h_5().mx_1())
-            .child(h_flex().gap_0p5().children(swatches))
-            .child(Divider::vertical().h_5().mx_1())
-            .children(weights)
-            .child(Divider::vertical().h_5().mx_1())
             .child(
                 IconButton::new("undo", IconName::Undo)
                     .shape(IconButtonShape::Square)
@@ -789,15 +779,27 @@ impl Editor {
                         this.redo();
                         cx.notify();
                     })),
-            )
+            );
+        let tools = h_flex()
+            .gap_0p5()
+            .child(select)
+            .child(Divider::vertical().h_5().mx_1())
+            .children(drawing)
+            .child(Divider::vertical().h_5().mx_1())
+            .child(crop);
+        let style = h_flex().gap_0p5().child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).children(weights);
+
+        h_flex().w(px(width)).justify_between().gap_2().p_1().elevation_3(cx).child(history).child(tools).child(style)
     }
 
-    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// CleanShot-like bottom bar: backdrop on the left, the file in the
+    /// middle, and drag-out, copy and save on the right.
+    fn render_footer(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let ring = cx.theme().colors().text;
         let backdrops = std::iter::once(None).chain(self.backdrops().into_iter().map(Some)).enumerate().map(|(i, colors)| {
             let selected = i == self.backdrop;
-            let swatch = div().size(px(14.)).rounded(px(4.));
+            let swatch = div().size(px(16.)).rounded(px(4.));
             let swatch = match colors {
                 Some((c0, c1)) => swatch.bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))),
                 None => swatch.border_1().border_color(cx.theme().colors().border).child(
@@ -806,7 +808,7 @@ impl Editor {
             };
             div()
                 .id(("backdrop", i))
-                .size(px(22.))
+                .size(px(26.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -822,25 +824,45 @@ impl Editor {
                 }))
         });
 
+        // Drag the annotated picture out, rendered at the moment the drag starts.
+        let drag_state = self.source.clone().map(|src| (src, self.doc.clone(), self.backdrop.checked_sub(1).map(|i| self.backdrops()[i]), self.path.clone()));
+        let drag_out = div()
+            .id("drag-out")
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_dashed()
+            .border_color(cx.theme().colors().border)
+            .cursor_grab()
+            .child(Icon::new(IconName::Image).size(IconSize::Small).color(Color::Muted))
+            .child(Label::new("Перетащи").size(LabelSize::Small).color(Color::Muted))
+            .tooltip(Tooltip::text("Утащи картинку с пометками в чат, браузер или папку"))
+            .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
+            .external_drag_payload(move |_: &DragOut, _, _| {
+                let (src, doc, backdrop, path) = drag_state.as_ref()?;
+                let png = compose(src, doc, *backdrop)?;
+                let dir = util::runtime_dir().join("kadr-drag");
+                let _ = std::fs::create_dir_all(&dir);
+                let out = dir.join(path.file_name()?);
+                std::fs::write(&out, png).ok()?;
+                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(out, false)])))
+            });
+
         h_flex()
-            .w(px((self.disp.0 * (1. + 2. * FRAME_PAD)).max(640.)))
+            .w(px(width))
             .justify_between()
             .gap_2()
-            .pl_2p5()
+            .pl_2()
             .pr_1()
             .py_1()
             .elevation_3(cx)
             .child(
                 h_flex()
-                    .min_w_0()
-                    .gap_2()
-                    .child(Icon::new(IconName::Image).size(IconSize::Small).color(Color::Muted))
-                    .child(div().min_w_0().child(Label::new(name).size(LabelSize::Small).truncate()))
-                    .child(Label::new(self.size_label()).size(LabelSize::Small).color(Color::Muted)),
-            )
-            .child(
-                h_flex()
-                    .flex_none()
+                    .flex_1()
                     .gap_1()
                     .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(Color::Muted))
                     .children(backdrops)
@@ -852,14 +874,29 @@ impl Editor {
                                 cx.notify();
                             })),
                         )
-                    })
-                    .child(Divider::vertical().h_5().mx_1())
+                    }),
+            )
+            .child(
+                h_flex()
+                    .flex_none()
+                    .max_w(px(width * 0.3))
+                    .gap_2()
+                    .child(div().min_w_0().child(Label::new(name).size(LabelSize::Small).color(Color::Muted).truncate()))
+                    .child(Label::new(self.size_label()).size(LabelSize::Small).color(Color::Muted)),
+            )
+            .child(
+                h_flex()
+                    .flex_1()
+                    .justify_end()
+                    .gap_1()
                     .child(
                         IconButton::new("ocr", IconName::CaseSensitive)
                             .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::text("Распознать текст"))
                             .on_click(cx.listener(|this, _, _, cx| this.read_text(cx))),
                     )
+                    .child(drag_out)
+                    .child(Divider::vertical().h_5().mx_1())
                     .child(
                         Button::new("cancel", "Отмена")
                             .style(ButtonStyle::Subtle)
@@ -1044,7 +1081,10 @@ impl Editor {
 }
 
 impl Render for Editor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Both bars span the framed picture, but never less than the tools need.
+        let frame = self.disp.0 * (1. + 2. * FRAME_PAD);
+        let bar_width = frame.max(1180. * kit::SCALE).min(f32::from(window.viewport_size().width) - 32.);
         kit::root(cx)
             .bg(rgba(0x00000099))
             .flex()
@@ -1057,9 +1097,21 @@ impl Render for Editor {
             // The pointer stays with this surface while the button is held.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.mouse_up(cx)))
-            .child(self.render_toolbar(cx))
+            .child(self.render_toolbar(bar_width, cx))
             .child(self.render_canvas(cx))
-            .child(self.render_footer(cx))
+            .child(self.render_footer(bar_width, cx))
+    }
+}
+
+/// What's dragged from "Перетащи"; the file is rendered when the drag starts.
+struct DragOut;
+
+/// The platform draws its own icon for outbound file drags.
+struct DragPreview;
+
+impl Render for DragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
     }
 }
 
