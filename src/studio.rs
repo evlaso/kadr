@@ -400,6 +400,20 @@ impl Project {
     }
 
     /// What's left after the trim and the cuts, in source time.
+    /// Cuts in order, with overlapping or touching ones joined into one.
+    pub fn merge_cuts(&mut self) {
+        let mut cuts: Vec<(f64, f64)> = self.cuts.iter().map(|&(a, b)| (a.min(b), a.max(b))).filter(|(a, b)| b - a > 0.01).collect();
+        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (a, b) in cuts {
+            match merged.last_mut() {
+                Some(last) if a <= last.1 + 0.01 => last.1 = last.1.max(b),
+                _ => merged.push((a, b)),
+            }
+        }
+        self.cuts = merged;
+    }
+
     pub fn kept(&self) -> Vec<(f64, f64)> {
         let mut cuts: Vec<(f64, f64)> = self.cuts.iter().map(|&(a, b)| (a.min(b), a.max(b))).collect();
         cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1310,6 +1324,14 @@ mod tests {
         assert_eq!(moved.trim, (1., 9.), "the edit stays");
         assert!(moved.cuts.is_empty(), "cuts aren't part of a look");
         assert_eq!(moved.look(), source.look());
+    }
+
+    #[test]
+    fn overlapping_cuts_join() {
+        let mut project = Project::auto(&Track::default(), &probe());
+        project.cuts = vec![(5., 6.), (1., 2.), (1.5, 3.), (3., 4.), (8., 7.5)];
+        project.merge_cuts();
+        assert_eq!(project.cuts, vec![(1., 4.), (5., 6.), (7.5, 8.)]);
     }
 
     #[test]

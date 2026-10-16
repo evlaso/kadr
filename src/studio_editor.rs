@@ -32,7 +32,7 @@ use crate::i18n::t;
 
 const FILMSTRIP: f32 = 52.;
 const RULER: f32 = 18.;
-const LANE: f32 = 40.;
+const LANE: f32 = 52.;
 const SIDEBAR: f32 = 320. * kit::SCALE;
 /// Width of the labels in front of sidebar controls.
 const ROW_LABEL: f32 = 74.;
@@ -473,16 +473,38 @@ impl StudioEditor {
     }
 
     /// Cut a second out at the playhead; its edges then set the length.
+    /// Cut a piece from the playhead. Inside a cut already, that one is
+    /// selected instead; a new cut stops where the next one begins.
     fn add_cut(&mut self, cx: &mut Context<Self>) {
         let (lo, hi) = self.project.trim;
         let start = self.playhead.clamp(lo, (hi - MIN_SEG).max(lo));
-        let end = (start + NEW_CUT).min(hi);
+        if let Some(i) = self.project.cuts.iter().position(|&(a, b)| start >= a.min(b) - 0.01 && start <= a.max(b) + 0.01) {
+            self.select_cut(Some(i));
+            return cx.notify();
+        }
+        let next = self.project.cuts.iter().map(|&(a, b)| a.min(b)).filter(|&a| a > start).fold(hi, f64::min);
+        let end = (start + NEW_CUT).min(next);
         if end - start < 0.05 {
             return;
         }
         self.project.cuts.push((start, end));
-        self.select_cut(Some(self.project.cuts.len() - 1));
+        self.project.merge_cuts();
+        let index = self.project.cuts.iter().position(|&(a, _)| (a - start).abs() < 0.001);
+        self.select_cut(index);
         self.changed(cx);
+    }
+
+    /// A drag on the timeline ended: cuts dragged onto each other join.
+    fn drag_done(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.drag.take(), Some(Drag::CutMove { .. } | Drag::CutEdge { .. })) {
+            let selected = self.cut.and_then(|i| self.project.cuts.get(i).copied());
+            self.project.merge_cuts();
+            self.cut = selected.and_then(|(a, b)| {
+                let mid = (a + b) / 2.;
+                self.project.cuts.iter().position(|&(x, y)| mid >= x && mid <= y)
+            });
+            self.changed(cx);
+        }
     }
 
     fn timeline_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
@@ -922,12 +944,11 @@ impl StudioEditor {
                 for &t in &ticks {
                     window.paint_quad(fill(Bounds::new(point(at(t), bounds.origin.y + px(top - 6.)), size(px(1.), px(5.))), tick));
                 }
-                // Cut pieces: red wash with a frame.
+                // Cut pieces: the frames darkened, with a red outline.
                 for &(a, b, selected) in &cuts {
-                    let mut wash = cut_color;
-                    wash.alpha = if selected { 0.6 } else { 0.42 };
-                    let block = Bounds::new(point(at(a), strip_top), size(at(b) - at(a), px(FILMSTRIP)));
-                    window.paint_quad(crate::ui::quad(block, px(4.), wash, px(if selected { 2. } else { 1. }), cut_color, BorderStyle::Solid));
+                    let wash = gpui::hsla(0., 0., 0., if selected { 0.72 } else { 0.62 });
+                    let block = Bounds::new(point(at(a.min(b)), strip_top), size(at(a.max(b)) - at(a.min(b)), px(FILMSTRIP)));
+                    window.paint_quad(crate::ui::quad(block, px(6.), wash, px(if selected { 2.5 } else { 1.5 }), cut_color, BorderStyle::Solid));
                 }
                 // Trimmed-off ends are dimmed, with handles on the kept part.
                 let shade = gpui::hsla(0., 0., 0., 0.62);
@@ -948,8 +969,8 @@ impl StudioEditor {
                 for &(s, e, selected) in &segments {
                     let block = Bounds::new(point(at(s), lane_top + px(2.)), size(at(e) - at(s), px(LANE - 4.)));
                     let mut fill_color = accent;
-                    fill_color.alpha = if selected { 0.55 } else { 0.3 };
-                    window.paint_quad(crate::ui::quad(block, px(6.), fill_color, px(if selected { 2. } else { 1. }), accent, BorderStyle::Solid));
+                    fill_color.alpha = if selected { 0.75 } else { 0.5 };
+                    window.paint_quad(crate::ui::quad(block, px(8.), fill_color, px(if selected { 2. } else { 0. }), text, BorderStyle::Solid));
                     // Grips at both ends, like Final Cut's: something to catch.
                     let mut grip = text;
                     grip.alpha = if selected { 0.9 } else { 0.55 };
@@ -1008,7 +1029,7 @@ impl StudioEditor {
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .child(Icon::new(IconName::Scissors).size(IconSize::Small).color(Color::Custom(gpui::white())))
+                .child(Icon::new(IconName::Scissors).size(IconSize::Small).color(Color::Error))
         });
         let ruler = marks.into_iter().map(|t| {
             div().absolute().top_0().left(relative((t / d) as f32)).ml_1().child(Label::new(ruler_label(t, step)).size(LabelSize::XSmall).color(Color::Muted))
@@ -1579,7 +1600,7 @@ impl Render for StudioEditor {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.drag = None))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.drag_done(cx)))
             .child(self.render_titlebar(cx))
             .child(
                 h_flex()

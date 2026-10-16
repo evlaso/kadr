@@ -17,8 +17,12 @@ use crate::kit;
 use crate::{editor, pin, trim, util};
 use crate::i18n::t;
 
-const ITEM_WIDTH: f32 = 208.;
-const THUMB: (u32, u32) = (208, 128);
+/// Tiles are at least this wide; a row stretches them to fill the window.
+const MIN_ITEM: f32 = 210.;
+/// Thumbnail shape, width over height.
+const THUMB_ASPECT: f32 = 1.6;
+/// Stored thumbnail size, sharp up to twice the smallest tile.
+const THUMB: (u32, u32) = (420, 262);
 const GAP: f32 = 12.;
 /// Older captures are left out to keep the window snappy.
 const LIMIT: usize = 300;
@@ -56,7 +60,16 @@ struct Item {
     name: SharedString,
     kind: Kind,
     modified: SystemTime,
-    thumb: Option<Arc<Image>>,
+    thumb: Option<Thumb>,
+}
+
+/// A tile's picture, a blurred copy for under the hover buttons, and a
+/// recording's length.
+#[derive(Clone)]
+struct Thumb {
+    sharp: Arc<Image>,
+    blurred: Arc<Image>,
+    seconds: Option<f64>,
 }
 
 pub struct History {
@@ -65,8 +78,9 @@ pub struct History {
     filter: Filter,
     /// Index into `visible()`.
     selected: usize,
-    /// Items per row, from the last layout.
+    /// Items per row and their width, from the last layout.
     columns: usize,
+    item_width: f32,
     scroll: ScrollHandle,
     focus: FocusHandle,
 }
@@ -101,41 +115,58 @@ fn scan() -> Vec<Item> {
 }
 
 /// Cached, card-shaped thumbnail; generated (image crate or ffmpeg) on a miss.
-async fn thumbnail(path: PathBuf, modified: SystemTime, video: bool, executor: BackgroundExecutor) -> Option<Arc<Image>> {
+async fn thumbnail(path: PathBuf, modified: SystemTime, video: bool, executor: BackgroundExecutor) -> Option<Thumb> {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut h);
     modified.hash(&mut h);
-    let cached = util::cache_dir().join("thumbs").join(format!("{:016x}.png", h.finish()));
-    if let Ok(bytes) = std::fs::read(&cached) {
-        return Some(Arc::new(Image::from_bytes(ImageFormat::Png, bytes)));
+    THUMB.hash(&mut h);
+    let dir = util::cache_dir().join("thumbs");
+    let (sharp_file, blur_file, length_file) = (dir.join(format!("{:016x}.png", h.finish())), dir.join(format!("{:016x}-blur.png", h.finish())), dir.join(format!("{:016x}.len", h.finish())));
+    let image = |bytes: Vec<u8>| Arc::new(Image::from_bytes(ImageFormat::Png, bytes));
+    if let (Ok(sharp), Ok(blurred)) = (std::fs::read(&sharp_file), std::fs::read(&blur_file)) {
+        let seconds = std::fs::read_to_string(&length_file).ok().and_then(|s| s.trim().parse().ok());
+        return Some(Thumb { sharp: image(sharp), blurred: image(blurred), seconds });
     }
-    let _ = std::fs::create_dir_all(cached.parent()?);
-    let source = if video {
+    let _ = std::fs::create_dir_all(&dir);
+    let (source, seconds) = if video {
         let frame = util::runtime_dir().join(format!("kadr-history-{:016x}.png", h.finish()));
         let (ok, _) = util::output::<&std::ffi::OsStr>(&[
             "ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-i".as_ref(), path.as_os_str(),
-            "-frames:v".as_ref(), "1".as_ref(), "-vf".as_ref(), "scale=640:-2".as_ref(), frame.as_os_str(),
+            "-frames:v".as_ref(), "1".as_ref(), "-vf".as_ref(), "scale=840:-2".as_ref(), frame.as_os_str(),
         ])
         .await?;
         let bytes = ok.then(|| std::fs::read(&frame).ok()).flatten();
         let _ = std::fs::remove_file(&frame);
-        bytes?
+        let (_, length) = util::output::<&std::ffi::OsStr>(&[
+            "ffprobe".as_ref(), "-v".as_ref(), "error".as_ref(), "-show_entries".as_ref(), "format=duration".as_ref(), "-of".as_ref(), "csv=p=0".as_ref(), path.as_os_str(),
+        ])
+        .await
+        .unwrap_or_default();
+        (bytes?, length.trim().parse::<f64>().ok())
     } else {
-        std::fs::read(&path).ok()?
+        (std::fs::read(&path).ok()?, None)
     };
-    let png = executor.spawn(async move { crop_thumb(&source) }).await?;
-    let _ = std::fs::write(&cached, &png);
-    Some(Arc::new(Image::from_bytes(ImageFormat::Png, png)))
+    let (sharp, blurred) = executor.spawn(async move { crop_thumb(&source) }).await?;
+    let _ = std::fs::write(&sharp_file, &sharp);
+    let _ = std::fs::write(&blur_file, &blurred);
+    if let Some(s) = seconds {
+        let _ = std::fs::write(&length_file, s.to_string());
+    }
+    Some(Thumb { sharp: image(sharp), blurred: image(blurred), seconds })
 }
 
-fn crop_thumb(bytes: &[u8]) -> Option<Vec<u8>> {
+/// The tile picture and its blurred copy, as PNGs.
+fn crop_thumb(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     let src = image::load_from_memory(bytes).ok()?;
-    let (tw, th) = (THUMB.0 * 2, THUMB.1 * 2);
-    let thumb = src.resize_to_fill(tw, th, image::imageops::FilterType::Triangle);
-    let mut png = Vec::new();
-    thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-    Some(png)
+    let thumb = src.resize_to_fill(THUMB.0, THUMB.1, image::imageops::FilterType::Triangle);
+    let blurred = thumb.resize_exact(THUMB.0 / 4, THUMB.1 / 4, image::imageops::FilterType::Triangle).blur(3.).resize_exact(THUMB.0, THUMB.1, image::imageops::FilterType::Triangle);
+    let encode = |img: &image::DynamicImage| {
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+        Some(png)
+    };
+    Some((encode(&thumb)?, encode(&blurred)?))
 }
 
 pub fn open(cx: &mut App) {
@@ -167,7 +198,7 @@ pub fn open(cx: &mut App) {
                 }
             })
             .detach();
-            History { items, query: String::new(), filter: Filter::All, selected: 0, columns: 4, scroll: ScrollHandle::new(), focus }
+            History { items, query: String::new(), filter: Filter::All, selected: 0, columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), focus }
         })
     });
 }
@@ -300,82 +331,108 @@ impl History {
         let colors = cx.theme().colors();
         let group: SharedString = format!("item-{index}").into();
         let path = item.path.clone();
-        let tool = |key: &'static str, icon: IconName, tip: &'static str| {
-            IconButton::new((key, index), icon).style(ButtonStyle::Filled).shape(IconButtonShape::Square).icon_size(IconSize::XSmall).tooltip(Tooltip::text(tip))
+        let (width, height) = (self.item_width, self.item_width / THUMB_ASPECT);
+        // Hover looks like the thumbnail card: the picture blurs, white
+        // pills on top.
+        let ink = gpui::hsla(0., 0., 0.12, 1.);
+        let pill = |el: gpui::Stateful<Div>| {
+            el.flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(gpui::hsla(0., 0., 1., 0.92))
+                .text_color(ink)
+                .cursor_pointer()
+                .hover(|s| s.bg(gpui::hsla(0., 0., 1., 1.)))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         };
-        let meta = match item.kind {
-            Kind::Shot => "PNG",
-            Kind::Video => t("history.video"),
-            Kind::Gif => "GIF",
+        let corner = |id: &'static str, icon: IconName, tip: &'static str| {
+            pill(div().id((id, index))).size(px(26.)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tooltip(Tooltip::text(tip))
         };
-        let actions = h_flex()
+        let wide = |id: &'static str, label: &'static str| pill(div().id((id, index))).h(px(28.)).px_3().child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)));
+        let overlay = div()
             .absolute()
-            .bottom_1p5()
-            .right_1p5()
-            .gap_0p5()
+            .inset_0()
             .opacity(0.)
             .group_hover(group.clone(), |s| s.opacity(1.))
-            .child(tool("copy", IconName::Copy, t("history.copy_ctrl_c")).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
-                this.copy(index);
-                window.remove_window();
-            })))
-            .when(item.kind != Kind::Gif, |row| {
-                row.child(
-                    tool("edit", if item.kind == Kind::Shot { IconName::Pencil } else { IconName::Scissors }, if item.kind == Kind::Shot { t("history.edit_e") } else { t("history.trim_e") })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_item(index, true, window, cx))),
-                )
-            })
-            .child(tool("folder", IconName::Folder, t("common.show_in_folder")).on_click({
+            .children(item.thumb.as_ref().map(|t| img(t.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill)))
+            .child(div().absolute().inset_0().bg(rgba(0x00000052)))
+            .child(
+                v_flex()
+                    .absolute()
+                    .inset_0()
+                    .items_center()
+                    .justify_center()
+                    .gap_1p5()
+                    .child(wide("copy", t("common.copy")).tooltip(Tooltip::text(t("history.copy_ctrl_c"))).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
+                        this.copy(index);
+                        window.remove_window();
+                    })))
+                    .when(item.kind != Kind::Gif, |col| {
+                        col.child(
+                            wide(if item.kind == Kind::Shot { "edit" } else { "trim" }, if item.kind == Kind::Shot { t("card.edit") } else { t("common.trim") })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_item(index, true, window, cx))),
+                        )
+                    }),
+            )
+            .child(div().absolute().top_1p5().right_1p5().child(corner("folder", IconName::Folder, t("common.show_in_folder")).on_click({
                 let path = path.clone();
                 move |_, _, _| util::open_folder(&path)
-            }))
-            .child(tool("trash", IconName::Trash, t("history.delete_del")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx))));
+            })))
+            .child(div().absolute().bottom_1p5().right_1p5().child(corner("trash", IconName::Trash, t("history.delete_del")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx)))));
+
+        // A recording's length (or "GIF") on a frosted pill.
+        let badge = match item.kind {
+            Kind::Shot => None,
+            Kind::Video => item.thumb.as_ref().and_then(|t| t.seconds).map(util::format_duration),
+            Kind::Gif => Some("GIF".to_string()),
+        }
+        .map(|text| {
+            h_flex()
+                .absolute()
+                .top_1p5()
+                .left_1p5()
+                .gap_1()
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .bg(rgba(0x00000066))
+                .backdrop_blur(px(8.))
+                .when(item.kind == Kind::Video, |d| d.child(Icon::new(IconName::PlayFilled).size(IconSize::XSmall).color(Color::Custom(gpui::white()))))
+                .child(Label::new(text).size(LabelSize::Small).color(Color::Custom(gpui::white())))
+        });
 
         let thumb = div()
             .relative()
-            .w(px(THUMB.0 as f32))
-            .h(px(THUMB.1 as f32))
-            .rounded_md()
+            .w(px(width))
+            .h(px(height))
+            .rounded(px(8.))
             .overflow_hidden()
             .bg(colors.element_background)
-            .children(item.thumb.clone().map(|t| img(t).size_full().object_fit(ObjectFit::Fill).rounded_md()))
-            .when(item.kind != Kind::Shot, |t| {
-                t.child(
-                    div()
-                        .absolute()
-                        .top_1p5()
-                        .left_1p5()
-                        .px_1()
-                        .rounded_sm()
-                        .bg(rgba(0x000000a6))
-                        .text_color(gpui::white())
-                        .text_xs()
-                        .child(meta),
-                )
-            })
-            .child(actions);
-
+            .children(item.thumb.as_ref().map(|t| img(t.sharp.clone()).size_full().object_fit(ObjectFit::Cover).rounded(px(8.))))
+            .children(badge)
+            .child(overlay);
         // The selected thumbnail gets an accent ring, like Finder's.
-        let ring = div()
-            .p(px(3.))
-            .rounded(px(11.))
-            .border_2()
-            .border_color(if selected { colors.text_accent } else { gpui::transparent_black() })
-            .child(thumb);
+        let ring = div().p(px(3.)).rounded(px(11.)).border_2().border_color(if selected { colors.text_accent } else { gpui::transparent_black() }).child(thumb);
+        let kind = match item.kind {
+            Kind::Shot => "PNG",
+            Kind::Video => "MP4",
+            Kind::Gif => "GIF",
+        };
         v_flex()
             .id(("item", index))
             .group(group)
-            .w(px(ITEM_WIDTH + 10.))
+            .w(px(width + 10.))
             .gap_1()
             .cursor_pointer()
             .child(ring)
             .child(
                 h_flex()
-                    .px_0p5()
+                    .px_1p5()
                     .gap_1()
                     .justify_between()
                     .child(Label::new(when(item.modified)).size(LabelSize::Small))
-                    .child(Label::new(meta).size(LabelSize::XSmall).color(Color::Muted)),
+                    .child(Label::new(kind).size(LabelSize::XSmall).color(Color::Muted)),
             )
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, window, cx| {
                 this.selected = position;
@@ -394,29 +451,35 @@ impl History {
 impl Render for History {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
-        let width = f32::from(viewport.width);
-        self.columns = (((width - 24.) + GAP) / (ITEM_WIDTH + GAP)).floor().max(1.) as usize;
+        // As many columns as fit, stretched to fill the row.
+        let room = f32::from(viewport.width) - 2. * 16. - 6.;
+        let tile = MIN_ITEM + 10.;
+        self.columns = ((room + GAP) / (tile + GAP)).floor().max(1.) as usize;
+        self.item_width = (room - GAP * (self.columns as f32 - 1.)) / self.columns as f32 - 10.;
 
         let visible = self.visible();
         let filters: Vec<_> = Filter::ALL.iter().map(|&(filter, label)| {
             ButtonLike::new(SharedString::from(format!("filter-{label}")))
                 .style(if self.filter == filter { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                .size(ButtonSize::Large)
                 .toggle_state(self.filter == filter)
-                .child(div().px_1p5().child(Label::new(t(label)).size(LabelSize::Small)))
+                .child(div().px_2().child(Label::new(t(label))))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.filter = filter;
                     this.selected = 0;
                     cx.notify();
                 }))
         }).collect();
+        // Big and bold, like Raycast's search.
         let search = h_flex()
             .flex_1()
-            .gap_2()
-            .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Small).color(Color::Muted))
+            .gap_3()
+            .text_size(crate::ui::rems_from_px(19.))
+            .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Large).color(Color::Muted))
             .child(if self.query.is_empty() {
-                Label::new(t("history.search_by_name_date")).color(Color::Placeholder).into_any_element()
+                div().text_color(cx.theme().colors().text_placeholder).child(t("history.search_by_name_date")).into_any_element()
             } else {
-                Label::new(format!("{}▏", self.query)).into_any_element()
+                div().child(format!("{}▏", self.query)).into_any_element()
             });
 
         let grid: Vec<AnyElement> = visible.iter().enumerate().map(|(pos, &i)| self.render_item(i, pos, cx)).collect();
@@ -427,7 +490,8 @@ impl Render for History {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .p_3()
+            .px_4()
+            .py_3()
             .flex()
             .flex_wrap()
             .content_start()
@@ -444,7 +508,8 @@ impl Render for History {
                 )
             });
 
-        let hint = |keys: &str, label: &'static str| h_flex().gap_1().child(kit::keys(keys)).child(Label::new(label).size(LabelSize::XSmall).color(Color::Muted));
+        // The key, then what it does, on one line at one size.
+        let hint = |keys: &str, label: &'static str| h_flex().gap_1p5().child(kit::keys(keys)).child(Label::new(label).size(LabelSize::Small));
 
         kit::root(cx)
             .bg(cx.theme().colors().panel_background)
@@ -458,14 +523,18 @@ impl Render for History {
                     .child(
                         h_flex()
                             .gap_2()
-                            .px_3()
+                            .pl_4()
+                            .pr_2()
                             .py_2()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
                             .child(search)
                             .child(h_flex().gap_0p5().children(filters))
                             .child(Label::new(format!("{}", visible.len())).size(LabelSize::Small).color(Color::Muted))
                             .child(
                                 IconButton::new("settings", IconName::Settings)
                                     .shape(IconButtonShape::Square)
+                                    .size(ButtonSize::Large)
                                     .tooltip(Tooltip::text(t("common.settings")))
                                     .on_click(|_, window, cx| {
                                         window.remove_window();
@@ -476,9 +545,11 @@ impl Render for History {
                     .child(body)
                     .child(
                         h_flex()
-                            .gap_4()
-                            .px_3()
-                            .py_1p5()
+                            .gap_5()
+                            .px_4()
+                            .py_2()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
                             .child(hint("enter", t("common.open")))
                             .child(hint("e", t("history.editor_trim")))
                             .child(hint("ctrl-c", t("common.copy")))
