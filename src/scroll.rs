@@ -20,32 +20,56 @@ const MAX_HEIGHT: usize = 40_000;
 /// The scrollbar and its fade on the right change while scrolling.
 const IGNORE_RIGHT: usize = 28;
 
+/// Brightness samples per row: rows are compared by these, not exactly, since
+/// with fractional scaling a row that scrolled lands on slightly different
+/// pixels and never matches byte for byte while the page moves.
+const BINS: usize = 32;
+/// Rows that didn't move come out identical; this only absorbs rounding.
+const SAME_ROW: f32 = 0.1;
+/// The best shift has to line rows up at least this well.
+const MATCH: f32 = 6.0;
+
+/// One row, as average brightness across `BINS` strips.
+type Row = [f32; BINS];
+
 /// Stitches frames of a scrolling area into one tall picture.
 pub struct Stitcher {
     width: usize,
     height: usize,
     /// RGB rows of the whole picture so far.
     pixels: Vec<u8>,
-    /// Row signatures of the last frame, None for flat (single-colour) rows,
-    /// which match anything and can't tell scroll positions apart.
-    last: Vec<Option<u64>>,
+    /// Rows of the last frame, None for flat (single-colour) rows, which
+    /// match anything and can't tell scroll positions apart.
+    last: Vec<Option<Row>>,
 }
 
-fn signatures(frame: &image::RgbImage) -> Vec<Option<u64>> {
+fn rows(frame: &image::RgbImage) -> Vec<Option<Row>> {
     let (w, h) = (frame.width() as usize, frame.height() as usize);
-    let used = w.saturating_sub(IGNORE_RIGHT).max(1);
+    let used = w.saturating_sub(IGNORE_RIGHT).max(BINS);
+    let used = used.min(w);
     (0..h)
         .map(|y| {
-            let row = &frame.as_raw()[y * w * 3..y * w * 3 + used * 3];
-            let flat = row.chunks_exact(3).all(|p| p == &row[..3]);
-            (!flat).then(|| row.iter().fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3)))
+            let line = &frame.as_raw()[y * w * 3..y * w * 3 + used * 3];
+            let mut row = [0f32; BINS];
+            for (i, bin) in row.iter_mut().enumerate() {
+                let (a, b) = (i * used / BINS, ((i + 1) * used / BINS).max(i * used / BINS + 1));
+                let sum: u32 = line[a * 3..b * 3].iter().map(|&v| v as u32).sum();
+                *bin = sum as f32 / ((b - a) * 3) as f32;
+            }
+            let first = &line[..3];
+            let flat = line.chunks_exact(3).all(|p| p.iter().zip(first).all(|(&a, &b)| a.abs_diff(b) <= 2));
+            (!flat).then_some(row)
         })
         .collect()
 }
 
+fn distance(a: &Row, b: &Row) -> f32 {
+    a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f32>() / BINS as f32
+}
+
 impl Stitcher {
     pub fn new(first: image::RgbImage) -> Stitcher {
-        let last = signatures(&first);
+        let last = rows(&first);
         Stitcher { width: first.width() as usize, height: first.height() as usize, pixels: first.into_raw(), last }
     }
 
@@ -54,35 +78,39 @@ impl Stitcher {
     }
 
     /// How far `next` scrolled past the last frame, in rows: the shift under
-    /// which most of their distinct rows agree. None when they don't line up.
-    fn offset(&self, next: &[Option<u64>]) -> Option<usize> {
+    /// which their rows line up best. None when they don't line up.
+    fn offset(&self, next: &[Option<Row>]) -> Option<usize> {
         let h = next.len().min(self.last.len());
         // Rows that stayed put (a sticky header, a frozen column) say nothing
         // about the scroll; leave them out. Nothing moved at all: no scroll.
-        let fixed: Vec<bool> = (0..h).map(|r| next[r].is_some() && next[r] == self.last[r]).collect();
+        let fixed: Vec<bool> = (0..h).map(|r| matches!((&next[r], &self.last[r]), (Some(a), Some(b)) if distance(a, b) < SAME_ROW)).collect();
         if (0..h).all(|r| fixed[r] || next[r].is_none()) {
             return Some(0);
         }
-        let mut best: Option<(usize, usize)> = None;
+        let mut best: Option<(usize, f32)> = None;
         for dy in 1..h {
-            let (mut same, mut seen) = (0, 0);
+            let (mut total, mut seen) = (0f32, 0usize);
             for r in 0..h - dy {
                 if fixed[r] {
                     continue;
                 }
-                if let (Some(a), Some(b)) = (self.last[r + dy], next[r]) {
+                if let (Some(a), Some(b)) = (&self.last[r + dy], &next[r]) {
                     seen += 1;
-                    if a == b {
-                        same += 1;
-                    }
+                    total += distance(a, b);
                 }
             }
-            // Enough of the overlap has to be real content and agree.
-            if seen >= 12 && same * 100 >= seen * 85 && best.is_none_or(|(_, s)| same > s) {
-                best = Some((dy, same));
+            // Enough of the overlap has to be real content: a few rows line up
+            // with something by chance. Frames come often, so a real scroll
+            // leaves plenty of overlap.
+            if seen < 12 || (h - dy) * 3 < h {
+                continue;
+            }
+            let score = total / seen as f32;
+            if best.is_none_or(|(_, s)| score < s) {
+                best = Some((dy, score));
             }
         }
-        best.map(|(dy, _)| dy)
+        best.filter(|&(_, score)| score < MATCH).map(|(dy, _)| dy)
     }
 
     /// Add a frame; true when it brought new rows.
@@ -90,7 +118,7 @@ impl Stitcher {
         if frame.width() as usize != self.width || self.height >= MAX_HEIGHT {
             return false;
         }
-        let next = signatures(&frame);
+        let next = rows(&frame);
         let Some(dy) = self.offset(&next) else { return false };
         let h = frame.height() as usize;
         self.last = next;
@@ -171,7 +199,9 @@ pub fn start(area: Option<String>, cx: &mut App) {
                         worker.height.store(s.height() as u32, Ordering::Relaxed);
                     }
                 }
-                std::thread::sleep(Duration::from_millis(120));
+                // Grab again right away: the more frames overlap, the faster
+                // one can scroll without losing the thread.
+                std::thread::sleep(Duration::from_millis(15));
             }
             let _ = tx.send(stitcher.and_then(Stitcher::image));
         });
@@ -315,12 +345,39 @@ mod tests {
         let full = page(900);
         let mut s = Stitcher::new(view(&full, 0, 300));
         assert!(!s.push(view(&full, 0, 300)), "no scroll, nothing new");
-        for top in [70, 190, 400, 600] {
+        for top in [70, 190, 350, 520, 600] {
             assert!(s.push(view(&full, top, 300)));
         }
         let out = s.image().unwrap();
         assert_eq!(out.height(), 900);
         assert_eq!(out, full);
+    }
+
+    /// With fractional scaling a page that scrolls lands between pixels: each
+    /// frame is a blend of two neighbouring rows, never an exact copy.
+    #[test]
+    fn stitches_frames_that_land_between_pixels() {
+        // Smooth like rendered content, so a blend of two rows sits between them.
+        let full = image::RgbImage::from_fn(240, 1200, |x, y| {
+            let (y, x) = (y as f32, x as f32);
+            let v = 128. + 60. * (y * 0.071).sin() + 60. * (y * 0.0173 + x * 0.05).sin();
+            image::Rgb([v as u8, (v * 0.5) as u8, (x as u32 % 256) as u8])
+        });
+        let half = |top: u32| {
+            let (a, b) = (view(&full, top, 300), view(&full, top + 1, 300));
+            image::RgbImage::from_fn(a.width(), a.height(), |x, y| {
+                let (p, q) = (a.get_pixel(x, y).0, b.get_pixel(x, y).0);
+                image::Rgb([0, 1, 2].map(|i| ((p[i] as u16 + q[i] as u16) / 2) as u8))
+            })
+        };
+        let mut s = Stitcher::new(view(&full, 0, 300));
+        let mut tops = Vec::new();
+        for top in [40, 95, 170, 260, 330, 420, 515, 600, 700, 820] {
+            if top % 2 == 0 { s.push(half(top)) } else { s.push(view(&full, top, 300)) };
+            tops.push(top);
+        }
+        let end = *tops.last().unwrap() as i64 + 300;
+        assert!((s.height() as i64 - end).abs() <= 2, "height {} vs {end}", s.height());
     }
 
     /// KADR_TEST_PAGE=<tall png>: a real page with a sticky header and a

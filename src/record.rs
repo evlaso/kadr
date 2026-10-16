@@ -902,29 +902,20 @@ impl Render for Countdown {
                 }
             })
             .child(
+                // Only the digit changes from second to second, like CleanShot.
                 div()
                     .absolute()
                     .left(px(self.center.0 - side / 2.))
                     .top(px(self.center.1 - side / 2.))
-                    .w(px(side))
+                    .size(px(side))
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .size(px(side))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .elevation_3(cx)
-                            .rounded(px(side * 0.28))
-                            .text_size(px(side * 0.5))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(n.to_string())
-                            .with_animation(("tick", n as usize), gpui::Animation::new(Duration::from_millis(260)).with_easing(gpui::ease_out_quint()), |el, d| el.opacity(d)),
-                    )
-                    .child(Label::new("Esc — отменить").size(LabelSize::Small).color(Color::Muted)),
+                    .justify_center()
+                    .elevation_3(cx)
+                    .rounded(px(side * 0.28))
+                    .child(div().text_size(px(side * 0.46)).line_height(px(side * 0.56)).font_weight(gpui::FontWeight::SEMIBOLD).child(n.to_string()))
+                    .child(Label::new("Esc — отменить").size(LabelSize::XSmall).color(Color::Muted)),
             )
     }
 }
