@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
     MouseButton, MouseDownEvent, ObjectFit, Stateful, hsla, Window, WindowHandle, div, ease_out_quint,
-    img, layer_shell::*, px, rgba,
+    img, px, rgba,
 };
 use crate::ui::{Tooltip, prelude::*};
 

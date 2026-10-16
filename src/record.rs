@@ -9,9 +9,10 @@ use std::process::Stdio;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     AnimationExt, AnyWindowHandle, App, AsyncApp, Context, Entity, Global, Window, WindowHandle, div,
-    layer_shell::*, prelude::*, px, rgba,
+    prelude::*, px, rgba,
 };
 
 use crate::panel::{self, Panel};

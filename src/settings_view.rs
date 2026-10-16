@@ -3,9 +3,10 @@
 
 use std::path::PathBuf;
 
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     App, Context, FocusHandle, KeyDownEvent, MouseButton, PathPromptOptions, Window, div,
-    layer_shell::*, linear_color_stop, linear_gradient, px, rgba,
+    linear_color_stop, linear_gradient, px, rgba,
 };
 use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 

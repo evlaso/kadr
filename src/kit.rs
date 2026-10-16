@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Global, Pixels, Render, SharedString, Window,
     WindowBounds, WindowHandle, WindowOptions, canvas, div,
-    hsla, layer_shell::*, point, prelude::*, px, size,
+    hsla, point, prelude::*, px, size,
 };
 use crate::ui::{ActiveTheme, KeyBinding, LabelSize};
 
@@ -155,6 +155,37 @@ impl InputRegion {
         .size_full()
         .into_any_element()
     }
+}
+
+/// Which screen edges an overlay sticks to (a layer-shell anchor on
+/// Wayland, a placement rule elsewhere).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Anchor(u8);
+
+impl Anchor {
+    pub const TOP: Anchor = Anchor(1);
+    pub const BOTTOM: Anchor = Anchor(2);
+    pub const LEFT: Anchor = Anchor(4);
+    pub const RIGHT: Anchor = Anchor(8);
+
+    pub fn contains(self, other: Anchor) -> bool {
+        self.0 & other.0 == other.0
+    }
+}
+
+impl std::ops::BitOr for Anchor {
+    type Output = Anchor;
+    fn bitor(self, other: Anchor) -> Anchor {
+        Anchor(self.0 | other.0)
+    }
+}
+
+/// Whether an overlay takes the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyboardInteractivity {
+    None,
+    Exclusive,
+    OnDemand,
 }
 
 pub struct LayerSpec {

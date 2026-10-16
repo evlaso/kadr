@@ -3,10 +3,11 @@
 //! with the audio, camera and keys toggles and Record. The rest of the
 //! monitor is dimmed so the area stays obvious.
 
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     AnyView, App, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, WeakEntity, Window,
     WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
-    layer_shell::*, point, popup::*, px, rgba, size,
+    point, popup::*, px, rgba, size,
 };
 use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 

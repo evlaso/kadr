@@ -9,10 +9,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Window, canvas, div, img,
-    layer_shell::*, point, px, rgba, size,
+    point, px, rgba, size,
 };
 use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 

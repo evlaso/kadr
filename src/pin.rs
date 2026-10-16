@@ -8,9 +8,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     App, Context, FocusHandle, Image, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    Pixels, Point, ScrollWheelEvent, Window, div, img, layer_shell::*, point, px,
+    Pixels, Point, ScrollWheelEvent, Window, div, img, point, px,
 };
 use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 

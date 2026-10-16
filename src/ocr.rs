@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui::{App, Context, SharedString, Window, WindowHandle, div, layer_shell::*, px};
+use crate::kit::{Anchor, KeyboardInteractivity};
+use gpui::{App, Context, SharedString, Window, WindowHandle, div, px};
 use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};

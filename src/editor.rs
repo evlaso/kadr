@@ -12,11 +12,12 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     FillOptions, PathStyle,
     App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
     KeyDownEvent, MouseButton, ScrollWheelEvent, relative, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
-    Window, canvas, div, img, layer_shell::*, linear_color_stop, linear_gradient, 
+    Window, canvas, div, img, linear_color_stop, linear_gradient, 
     point, px, rgba, size,
 };
 use image::RgbaImage;

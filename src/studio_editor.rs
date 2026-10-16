@@ -12,10 +12,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, RenderImage,
-    Window, canvas, div, img, layer_shell::*, linear_color_stop, linear_gradient, point, px, relative,
+    Window, canvas, div, img, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
 };
 use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};

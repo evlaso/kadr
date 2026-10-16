@@ -8,7 +8,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures::{AsyncBufReadExt, StreamExt, io::BufReader};
-use gpui::{App, AsyncApp, Context, SharedString, Window, WindowHandle, layer_shell::*};
+use crate::kit::{Anchor, KeyboardInteractivity};
+use gpui::{App, AsyncApp, Context, SharedString, Window, WindowHandle};
 use crate::ui::{IconButtonShape, ProgressBar, Tooltip, prelude::*};
 
 use crate::kit::{self, Hold, InputRegion, LayerSpec};
