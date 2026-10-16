@@ -67,7 +67,7 @@ pub async fn ffmpeg(job: &Job, argv: &[&OsStr], duration: f64, log: &str) -> Res
     let log = util::cache_dir().join(log);
     let _ = std::fs::create_dir_all(util::cache_dir());
     let stderr = std::fs::File::create(&log).map_err(|e| e.to_string())?;
-    let (cmd, rest) = argv.split_first().ok_or(t("пустая команда"))?;
+    let (cmd, rest) = argv.split_first().ok_or(t("job.empty_command"))?;
     let mut child = async_process::Command::new(cmd)
         .args(["-nostats", "-progress", "pipe:1"])
         .args(rest)
@@ -78,7 +78,7 @@ pub async fn ffmpeg(job: &Job, argv: &[&OsStr], duration: f64, log: &str) -> Res
         .map_err(|e| e.to_string())?;
     job.pid.set(Some(child.id()));
 
-    let stdout = child.stdout.take().ok_or(t("нет вывода ffmpeg"))?;
+    let stdout = child.stdout.take().ok_or(t("job.no_output_from_ffmpeg"))?;
     let mut lines = BufReader::new(stdout).lines();
     while let Some(Ok(line)) = lines.next().await {
         if let Some(us) = line.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {
@@ -143,7 +143,7 @@ impl Render for ProgressView {
                             IconButton::new("cancel", IconName::Close)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("Отменить"))
+                                .tooltip(Tooltip::text("job.cancel"))
                                 .on_click(move |_, _, _| {
                                     state.cancelled.set(true);
                                     if let Some(pid) = state.pid.get() {

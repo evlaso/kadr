@@ -66,7 +66,7 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     match saved {
         Ok(()) => Some(path),
         Err(e) => {
-            util::notify(t("Не удалось сохранить"), &e.to_string());
+            util::notify(t("common.couldnt_save"), &e.to_string());
             None
         }
     }

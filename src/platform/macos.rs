@@ -108,7 +108,7 @@ impl CursorOffCapture {
 }
 
 pub fn grab_monitor(_mon: &Mon) -> Option<image::RgbaImage> {
-    super::unsupported(crate::i18n::t("Снимок экрана"));
+    super::unsupported(crate::i18n::t("app.screenshot"));
     None
 }
 

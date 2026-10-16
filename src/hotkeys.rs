@@ -13,15 +13,15 @@ pub struct Action {
 }
 
 pub const ACTIONS: [Action; 9] = [
-    Action { title: "Все режимы на одной панели", command: "kadr capture" },
-    Action { title: "Скриншот области", command: "kadr shot region" },
-    Action { title: "Скриншот окна или области", command: "kadr shot smart" },
-    Action { title: "Скриншот экрана", command: "kadr shot fullscreen" },
-    Action { title: "Скриншот с прокруткой", command: "kadr shot scroll" },
-    Action { title: "Запись экрана", command: "kadr record" },
-    Action { title: "Распознать текст", command: "kadr text" },
-    Action { title: "История", command: "kadr history" },
-    Action { title: "Настройки", command: "kadr settings" },
+    Action { title: "shortcuts.all_modes_on_one_bar", command: "kadr capture" },
+    Action { title: "shortcuts.screenshot_area", command: "kadr shot region" },
+    Action { title: "shortcuts.screenshot_window_area", command: "kadr shot smart" },
+    Action { title: "shortcuts.screenshot_screen", command: "kadr shot fullscreen" },
+    Action { title: "common.scrolling_screenshot", command: "kadr shot scroll" },
+    Action { title: "common.record_screen", command: "kadr record" },
+    Action { title: "common.recognize_text", command: "kadr text" },
+    Action { title: "shortcuts.history", command: "kadr history" },
+    Action { title: "common.settings", command: "kadr settings" },
 ];
 
 /// The Hyprland submap kadr switches to while a shortcut is being recorded:

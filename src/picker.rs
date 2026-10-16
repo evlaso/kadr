@@ -208,7 +208,7 @@ impl Picker {
                 None if self.color => {
                     if let Some(hex) = self.color_at(local(e.position)) {
                         crate::platform::copy_text(&hex);
-                        crate::platform::notify(t("Цвет скопирован"), &hex);
+                        crate::platform::notify(t("picker.color_copied"), &hex);
                     }
                     None
                 }

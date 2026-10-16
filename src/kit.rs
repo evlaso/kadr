@@ -236,7 +236,7 @@ pub fn open_layer<V: Render + 'static>(
     }) {
         Ok(handle) => Some(handle),
         Err(e) => {
-            crate::util::notify(t("kadr: не удалось открыть окно"), &e.to_string());
+            crate::util::notify(t("app.kadr_couldnt_open_window"), &e.to_string());
             None
         }
     }
@@ -266,7 +266,7 @@ pub fn open_window<V: Render + 'static>(
     }) {
         Ok(handle) => Some(handle),
         Err(e) => {
-            crate::util::notify(t("kadr: не удалось открыть окно"), &e.to_string());
+            crate::util::notify(t("app.kadr_couldnt_open_window"), &e.to_string());
             None
         }
     }

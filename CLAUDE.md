@@ -4,7 +4,7 @@ CleanShot X–style screenshots and screen recording in Rust on GPUI CE (the com
 
 The user talks in Russian. Code, comments and commit messages are in English.
 
-UI text is written in Russian in the code and goes through `i18n`: `t("…")` for plain text, `tr!("… {} …", args)` for text with values (plain `{}` slots only). The Russian text is the key; English lives in `data/i18n/en.json`, and a test checks that its slots match. Add every new string there. English is the default language; the README is English, with the Russian one in `docs/README.ru.md`.
+UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_files", size, n)` for text with values (plain `{}` slots only). Keys are `<area>.<name>` (`common.*` for text used in several places); the text lives in `data/i18n/en.json` and `ru.json`, and a test checks both have the same keys and slots. Add every new string to both. English is the default language; the README is English, with the Russian one in `docs/README.ru.md`.
 
 ## Build, run, check
 

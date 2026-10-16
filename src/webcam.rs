@@ -112,7 +112,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
         Ok(source) => vec!["-f".into(), "lavfi".into(), "-i".into(), source],
         Err(_) => {
             let Some(device) = device() else {
-                return util::notify(t("Камера не найдена"), t("Запись пойдёт без камеры"));
+                return util::notify(t("common.no_camera_found"), t("common.recording_without_camera"));
             };
             let capture = capture_size(&device);
             ["-f", "v4l2", "-framerate", "30", "-video_size", capture, "-i", &device].map(String::from).to_vec()
@@ -126,7 +126,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
         .stderr(std::process::Stdio::null())
         .spawn()
     else {
-        return util::notify(t("Камера не запустилась"), t("Нужен ffmpeg"));
+        return util::notify(t("common.camera_didnt_start"), t("camera.ffmpeg_needed"));
     };
     let pid = child.id();
     let (mut tx, mut rx) = futures::channel::mpsc::channel::<Vec<u8>>(2);
@@ -295,7 +295,7 @@ impl Render for CameraView {
                     .size(ButtonSize::Large)
                     .toggle_state(on)
                     .child(div().px_1().child(div().size(px(14.)).rounded(px(7. * r as f32)).border_2().border_color(cx.theme().colors().text)))
-                    .tooltip(Tooltip::text([t("Круг"), t("Скруглённая"), t("Квадрат")][i]))
+                    .tooltip(Tooltip::text([t("camera.circle"), t("camera.rounded"), t("camera.square")][i]))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.look.round = ROUNDS[i];
                         this.look.save();
@@ -319,7 +319,7 @@ impl Render for CameraView {
                             IconButton::new("cam-smaller", IconName::Dash)
                                 .shape(IconButtonShape::Square)
                                 .size(ButtonSize::Large)
-                                .tooltip(Tooltip::text("Меньше"))
+                                .tooltip(Tooltip::text("camera.smaller"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.resize(-1);
                                     cx.notify();
@@ -329,7 +329,7 @@ impl Render for CameraView {
                             IconButton::new("cam-bigger", IconName::Plus)
                                 .shape(IconButtonShape::Square)
                                 .size(ButtonSize::Large)
-                                .tooltip(Tooltip::text("Больше"))
+                                .tooltip(Tooltip::text("camera.bigger"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.resize(1);
                                     cx.notify();

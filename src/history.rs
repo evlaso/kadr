@@ -33,7 +33,7 @@ enum Filter {
 }
 
 impl Filter {
-    const ALL: [(Filter, &'static str); 4] = [(Filter::All, "Все"), (Filter::Shots, "Скриншоты"), (Filter::Videos, "Записи"), (Filter::Gifs, "GIF")];
+    const ALL: [(Filter, &'static str); 4] = [(Filter::All, "history.all"), (Filter::Shots, "common.screenshots"), (Filter::Videos, "common.recordings"), (Filter::Gifs, "GIF")];
 
     fn accepts(self, kind: Kind) -> bool {
         match self {
@@ -310,7 +310,7 @@ impl History {
         };
         let meta = match item.kind {
             Kind::Shot => "PNG",
-            Kind::Video => t("Видео"),
+            Kind::Video => t("history.video"),
             Kind::Gif => "GIF",
         };
         let actions = h_flex()
@@ -320,21 +320,21 @@ impl History {
             .gap_0p5()
             .opacity(0.)
             .group_hover(group.clone(), |s| s.opacity(1.))
-            .child(tool("copy", IconName::Copy, t("Копировать (Ctrl+C)")).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
+            .child(tool("copy", IconName::Copy, t("history.copy_ctrl_c")).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
                 this.copy(index);
                 window.remove_window();
             })))
             .when(item.kind != Kind::Gif, |row| {
                 row.child(
-                    tool("edit", if item.kind == Kind::Shot { IconName::Pencil } else { IconName::Scissors }, if item.kind == Kind::Shot { t("Редактировать (E)") } else { t("Обрезать (E)") })
+                    tool("edit", if item.kind == Kind::Shot { IconName::Pencil } else { IconName::Scissors }, if item.kind == Kind::Shot { t("history.edit_e") } else { t("history.trim_e") })
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_item(index, true, window, cx))),
                 )
             })
-            .child(tool("folder", IconName::Folder, t("Показать в папке")).on_click({
+            .child(tool("folder", IconName::Folder, t("common.show_in_folder")).on_click({
                 let path = path.clone();
                 move |_, _, _| util::open_folder(&path)
             }))
-            .child(tool("trash", IconName::Trash, t("Удалить (Del)")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx))));
+            .child(tool("trash", IconName::Trash, t("history.delete_del")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx))));
 
         let thumb = div()
             .relative()
@@ -417,7 +417,7 @@ impl Render for History {
             .gap_2()
             .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Small).color(Color::Muted))
             .child(if self.query.is_empty() {
-                Label::new(t("Поиск по имени или дате…")).color(Color::Placeholder).into_any_element()
+                Label::new(t("history.search_by_name_date")).color(Color::Placeholder).into_any_element()
             } else {
                 Label::new(format!("{}▏", self.query)).into_any_element()
             });
@@ -443,7 +443,7 @@ impl Render for History {
                         .pt_10()
                         .flex()
                         .justify_center()
-                        .child(Label::new(if self.items.is_empty() { t("Пока ничего не снято") } else { t("Ничего не найдено") }).color(Color::Muted)),
+                        .child(Label::new(if self.items.is_empty() { t("history.nothing_captured_yet") } else { t("history.nothing_found") }).color(Color::Muted)),
                 )
             });
 
@@ -477,7 +477,7 @@ impl Render for History {
                             .child(
                                 IconButton::new("settings", IconName::Settings)
                                     .shape(IconButtonShape::Square)
-                                    .tooltip(Tooltip::text("Настройки"))
+                                    .tooltip(Tooltip::text("common.settings"))
                                     .on_click(|_, window, cx| {
                                         window.remove_window();
                                         crate::settings_view::open(cx);
@@ -490,13 +490,13 @@ impl Render for History {
                             .gap_4()
                             .px_3()
                             .py_1p5()
-                            .child(hint("enter", t("Открыть")))
-                            .child(hint("e", t("Редактор / обрезка")))
-                            .child(hint("ctrl-c", t("Копировать")))
-                            .child(hint("delete", t("Удалить")))
-                            .child(hint("tab", t("Фильтр")))
+                            .child(hint("enter", t("common.open")))
+                            .child(hint("e", t("history.editor_trim")))
+                            .child(hint("ctrl-c", t("common.copy")))
+                            .child(hint("delete", t("history.delete_selected")))
+                            .child(hint("tab", t("history.filter")))
                             .child(div().flex_1())
-                            .child(hint("escape", t("Закрыть"))),
+                            .child(hint("escape", t("common.close"))),
                     ),
             )
     }
@@ -516,13 +516,13 @@ fn when(t: SystemTime) -> String {
     use chrono::{Datelike, Local};
     let t: chrono::DateTime<Local> = t.into();
     let today = Local::now().date_naive();
-    let months = [crate::i18n::t("янв"), crate::i18n::t("фев"), crate::i18n::t("мар"), crate::i18n::t("апр"), crate::i18n::t("мая"), crate::i18n::t("июн"), crate::i18n::t("июл"), crate::i18n::t("авг"), crate::i18n::t("сен"), crate::i18n::t("окт"), crate::i18n::t("ноя"), crate::i18n::t("дек")];
+    let months = [crate::i18n::t("history.jan"), crate::i18n::t("history.feb"), crate::i18n::t("history.mar"), crate::i18n::t("history.apr"), crate::i18n::t("history.may"), crate::i18n::t("history.jun"), crate::i18n::t("history.jul"), crate::i18n::t("history.aug"), crate::i18n::t("history.sep"), crate::i18n::t("history.oct"), crate::i18n::t("history.nov"), crate::i18n::t("history.dec")];
     let date = t.date_naive();
     let time = t.format("%H:%M");
     if date == today {
-        tr!("сегодня {}", time)
+        tr!("history.today", time)
     } else if Some(date) == today.pred_opt() {
-        tr!("вчера {}", time)
+        tr!("history.yesterday", time)
     } else if date.year() == today.year() {
         format!("{} {} {time}", date.day(), months[date.month0() as usize])
     } else {

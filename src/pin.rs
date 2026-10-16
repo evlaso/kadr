@@ -34,7 +34,7 @@ pub struct Pin {
 
 pub fn open(path: PathBuf, cx: &mut App) {
     let Some((image, w, h)) = image_preview(&path) else {
-        return util::notify(t("Не удалось открыть картинку"), &path.display().to_string());
+        return util::notify(t("common.couldnt_open_image"), &path.display().to_string());
     };
     let Some(mon) = util::focused_monitor() else { return };
     let (mw, mh) = (mon.w as f32, mon.h as f32);
@@ -108,7 +108,7 @@ impl Render for Pin {
                     IconButton::new("close", IconName::Close)
                         .style(ButtonStyle::Filled)
                         .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Закрыть (Esc)"))
+                        .tooltip(Tooltip::text("pin.close_esc"))
                         .on_click(|_, window, _| window.remove_window()),
                 ),
             )

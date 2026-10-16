@@ -48,7 +48,7 @@ mod sni {
         }
 
         fn tool_tip(&self) -> ToolTip {
-            ToolTip { title: "kadr".into(), description: t("Клик — настройки, правый клик — меню").into(), ..Default::default() }
+            ToolTip { title: "kadr".into(), description: t("tray.click_for_settings_right_click").into(), ..Default::default() }
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
@@ -60,14 +60,14 @@ mod sni {
                 StandardItem { label: label.into(), activate: Box::new(move |_: &mut Self| kadr(args)), ..Default::default() }.into()
             };
             vec![
-                item(t("Скриншот"), &["shot", "smart"]),
-                item(t("Запись экрана"), &["record"]),
-                item(t("Распознать текст"), &["text"]),
-                item(t("Скриншот с прокруткой"), &["shot", "scroll"]),
-                item(t("Настройки"), &["settings"]),
+                item(t("tray.screenshot"), &["shot", "smart"]),
+                item(t("common.record_screen"), &["record"]),
+                item(t("common.recognize_text"), &["text"]),
+                item(t("common.scrolling_screenshot"), &["shot", "scroll"]),
+                item(t("common.settings"), &["settings"]),
                 MenuItem::Separator,
                 StandardItem {
-                    label: t("Убрать из трея").into(),
+                    label: t("tray.remove_from_tray").into(),
                     activate: Box::new(|_: &mut Self| {
                         let mut settings = Settings::load();
                         settings.tray = false;
@@ -161,7 +161,7 @@ pub use sni::{run, start, stop};
 /// Not ported to this system yet: there is no tray icon.
 #[cfg(not(target_os = "linux"))]
 pub fn run() {
-    crate::platform::unsupported(t("Иконка в трее"));
+    crate::platform::unsupported(t("common.tray_icon"));
 }
 
 #[cfg(not(target_os = "linux"))]

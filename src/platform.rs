@@ -32,7 +32,7 @@ pub enum Signal {
 /// "Not on this system yet", shown once as a notification.
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 pub fn unsupported(what: &str) {
-    notify("kadr", &tr!("{}: пока только на Linux", what));
+    notify("kadr", &tr!("app.linux_only_for_now", what));
 }
 
 /// A folder under the user's home, for fallbacks.

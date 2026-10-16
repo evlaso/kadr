@@ -17,13 +17,13 @@ struct Mode {
 }
 
 const MODES: [Mode; 7] = [
-    Mode { icon: "icons/kadr/area.svg", label: "Область", args: &["shot", "region"] },
-    Mode { icon: "icons/screen.svg", label: "Весь экран", args: &["shot", "fullscreen"] },
-    Mode { icon: "icons/kadr/window.svg", label: "Окно", args: &["shot", "windows"] },
-    Mode { icon: "icons/kadr/scroll.svg", label: "Прокрутка", args: &["shot", "scroll"] },
-    Mode { icon: "icons/kadr/timer.svg", label: "Таймер", args: &["shot", "timer"] },
-    Mode { icon: "icons/case_sensitive.svg", label: "Текст", args: &["text"] },
-    Mode { icon: "icons/kadr/camera.svg", label: "Запись", args: &["record"] },
+    Mode { icon: "icons/kadr/area.svg", label: "capture_bar.area", args: &["shot", "region"] },
+    Mode { icon: "icons/screen.svg", label: "common.fullscreen", args: &["shot", "fullscreen"] },
+    Mode { icon: "icons/kadr/window.svg", label: "common.window", args: &["shot", "windows"] },
+    Mode { icon: "icons/kadr/scroll.svg", label: "capture_bar.scrolling", args: &["shot", "scroll"] },
+    Mode { icon: "icons/kadr/timer.svg", label: "capture_bar.timer", args: &["shot", "timer"] },
+    Mode { icon: "icons/case_sensitive.svg", label: "common.text", args: &["text"] },
+    Mode { icon: "icons/kadr/camera.svg", label: "common.recording", args: &["record"] },
 ];
 
 /// Groups end after these: screenshots, then text, then recording.
@@ -110,7 +110,7 @@ impl Render for Launcher {
                 bar = bar.child(Divider::vertical().h(px(44.)).mx_1());
             }
         }
-        let hint = Label::new(t("1–7, ← → и Enter · Esc — закрыть")).size(LabelSize::Small).color(Color::Muted);
+        let hint = Label::new(t("capture_bar.1_7_enter_esc_close")).size(LabelSize::Small).color(Color::Muted);
         kit::root(cx)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {

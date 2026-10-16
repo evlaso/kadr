@@ -44,10 +44,10 @@ pub struct Seg {
 }
 
 /// Output shapes: the recording's own, then landscape, square and vertical.
-pub const ASPECTS: [(&str, Option<f64>); 5] = [("Как видео", None), ("16:9", Some(16. / 9.)), ("1:1", Some(1.)), ("4:5", Some(0.8)), ("9:16", Some(9. / 16.))];
+pub const ASPECTS: [(&str, Option<f64>); 5] = [("studio.like_video", None), ("16:9", Some(16. / 9.)), ("1:1", Some(1.)), ("4:5", Some(0.8)), ("9:16", Some(9. / 16.))];
 /// Export size by the output's short side.
 pub const RESOLUTIONS: [(&str, u32); 4] = [("720p", 720), ("1080p", 1080), ("1440p", 1440), ("4K", 2160)];
-pub const FRAME_RATES: [(&str, Option<u32>); 3] = [("Как в записи", None), ("30", Some(30)), ("60", Some(60))];
+pub const FRAME_RATES: [(&str, Option<u32>); 3] = [("studio.as_recorded", None), ("30", Some(30)), ("60", Some(60))];
 /// Shortcut pill text height as a share of the output's short side.
 pub const KEY_SIZES: [(&str, f64); 3] = [("S", 0.015), ("M", 0.02), ("L", 0.026)];
 /// Slider ranges: padding (share of the short side), corner radius (pixels
@@ -57,13 +57,13 @@ pub const MAX_RADIUS: f64 = 60.;
 /// Export compression as a bitrate cap in bits per pixel per frame, so the
 /// file size has a known ceiling before rendering: bpp × width × height × fps
 /// × seconds. Screen recordings often come out well under it.
-pub const QUALITIES: [(&str, f64); 4] = [("Максимум", 0.12), ("Высокое", 0.06), ("Среднее", 0.03), ("Маленький", 0.012)];
+pub const QUALITIES: [(&str, f64); 4] = [("studio.maximum", 0.12), ("common.high", 0.06), ("common.medium", 0.03), ("studio.small", 0.012)];
 pub const AUDIO_BITRATE: f64 = 160_000.;
-pub const CURSOR_STYLES: [&str; 2] = ["Стрелка", "Точка"];
+pub const CURSOR_STYLES: [&str; 2] = ["common.arrow", "studio.dot"];
 /// Motion blur, like a camera shutter: the moving picture is rendered at
 /// `SUBFRAMES` times the frame rate while the camera or the cursor moves
 /// fast, and this many sub-frames are averaged into each frame (0 is off).
-pub const MOTION_BLUR: [(&str, usize); 3] = [("Выкл", 0), ("Слабое", 2), ("Сильное", 4)];
+pub const MOTION_BLUR: [(&str, usize); 3] = [("studio.off", 0), ("studio.light", 2), ("studio.strong", 4)];
 const SUBFRAMES: usize = 4;
 pub const MAX_CURSOR: f64 = 3.;
 /// Drawn cursor height at size 1, in logical screen pixels.
@@ -507,11 +507,11 @@ fn gif_size(l: &Layout) -> (u32, u32) {
 pub fn human_size(bytes: f64) -> String {
     let mb = bytes / 1_048_576.;
     if mb < 1. {
-        tr!("{} КБ", (bytes / 1024.).round().max(1.))
+        tr!("studio.kb", (bytes / 1024.).round().max(1.))
     } else if mb < 10. {
-        tr!("{} МБ", crate::i18n::decimal(format!("{:.1}", mb)))
+        tr!("studio.mb", crate::i18n::decimal(format!("{:.1}", mb)))
     } else {
-        tr!("{} МБ", mb.round())
+        tr!("studio.mb", mb.round())
     }
 }
 
@@ -811,7 +811,7 @@ fn preview_path(video: &Path) -> PathBuf {
 pub fn render(video: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx| {
         let Some(p) = probe(&video).await else {
-            return util::notify(t("Не удалось открыть видео"), &video.display().to_string());
+            return util::notify(t("common.couldnt_open_video"), &video.display().to_string());
         };
         let track = Track::load(&video).unwrap_or_else(|| Track { rect: (0.0, 0.0, p.w, p.h), ..Default::default() });
         let project = Project::load(&video, &track, &p);
@@ -823,7 +823,7 @@ pub fn render(video: PathBuf, cx: &mut App) {
 /// Render `project`; the full export lands in a card, the quick preview
 /// (720p) opens in the player.
 pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
-    let title = if preview { t("Готовлю предпросмотр") } else { t("Экспортирую видео") };
+    let title = if preview { t("studio.preparing_preview") } else { t("studio.exporting_video") };
     let running = job::start(title, if preview { IconName::PlayFilled } else { IconName::Sparkle }, cx);
     cx.spawn(async move |cx| {
         let out = if preview { preview_path(&video) } else { output_path(&video, project.format) };
@@ -837,7 +837,7 @@ pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
                 let _ = cx.update(|cx| cards::show(out, cx));
             }
             Ok(false) => {}
-            Err(e) => util::notify(t("Не удалось собрать видео"), &e),
+            Err(e) => util::notify(t("studio.couldnt_build_video"), &e),
         }
     })
     .detach();
@@ -915,14 +915,14 @@ fn keep_expr(kept: &[(f64, f64)]) -> String {
 
 /// Ok(false) when cancelled.
 async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progress: &Job) -> Result<bool, String> {
-    let p = probe(video).await.ok_or(t("ffprobe не смог прочитать видео"))?;
+    let p = probe(video).await.ok_or(t("studio.ffprobe_couldnt_read_video"))?;
     let track = Track::load(video).unwrap_or_else(|| Track { rect: (0.0, 0.0, p.w, p.h), ..Default::default() });
     let l = layout(&p, project, preview);
     let camera = Camera::new(&track, &p, &project.segments);
     let (z, x, y) = (simplify(&camera.zoom, 0.004), simplify(&camera.x, 2.0), simplify(&camera.y, 2.0));
     let kept = project.kept();
     if kept.is_empty() {
-        return Err(t("После обрезки ничего не осталось").into());
+        return Err(t("studio.nothing_left_after_trimming").into());
     }
     let whole = kept.len() == 1 && kept[0].0 <= 0.01 && kept[0].1 >= p.duration - 0.01;
     let length = project.kept_duration();
@@ -941,7 +941,7 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     // shortcut pills on the finished frame. Inputs 0 and 1 are the video and
     // the backdrop; the overlays follow.
     let cursor = if track.cursor_hidden && project.cursor {
-        let (png, hot, _) = cursor_image(project.cursor_style, cursor_height(&track, &p, project.cursor_size)).ok_or(t("не получилось нарисовать курсор"))?;
+        let (png, hot, _) = cursor_image(project.cursor_style, cursor_height(&track, &p, project.cursor_size)).ok_or(t("studio.couldnt_draw_cursor"))?;
         let file = tmp.join("cursor.png");
         std::fs::write(&file, png).map_err(|e| e.to_string())?;
         Some((file, hot, cursor_path(&track, &p, project.cursor_smooth)))

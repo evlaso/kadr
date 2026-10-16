@@ -1,6 +1,6 @@
 //! Scrolling screenshot, like CleanShot's: pick an area, scroll it yourself,
 //! and kadr keeps grabbing it and stitches the new rows on at the bottom by
-//! matching the rows it has already seen. "Готово" saves one tall picture.
+//! matching the rows it has already seen. "scroll.done" saves one tall picture.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -183,7 +183,7 @@ pub fn start(area: Option<String>, cx: &mut App) {
         let window = cx.update(|cx| open_bar(cx, mon, (x, y, w, h), shared.clone(), kit::hold(cx)));
         let _ = cx.update(|cx| cx.set_global(Session(Some((shared.clone(), window)))));
 
-        // Grab and stitch off the UI thread until "Готово" or "Отмена".
+        // Grab and stitch off the UI thread until "scroll.done" or "common.cancel".
         let (tx, rx) = futures::channel::oneshot::channel();
         let worker = shared.clone();
         std::thread::spawn(move || {
@@ -218,14 +218,14 @@ pub fn start(area: Option<String>, cx: &mut App) {
             return;
         }
         let Some(picture) = picture else {
-            return util::notify(t("Не удалось снять область"), t("grim ничего не вернул"));
+            return util::notify(t("scroll.couldnt_capture_area"), t("scroll.grim_returned_nothing"));
         };
         let settings = Settings::load();
         let dir = settings.screenshot_dir();
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(format!("screenshot-{}.png", util::timestamp()));
         if let Err(e) = picture.save(&path) {
-            return util::notify(t("Не удалось сохранить"), &e.to_string());
+            return util::notify(t("common.couldnt_save"), &e.to_string());
         }
         let _ = cx.update(|cx| capture::deliver(path, &settings, cx));
         drop(hold);
@@ -304,10 +304,10 @@ impl Render for ScrollBar {
                         .p_1()
                         .pl_3()
                         .elevation_3(cx)
-                        .child(Label::new(t("Прокручивай — kadr склеит")).color(Color::Muted))
+                        .child(Label::new(t("scroll.scroll_kadr_stitches")).color(Color::Muted))
                         .child(div().w(px(90.)).font_family(kit::MONO_FONT).text_color(cx.theme().colors().text_muted).child(format!("{height} px")))
                         .child(
-                            Button::new("cancel", t("Отмена"))
+                            Button::new("cancel", t("common.cancel"))
                                 .style(ButtonStyle::Subtle)
                                 .size(ButtonSize::Large)
                                 .on_click(move |_, _, _| {
@@ -316,10 +316,10 @@ impl Render for ScrollBar {
                                 }),
                         )
                         .child(
-                            Button::new("done", t("Готово"))
+                            Button::new("done", t("scroll.done"))
                                 .style(ButtonStyle::Accent)
                                 .size(ButtonSize::Large)
-                                .tooltip(Tooltip::text("Или нажми горячую клавишу ещё раз"))
+                                .tooltip(Tooltip::text("scroll.press_hotkey_again"))
                                 .on_click(move |_, _, _| stop.stop.store(true, Ordering::Relaxed)),
                         )
                         .child(self.region.mark()),

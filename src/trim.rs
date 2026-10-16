@@ -118,7 +118,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx| {
         let _hold = hold;
         let Some(p) = probe(&path).await else {
-            return util::notify(t("Не удалось открыть видео"), &path.display().to_string());
+            return util::notify(t("common.couldnt_open_video"), &path.display().to_string());
         };
         let Some(mon) = util::focused_monitor() else { return };
         let fit = (mon.w as f32 * 0.7 / p.w as f32).min(mon.h as f32 * 0.5 / p.h as f32);
@@ -315,7 +315,7 @@ impl Trimmer {
                     .justify_between()
                     .px_0p5()
                     .child(Label::new(clock(self.start)).size(LabelSize::XSmall).color(Color::Muted))
-                    .child(Label::new(tr!("Выбрано {}", clock(self.end - self.start))).size(LabelSize::XSmall))
+                    .child(Label::new(tr!("trim.selected", clock(self.end - self.start))).size(LabelSize::XSmall))
                     .child(Label::new(clock(self.end)).size(LabelSize::XSmall).color(Color::Muted)),
             )
     }
@@ -355,32 +355,32 @@ impl Trimmer {
                     .gap_1()
                     .child(Label::new("GIF").size(LabelSize::Small).color(Color::Muted))
                     .child(chips("w", GIF_WIDTHS.iter().map(|w| format!("{w}px")).collect(), self.gif_width, |t, i| t.gif_width = i, cx))
-                    .child(chips("fps", GIF_FPS.iter().map(|f| tr!("{} к/с", f)).collect(), self.gif_fps, |t, i| t.gif_fps = i, cx))
+                    .child(chips("fps", GIF_FPS.iter().map(|f| tr!("common.fps", f)).collect(), self.gif_fps, |t, i| t.gif_fps = i, cx))
                     .child(Divider::vertical().h_5().mx_1())
                     .child(
-                        Button::new("play", t("Проиграть"))
+                        Button::new("play", t("trim.play"))
                             .style(ButtonStyle::Subtle)
                             .key_binding(kit::keys("space"))
                             .on_click(cx.listener(|this, _, _, _| this.play())),
                     )
                     .child(
-                        Button::new("cancel", t("Отмена"))
+                        Button::new("cancel", t("common.cancel"))
                             .style(ButtonStyle::Subtle)
                             .color(Color::Muted)
                             .key_binding(kit::keys("escape"))
                             .on_click(|_, window, _| window.remove_window()),
                     )
                     .child(
-                        Button::new("gif", t("Сохранить GIF"))
+                        Button::new("gif", t("trim.save_gif"))
                             .style(ButtonStyle::Subtle)
                             .key_binding(kit::keys("g"))
                             .on_click(cx.listener(|this, _, window, cx| this.gif(window, cx))),
                     )
                     .child(
-                        Button::new("save", t("Сохранить"))
+                        Button::new("save", t("common.save"))
                             .style(ButtonStyle::Accent)
                             .disabled(!self.trimmed())
-                            .tooltip(Tooltip::text("Новым файлом, оригинал останется"))
+                            .tooltip(Tooltip::text("trim.as_new_file_original_stays"))
                             .key_binding(kit::keys("ctrl-s"))
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),
@@ -444,7 +444,7 @@ fn with_suffix(path: &Path, suffix: &str, ext: &str) -> PathBuf {
 /// Cut `start..end` into a new "-trim" file, re-encoded so the cut is frame
 /// exact (stream copy can only cut at keyframes).
 pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
-    let running = job::start("Обрезаю видео", IconName::Scissors, cx);
+    let running = job::start("trim.trimming_video", IconName::Scissors, cx);
     cx.spawn(async move |cx| {
         let out = with_suffix(&path, "-trim", "mp4");
         let (ss, t) = (format!("{start:.3}"), format!("{:.3}", end - start));
@@ -471,7 +471,7 @@ pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
                 track::trim(&path, &out, start, end);
                 let _ = cx.update(|cx| cards::show(out, cx));
             }
-            Err(e) => util::notify(crate::i18n::t("Не удалось обрезать видео"), &e),
+            Err(e) => util::notify(crate::i18n::t("trim.couldnt_trim_video"), &e),
         }
     })
     .detach();
@@ -479,7 +479,7 @@ pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
 
 /// GIF of `start..end` with a palette built for the clip, so it isn't muddy.
 pub fn export_gif(path: PathBuf, start: f64, end: f64, width: u32, fps: u32, cx: &mut App) {
-    let running = job::start("Делаю GIF", IconName::Image, cx);
+    let running = job::start("trim.making_gif", IconName::Image, cx);
     cx.spawn(async move |cx| {
         let whole = start <= 0.01 && probe(&path).await.is_some_and(|p| end >= p.duration - 0.01);
         let out = with_suffix(&path, if whole { "" } else { "-trim" }, "gif");
@@ -501,7 +501,7 @@ pub fn export_gif(path: PathBuf, start: f64, end: f64, width: u32, fps: u32, cx:
             Ok(()) => {
                 let _ = cx.update(|cx| cards::show(out, cx));
             }
-            Err(e) => util::notify(crate::i18n::t("Не удалось сделать GIF"), &e),
+            Err(e) => util::notify(crate::i18n::t("trim.couldnt_make_gif"), &e),
         }
     })
     .detach();

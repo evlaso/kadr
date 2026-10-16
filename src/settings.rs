@@ -15,7 +15,7 @@ pub enum Side {
 }
 
 /// gpu-screen-recorder's quality presets.
-pub const QUALITIES: [(&str, &str); 4] = [("medium", "Среднее"), ("high", "Высокое"), ("very_high", "Очень высокое"), ("ultra", "Максимальное")];
+pub const QUALITIES: [(&str, &str); 4] = [("medium", "common.medium"), ("high", "common.high"), ("very_high", "settings.very_high"), ("ultra", "settings.maximum")];
 pub const CARD_SECONDS: [u32; 4] = [5, 10, 20, 0];
 pub const MAX_CARDS: [usize; 3] = [2, 4, 6];
 pub const FPS: [u32; 2] = [30, 60];

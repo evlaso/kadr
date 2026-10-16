@@ -95,7 +95,7 @@ pub(crate) fn run_args(args: &[String], cx: &mut App) {
 impl Command {
     fn from_args(args: &[String]) -> Result<Self, String> {
         let file = |i: usize| -> Result<PathBuf, String> {
-            let arg = args.get(i).ok_or(t("не указан файл"))?;
+            let arg = args.get(i).ok_or(t("cli.no_file_given"))?;
             std::fs::canonicalize(arg).map_err(|e| format!("{arg}: {e}"))
         };
         match args.first().map(String::as_str) {
@@ -106,7 +106,7 @@ impl Command {
                 if MODES.contains(&mode) {
                     Ok(Command::Shot(mode.into()))
                 } else {
-                    Err(tr!("неизвестный режим: {}", mode))
+                    Err(tr!("cli.unknown_mode", mode))
                 }
             }
             Some("open") => file(1).map(Command::Open),
@@ -119,14 +119,14 @@ impl Command {
                 let path = file(1)?;
                 let flag = |name: &str| -> Result<Option<f64>, String> {
                     match args.iter().position(|a| a == name) {
-                        Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).map(Some).ok_or(tr!("{}: нужны секунды", name)),
+                        Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).map(Some).ok_or(tr!("cli.needs_seconds", name)),
                         None => Ok(None),
                     }
                 };
                 let range = match (flag("--from")?, flag("--to")?) {
                     (None, None) => None,
                     (from, Some(to)) => Some((from.unwrap_or(0.), to)),
-                    (Some(_), None) => return Err(t("укажи и --to").into()),
+                    (Some(_), None) => return Err(t("cli.give_as_well").into()),
                 };
                 Ok(Command::Trim(path, range))
             }
@@ -137,7 +137,7 @@ impl Command {
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
-                Some("area") => args.get(2).cloned().map(Command::RecordArea).ok_or_else(|| t("укажи область: \"X,Y WxH\"").to_string()),
+                Some("area") => args.get(2).cloned().map(Command::RecordArea).ok_or_else(|| t("cli.give_area_x_y_wxh").to_string()),
                 Some(mode @ ("region" | "fullscreen")) => {
                     let mut opts = record::Opts::default();
                     for flag in &args[2..] {
@@ -151,14 +151,14 @@ impl Command {
                             "--webcam" => opts.webcam = true,
                             "--keys" => opts.keys = true,
                             "--studio" => opts.studio = true,
-                            other => return Err(tr!("неизвестный флаг: {}", other)),
+                            other => return Err(tr!("cli.unknown_flag", other)),
                         }
                     }
                     Ok(Command::Record(Some(mode.into()), Some(opts)))
                 }
-                Some(other) => Err(tr!("неизвестный режим записи: {}", other)),
+                Some(other) => Err(tr!("cli.unknown_recording_mode", other)),
             },
-            Some(other) => Err(tr!("неизвестная команда: {}", other)),
+            Some(other) => Err(tr!("cli.unknown_command", other)),
         }
     }
 
