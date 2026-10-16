@@ -56,6 +56,9 @@ assets![
     "icons/kadr/counter.svg" => "../data/icons/editor/counter.svg",
     "icons/kadr/pixelate.svg" => "../data/icons/editor/pixelate.svg",
     "icons/kadr/redo.svg" => "../data/icons/editor/redo.svg",
+    "icons/kadr/pointer.svg" => "../data/icons/editor/pointer.svg",
+    "icons/kadr/crop.svg" => "../data/icons/editor/crop.svg",
+    "icons/kadr/frame.svg" => "../data/icons/editor/frame.svg",
     // Zed has no camera icon.
     "icons/kadr/camera.svg" => "../data/icons/kadr-camera-symbolic.svg",
 ];
