@@ -19,8 +19,11 @@ use crate::{pin, studio, track, util};
 const CARD_WIDTH: f32 = 300.;
 const MAX_CARDS: usize = 4;
 const GAP: f32 = 14.;
-/// Room around the stack so card shadows aren't cut off by the overlay's edge.
+/// Room above and to the right of the stack so card shadows aren't cut off by
+/// the overlay's edge. Below and to the left is the screen edge anyway.
 const PAD: f32 = 24.;
+/// Distance from the screen corner.
+const EDGE: f32 = 10.;
 const AUTO_DISMISS: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
@@ -104,7 +107,7 @@ fn add(path: PathBuf, image: Arc<Image>, w: u32, h: u32, video: Option<f64>, cx:
         namespace: "kadr",
         anchor: Anchor::BOTTOM | Anchor::LEFT,
         margin: (0., 0., 0., 0.),
-        size: (CARD_WIDTH + 2. * PAD, MAX_CARDS as f32 * (240. + GAP) + 2. * PAD),
+        size: (CARD_WIDTH + EDGE + PAD, MAX_CARDS as f32 * (240. + GAP) + EDGE + PAD),
         keyboard: KeyboardInteractivity::None,
         ignore_zones: false,
         monitor: util::focused_monitor(),
@@ -319,7 +322,16 @@ impl Render for CardStack {
             return kit::root(cx);
         }
         let cards: Vec<_> = self.cards.iter().map(|c| self.render_card(c, cx)).collect();
-        kit::root(cx).flex().flex_col().justify_end().p(px(PAD)).gap(px(GAP)).children(cards)
+        kit::root(cx)
+            .flex()
+            .flex_col()
+            .justify_end()
+            .pt(px(PAD))
+            .pr(px(PAD))
+            .pb(px(EDGE))
+            .pl(px(EDGE))
+            .gap(px(GAP))
+            .children(cards)
     }
 }
 
