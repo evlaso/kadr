@@ -176,7 +176,7 @@ pub fn open(cx: &mut App) {
         return;
     }
     let mon = util::focused_monitor();
-    kit::open_window(cx, "kadr-history", mon.as_ref(), (1100., 760.), |window, cx| {
+    kit::open_window(cx, "kadr-history", mon.as_ref(), (1100., 760.), (560., 400.), |window, cx| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
@@ -410,6 +410,9 @@ impl History {
             .overflow_hidden()
             .bg(colors.element_background)
             .children(item.thumb.as_ref().map(|t| img(t.sharp.clone()).size_full().object_fit(ObjectFit::Cover).rounded(px(8.))))
+            // A faint shade and a hairline keep pictures from melting into
+            // the window behind them.
+            .child(div().absolute().inset_0().rounded(px(8.)).bg(rgba(0x0000001f)).border_1().border_color(colors.border))
             .children(badge)
             .child(overlay);
         // The selected thumbnail gets an accent ring, like Finder's.

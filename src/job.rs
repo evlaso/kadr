@@ -28,17 +28,38 @@ impl Job {
     pub fn cancelled(&self) -> bool {
         self.cancelled.get()
     }
+
+    /// How far along, 0..1 (short of 1 until it's done).
+    pub fn fraction(&self) -> f32 {
+        self.fraction.get().clamp(0.0, 0.99) as f32
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.set(true);
+        if let Some(pid) = self.pid.get() {
+            util::signal(pid, util::Signal::Terminate);
+        }
+    }
 }
 
-/// A running job: keeps kadr alive and its toast on screen until `finish`.
+/// A running job: keeps kadr alive and its progress on screen until
+/// `finish`: a blurred card in the thumbnail stack for a job on a video,
+/// a toast otherwise.
 pub struct Running {
     pub job: Rc<Job>,
     window: Option<WindowHandle<ProgressView>>,
+    card: Option<usize>,
     _hold: Hold,
 }
 
-pub fn start(title: &'static str, icon: IconName, cx: &mut App) -> Running {
+/// Start a job. With `source` (the video it works on) and cards turned on,
+/// progress shows as a card that becomes the result's card when done.
+pub fn start(title: &'static str, icon: IconName, source: Option<&std::path::Path>, cx: &mut App) -> Running {
     let job = Rc::new(Job::default());
+    if let Some(source) = source.filter(|_| crate::settings::Settings::load().show_card) {
+        let card = crate::cards::show_job(job.clone(), title, source.to_path_buf(), cx);
+        return Running { job, window: None, card: Some(card), _hold: kit::hold(cx) };
+    }
     let spec = LayerSpec {
         namespace: "kadr-progress",
         anchor: Anchor::BOTTOM,
@@ -50,13 +71,25 @@ pub fn start(title: &'static str, icon: IconName, cx: &mut App) -> Running {
     };
     let state = job.clone();
     let window = kit::open_layer(cx, spec, |window, cx| cx.new(|cx| ProgressView::new(title.into(), icon, state, window, cx)));
-    Running { job, window, _hold: kit::hold(cx) }
+    Running { job, window, card: None, _hold: kit::hold(cx) }
 }
 
 impl Running {
-    pub fn finish(self, cx: &mut AsyncApp) {
+    /// The job is over: its card turns into the result's (or goes away),
+    /// or the toast closes and the result gets a card of its own.
+    pub fn finish(self, result: Option<std::path::PathBuf>, cx: &mut AsyncApp) {
         if let Some(w) = self.window {
             let _ = w.update(cx, |_, window, _| window.remove_window());
+        }
+        match self.card {
+            Some(card) => {
+                let _ = cx.update(|cx| crate::cards::complete(card, result, cx));
+            }
+            None => {
+                if let Some(out) = result {
+                    let _ = cx.update(|cx| crate::cards::show(out, cx));
+                }
+            }
         }
     }
 }
@@ -144,12 +177,7 @@ impl Render for ProgressView {
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .tooltip(Tooltip::text(t("job.cancel")))
-                                .on_click(move |_, _, _| {
-                                    state.cancelled.set(true);
-                                    if let Some(pid) = state.pid.get() {
-                                        util::signal(pid, util::Signal::Terminate);
-                                    }
-                                }),
+                                .on_click(move |_, _, _| state.cancel()),
                         ),
                 )
                 .child(div().pr_1p5().child(ProgressBar::new("progress", fraction, 1., cx)))

@@ -3,7 +3,9 @@
 //! holds the whole stack; only the cards themselves take input.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::kit::{Anchor, KeyboardInteractivity};
@@ -16,7 +18,7 @@ use crate::ui::{Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::settings::{Settings, Side};
-use crate::{editor, ocr, pin, studio_editor, track, trim, util};
+use crate::{editor, job, ocr, pin, studio_editor, track, trim, util};
 use crate::i18n::t;
 
 const CARD_WIDTH: f32 = 240. * kit::SCALE;
@@ -57,6 +59,9 @@ struct Card {
     /// A text card (recognized text) instead of a file: the text, or None
     /// when nothing was found.
     text: Option<Option<String>>,
+    /// A job still working on this video: its progress and title. The card
+    /// shows the video blurred until the job hands over its result.
+    job: Option<(Rc<job::Job>, &'static str)>,
     /// Thumbnail height.
     height: f32,
     /// Clip duration in seconds for recordings.
@@ -71,7 +76,6 @@ const SLIDE: Duration = Duration::from_millis(280);
 pub struct CardStack {
     cards: Vec<Card>,
     settings: Settings,
-    next_id: usize,
     hidden: bool,
     region: InputRegion,
     /// Whether the pointer is over this layer. GPUI keeps the last pointer
@@ -95,7 +99,7 @@ pub fn show(path: PathBuf, cx: &mut App) {
         };
         match loaded {
             Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(Card { id: 0, path, image: Some(image), text: None, height, video, deadline: Instant::now(), hovered: false }, cx));
+                let _ = cx.update(|cx| add(Card { id: 0, path, image: Some(image), text: None, job: None, height, video, deadline: Instant::now(), hovered: false }, cx));
             }
             None => util::notify(t("card.couldnt_open_file"), &path.display().to_string()),
         }
@@ -118,18 +122,97 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
 
 /// A card with recognized text (copied already), or with "nothing found".
 pub fn show_text(text: Option<String>, cx: &mut App) {
-    add(Card { id: 0, path: PathBuf::new(), image: None, text: Some(text), height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
+    add(Card { id: 0, path: PathBuf::new(), image: None, text: Some(text), job: None, height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
 }
+
+/// A card for a job on `source` (an export, a trim, a GIF): the video's
+/// first frame, blurred, with the job's progress. Returns its id for
+/// `complete`.
+pub fn show_job(job: Rc<job::Job>, title: &'static str, source: PathBuf, cx: &mut App) -> usize {
+    let id = NEXT_CARD.fetch_add(1, Ordering::Relaxed);
+    add(Card { id, path: source.clone(), image: None, text: None, job: Some((job, title)), height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
+    cx.spawn(async move |cx| {
+        if let Some((image, _, _)) = video_preview(&source, cx).await {
+            let _ = cx.update(|cx| with_card(id, cx, |card| card.image = Some(image)));
+        }
+        // Keep the progress moving while the job runs.
+        loop {
+            cx.background_executor().timer(Duration::from_millis(200)).await;
+            let running = cx.update(|cx| {
+                let mut running = false;
+                with_card(id, cx, |card| running = card.job.is_some());
+                running
+            });
+            if !running {
+                break;
+            }
+        }
+    })
+    .detach();
+    id
+}
+
+/// The job behind card `id` is over: the card becomes `result`'s (the
+/// blur lifts), or goes away without one.
+pub fn complete(id: usize, result: Option<PathBuf>, cx: &mut App) {
+    let Some(out) = result else {
+        if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
+            let _ = handle.update(cx, |stack, window, cx| stack.remove(id, window, cx));
+        }
+        return;
+    };
+    cx.spawn(async move |cx| {
+        let loaded = if is_video(&out) {
+            video_preview(&out, cx).await
+        } else {
+            let file = out.clone();
+            cx.background_executor().spawn(async move { card_thumbnail(&std::fs::read(&file).ok()?) }).await.map(|(image, height, _)| (image, height, None))
+        };
+        let _ = cx.update(|cx| {
+            let settings = Settings::load();
+            with_card(id, cx, |card| {
+                card.path = out.clone();
+                card.job = None;
+                card.deadline = dismiss_at(&settings);
+                if let Some((image, height, video)) = loaded {
+                    card.image = Some(image);
+                    card.height = height;
+                    card.video = video;
+                }
+            });
+        });
+    })
+    .detach();
+}
+
+/// Change a card in place and redraw the stack.
+fn with_card(id: usize, cx: &mut App, change: impl FnOnce(&mut Card)) {
+    if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
+        let _ = handle.update(cx, |stack, _, cx| {
+            if let Some(card) = stack.cards.iter_mut().find(|c| c.id == id) {
+                change(card);
+            }
+            cx.notify();
+        });
+    }
+}
+
+/// Card ids, unique for the run.
+static NEXT_CARD: AtomicUsize = AtomicUsize::new(1);
 
 fn add(card: Card, cx: &mut App) {
     let settings = Settings::load();
-    let mut slot = Some(Card { deadline: dismiss_at(&settings), ..card });
+    // A job's card stays until the job is done.
+    let deadline = if card.job.is_some() { Instant::now() + Duration::from_secs(365 * 24 * 3600) } else { dismiss_at(&settings) };
+    let mut card = Card { deadline, ..card };
+    if card.id == 0 {
+        card.id = NEXT_CARD.fetch_add(1, Ordering::Relaxed);
+    }
+    let mut slot = Some(card);
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
-            let mut card = slot.take().expect("card");
-            card.id = stack.next_id;
-            stack.next_id += 1;
+            let card = slot.take().expect("card");
             stack.cards.push(card);
             if stack.cards.len() > stack.settings.max_cards {
                 stack.cards.remove(0);
@@ -154,7 +237,7 @@ fn add(card: Card, cx: &mut App) {
     let handle = kit::open_layer(cx, spec, |window, cx| {
         cx.new(|cx| {
             CardStack::start_ticking(window, cx);
-            CardStack { cards: vec![card], settings, next_id: 1, hidden: false, region: InputRegion::default(), inside: false }
+            CardStack { cards: vec![card], settings, hidden: false, region: InputRegion::default(), inside: false }
         })
     });
     cx.set_global(CardsWindow(handle));
@@ -212,6 +295,9 @@ impl CardStack {
     fn render_card(&self, card: &Card, inside: bool, cx: &mut Context<Self>) -> AnyElement {
         if let Some(text) = &card.text {
             return self.render_text_card(card, text.as_deref(), inside, cx);
+        }
+        if let Some((job, title)) = &card.job {
+            return self.render_job_card(card, job.clone(), title, cx);
         }
         let shown = card.hovered && inside;
         // Off-screen offset toward the card's edge, to come in from.
@@ -403,6 +489,58 @@ impl CardStack {
 }
 
 impl CardStack {
+    /// A job at work on a video: its first frame blurred, the title, how
+    /// far along, and a way to stop it.
+    fn render_job_card(&self, card: &Card, job: Rc<job::Job>, title: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        let away = (CARD_WIDTH + EDGE + PAD) * if self.settings.card_side == Side::Right { 1. } else { -1. };
+        let id = card.id;
+        let fraction = job.fraction();
+        let colors = cx.theme().colors();
+        let ink = hsla(0., 0., 0.12, 1.);
+        let card_el = div()
+            .id(("card", id))
+            .relative()
+            .flex_none()
+            .w(px(CARD_WIDTH))
+            .h(px(card.height))
+            .rounded(px(kit::RADIUS))
+            .shadow(kit::shadow())
+            .bg(colors.elevated_surface_background)
+            .children(card.image.as_ref().map(|image| img(image.blurred.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
+            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000066)))
+            .child(
+                v_flex()
+                    .absolute()
+                    .inset_0()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .px_4()
+                    .child(Label::new(title).size(LabelSize::Small).color(Color::Custom(gpui::white())))
+                    .child(Label::new(format!("{}%", (fraction * 100.) as u32)).color(Color::Custom(gpui::white())))
+                    .child(div().w_full().h(px(4.)).rounded_full().bg(hsla(0., 0., 1., 0.25)).child(div().h_full().w(gpui::relative(fraction)).rounded_full().bg(gpui::white()))),
+            )
+            .child(
+                div().absolute().top_0().left_0().m_2().child(
+                    div()
+                        .id(("cancel-job", id))
+                        .size(px(26. * kit::SCALE))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(hsla(0., 0., 1., 0.92))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
+                        .child(Icon::new(IconName::Close).size(IconSize::Small).color(Color::Custom(ink)))
+                        .tooltip(Tooltip::text(t("job.cancel")))
+                        .on_click(move |_, _, _| job.cancel()),
+                ),
+            )
+            .child(self.region.mark());
+        card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
+    }
+
     /// Recognized text, as a card like the others: the text fading out at
     /// the bottom, Copy again on hover.
     fn render_text_card(&self, card: &Card, text: Option<&str>, inside: bool, cx: &mut Context<Self>) -> AnyElement {

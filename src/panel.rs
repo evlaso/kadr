@@ -232,10 +232,10 @@ impl Render for Panel {
                 .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
                 .toggle_state(on)
-                .child(div().px_1().child(icon.size(IconSize::Small)))
+                .child(div().px_1().child(icon.size(IconSize::Medium)))
         };
         let action = |id: &'static str, icon: Icon| {
-            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(icon.size(IconSize::Small)))
+            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(icon.size(IconSize::Medium)))
         };
         let mic_desc = self.mics.iter().find(|(n, _)| *n == self.opts.mic_device).map(|(_, d)| SharedString::from(d.clone()));
         let is_region = matches!(self.target, Target::Region { .. });
@@ -263,7 +263,7 @@ impl Render for Panel {
                             .style(if self.opts.mic { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                             .size(ButtonSize::Large)
                             .toggle_state(self.opts.mic)
-                            .child(div().px_1().child(Icon::new(IconName::Mic).size(IconSize::Small)))
+                            .child(div().px_1().child(Icon::new(IconName::Mic).size(IconSize::Medium)))
                             .tooltip(tip(t("record_bar.microphone"), if self.opts.mic { mic_desc } else { on_off(false) }, None))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.opts.mic = !this.opts.mic;
@@ -348,7 +348,7 @@ impl Render for Panel {
                         h_flex()
                             .px_1()
                             .gap_1()
-                            .child(Icon::from_path("icons/kadr/timer.svg").size(IconSize::Small))
+                            .child(Icon::from_path("icons/kadr/timer.svg").size(IconSize::Medium))
                             .when(n > 0, |row| row.child(Label::new(format!("{n}")).size(LabelSize::Small))),
                     )
                     .tooltip(tip(t("record_bar.countdown_before_recording"), Some(if n > 0 { tr!("record_bar.s_esc_cancels", n).into() } else { t("record_bar.countdown_off").into() }), None))

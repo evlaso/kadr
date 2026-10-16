@@ -51,6 +51,9 @@ const GRAB: f32 = 7.;
 /// Toolbar and footer together, roughly: the first layout's guess at the
 /// stage height, measured from then on.
 const CHROME: f32 = 110. * kit::SCALE;
+/// Narrower than this, the toolbar folds its style controls into a menu and
+/// the footer drops its zoom.
+const COMPACT_TOOLBAR: f32 = 1000.;
 /// Width of the background panel.
 const PANEL: f32 = 300. * kit::SCALE;
 /// Slider ranges, as fractions of the picture's longer side.
@@ -554,6 +557,8 @@ pub struct Editor {
     windowed: bool,
     /// The colour dropdown in the toolbar is open.
     colors_open: bool,
+    /// The "⋯" menu with the style controls, when the toolbar is too narrow.
+    more_open: bool,
     size: (f32, f32),
     focus: FocusHandle,
 }
@@ -579,7 +584,8 @@ pub fn open(path: PathBuf, cx: &mut App) {
     // A window around the picture with its backdrop margin, the stage
     // padding and the bars; the picture refits whenever the window resizes.
     let pad = disp.0.max(disp.1) * FRAME_PAD * 2.;
-    let size = ((disp.0 + pad + 48.).max(1180. * kit::SCALE).min(mw - 80.), (disp.1 + pad + 48. + CHROME).min(mh - 80.));
+    // Never a letterbox: at least a comfortable height, whatever the picture.
+    let size = ((disp.0 + pad + 48.).max(1180. * kit::SCALE).min(mw - 80.), (disp.1 + pad + 48. + CHROME).max(640. * kit::SCALE).min(mh - 80.));
     let windowed = !cfg!(target_os = "linux") || crate::settings::Settings::load().editor_window;
     let layer = LayerSpec {
         namespace: "kadr-editor",
@@ -643,13 +649,14 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 stage_h: Rc::new(Cell::new(size.1 - CHROME)),
                 windowed,
                 colors_open: false,
+                more_open: false,
                 size,
                 focus,
             }
         })
     };
     if windowed {
-        kit::open_window(cx, "kadr-editor", Some(&mon), size, build);
+        kit::open_window(cx, "kadr-editor", Some(&mon), size, (640., 420.), build);
     } else {
         kit::open_layer(cx, layer, build);
     }
@@ -1197,7 +1204,7 @@ impl Editor {
                 .style(if self.tool == tool { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
                 .toggle_state(self.tool == tool)
-                .child(div().px_1().child(tool.icon().size(IconSize::Small)))
+                .child(div().px_1().child(tool.icon().size(IconSize::Medium)))
                 .tooltip(Tooltip::text(format!("{} ({})", tool.label(), tool.key().to_uppercase())))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.finish_text();
@@ -1383,16 +1390,62 @@ impl Editor {
                 .child(option("text-outline", TextStyle::Outline, t("editor.outlined")))
                 .child(Divider::vertical().h_5().mx_1())
         });
-        let style = h_flex()
-            .flex_1()
-            .justify_end()
-            .gap_0p5()
-            .children(text_options)
-            .children(fill_toggle)
-            .child(palette)
-            .child(weights)
-            .child(Divider::vertical().h_5().mx_1())
-            .child(background);
+        // A narrow window folds the style controls into a "⋯" menu, like
+        // toolbars in the OS do.
+        let compact = width < COMPACT_TOOLBAR;
+        let style = if compact {
+            let menu = self.more_open.then(|| {
+                gpui::deferred(
+                    v_flex()
+                        .id("more-menu")
+                        .occlude()
+                        .absolute()
+                        .top(px(38.))
+                        .right_0()
+                        .gap_2()
+                        .p_2()
+                        .elevation_3(cx)
+                        .children(text_options)
+                        .children(fill_toggle)
+                        .child(palette)
+                        .child(weights)
+                        .child(background),
+                )
+            });
+            h_flex().flex_1().justify_end().child(
+                div()
+                    .relative()
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        if this.more_open {
+                            this.more_open = false;
+                            cx.notify();
+                        }
+                    }))
+                    .child(
+                        ButtonLike::new("more")
+                            .style(if self.more_open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                            .size(ButtonSize::Large)
+                            .toggle_state(self.more_open)
+                            .child(div().px_1().child(Icon::from_path("icons/kadr/more.svg").size(IconSize::Medium)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.more_open = !this.more_open;
+                                cx.notify();
+                            })),
+                    )
+                    .children(menu),
+            )
+        } else {
+            h_flex()
+                .flex_1()
+                .justify_end()
+                .gap_0p5()
+                .children(text_options)
+                .children(fill_toggle)
+                .child(palette)
+                .child(weights)
+                .child(Divider::vertical().h_5().mx_1())
+                .child(background)
+        };
 
         h_flex()
             .w(px(width))
@@ -1430,7 +1483,9 @@ impl Editor {
             .hover(|s| s.bg(cx.theme().colors().element_hover))
             .cursor_grab()
             .child(Icon::from_path("icons/kadr/grip.svg").size(IconSize::Small).color(Color::Muted))
-            .child(Label::new(t("editor.drag")).color(Color::Muted))
+            .when(width >= COMPACT_TOOLBAR, |d| {
+                d.child(Label::new(t("editor.drag")).color(Color::Muted)).child(Icon::from_path("icons/kadr/grip.svg").size(IconSize::Small).color(Color::Muted))
+            })
             .tooltip(Tooltip::text(t("editor.drag_annotated_image_into_chat")))
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
@@ -1516,7 +1571,7 @@ impl Editor {
                     .flex_1()
                     .justify_end()
                     .gap_1()
-                    .child(zoom)
+                    .when(width >= COMPACT_TOOLBAR, |row| row.child(zoom))
                     .child(
                         IconButton::new("ocr", IconName::CaseSensitive)
                             .shape(IconButtonShape::Square)
@@ -1603,8 +1658,7 @@ impl Editor {
                         cx.notify();
                     })))
             }))
-            .when(active.is_none(), |row| {
-                row.child(
+            .child(
                     Button::new("save-frame-preset", t("common.save_as_preset"))
                         .style(ButtonStyle::Subtle)
                         .color(Color::Muted)
@@ -1615,8 +1669,7 @@ impl Editor {
                             save_frame_presets(&this.presets);
                             cx.notify();
                         })),
-                )
-            })
+            )
     }
 
     /// The background tool, like CleanShot's: what's behind the picture, its

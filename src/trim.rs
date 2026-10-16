@@ -19,7 +19,7 @@ use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
 use crate::ui::{fill, outline};
 use crate::kit::{self, LayerSpec};
-use crate::{cards, job, track, util};
+use crate::{job, track, util};
 use crate::i18n::t;
 
 const THUMBS: usize = 14;
@@ -444,7 +444,7 @@ fn with_suffix(path: &Path, suffix: &str, ext: &str) -> PathBuf {
 /// Cut `start..end` into a new "-trim" file, re-encoded so the cut is frame
 /// exact (stream copy can only cut at keyframes).
 pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
-    let running = job::start(t("trim.trimming_video"), IconName::Scissors, cx);
+    let running = job::start(t("trim.trimming_video"), IconName::Scissors, Some(path.as_path()), cx);
     cx.spawn(async move |cx| {
         let out = with_suffix(&path, "-trim", "mp4");
         let (ss, t) = (format!("{start:.3}"), format!("{:.3}", end - start));
@@ -462,15 +462,15 @@ pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
             }
         }
         let cancelled = running.job.cancelled();
-        running.finish(cx);
+        if result.is_ok() && !cancelled {
+            track::trim(&path, &out, start, end);
+        }
+        running.finish((result.is_ok() && !cancelled).then(|| out.clone()), cx);
         match result {
             _ if cancelled => {
                 let _ = std::fs::remove_file(&out);
             }
-            Ok(()) => {
-                track::trim(&path, &out, start, end);
-                let _ = cx.update(|cx| cards::show(out, cx));
-            }
+            Ok(()) => {}
             Err(e) => util::notify(crate::i18n::t("trim.couldnt_trim_video"), &e),
         }
     })
@@ -479,7 +479,7 @@ pub fn save_trim(path: PathBuf, start: f64, end: f64, cx: &mut App) {
 
 /// GIF of `start..end` with a palette built for the clip, so it isn't muddy.
 pub fn export_gif(path: PathBuf, start: f64, end: f64, width: u32, fps: u32, cx: &mut App) {
-    let running = job::start(t("trim.making_gif"), IconName::Image, cx);
+    let running = job::start(t("trim.making_gif"), IconName::Image, Some(path.as_path()), cx);
     cx.spawn(async move |cx| {
         let whole = start <= 0.01 && probe(&path).await.is_some_and(|p| end >= p.duration - 0.01);
         let out = with_suffix(&path, if whole { "" } else { "-trim" }, "gif");
@@ -493,14 +493,12 @@ pub fn export_gif(path: PathBuf, start: f64, end: f64, width: u32, fps: u32, cx:
         argv.push(out.as_os_str());
         let result = job::ffmpeg(&running.job, &argv, end - start, "gif.log").await;
         let cancelled = running.job.cancelled();
-        running.finish(cx);
+        running.finish((result.is_ok() && !cancelled).then(|| out.clone()), cx);
         match result {
             _ if cancelled => {
                 let _ = std::fs::remove_file(&out);
             }
-            Ok(()) => {
-                let _ = cx.update(|cx| cards::show(out, cx));
-            }
+            Ok(()) => {}
             Err(e) => util::notify(crate::i18n::t("trim.couldnt_make_gif"), &e),
         }
     })

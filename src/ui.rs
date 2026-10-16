@@ -271,6 +271,8 @@ pub enum IconSize {
     XSmall,
     #[default]
     Small,
+    /// Toolbar icons.
+    Medium,
     /// The capture bar's big mode icons.
     Large,
 }
@@ -280,6 +282,7 @@ impl IconSize {
         rems_from_px(match self {
             IconSize::XSmall => 12.,
             IconSize::Small => 14.,
+            IconSize::Medium => 16.,
             IconSize::Large => 22.,
         })
     }
@@ -484,23 +487,31 @@ impl Tooltip {
 
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        // Tooltips are their own views, so they set the UI font themselves.
-        v_flex()
-            .elevation_2(cx)
-            .font_family(kit::UI_FONT)
-            .text_size(LabelSize::Default.rems())
-            .text_color(cx.theme().colors.text)
-            .py_1p5()
-            .px_2p5()
-            .child(
-                h_flex()
-                    .gap_4()
-                    .child(div().max_w_72().child(self.title.clone()))
-                    .children(self.key_binding.clone()),
-            )
-            .children(self.meta.clone().map(|meta| div().max_w_72().child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))))
+        // GPUI puts a tooltip a pixel off the pointer, over whatever is
+        // below it; the transparent top margin moves the card down, clear of
+        // the control. Small and quiet, like macOS's.
+        div().pt(px(TOOLTIP_DROP)).child(
+            v_flex()
+                .elevation_2(cx)
+                .font_family(kit::UI_FONT)
+                .text_size(LabelSize::Small.rems())
+                .text_color(cx.theme().colors.text)
+                .py_1()
+                .px_2()
+                .gap_0p5()
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .child(div().max_w_64().child(self.title.clone()))
+                        .children(self.key_binding.clone()),
+                )
+                .children(self.meta.clone().map(|meta| div().max_w_64().child(Label::new(meta).size(LabelSize::XSmall).color(Color::Muted)))),
+        )
     }
 }
+
+/// How far below the pointer a tooltip's card starts.
+const TOOLTIP_DROP: f32 = 18.;
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;

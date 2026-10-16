@@ -84,6 +84,7 @@ assets![
     "icons/kadr/window.svg" => "../data/icons/editor/window.svg",
     "icons/kadr/scroll.svg" => "../data/icons/editor/scroll.svg",
     "icons/kadr/skip_back.svg" => "../data/icons/editor/skip_back.svg",
+    "icons/kadr/more.svg" => "../data/icons/editor/more.svg",
     "icons/kadr/skip_forward.svg" => "../data/icons/editor/skip_forward.svg",
     // Zed has no camera icon.
     "icons/kadr/camera.svg" => "../data/icons/kadr-camera-symbolic.svg",
@@ -248,6 +249,7 @@ pub fn open_window<V: Render + 'static>(
     app_id: &str,
     mon: Option<&crate::util::Mon>,
     size: (f32, f32),
+    min: (f32, f32),
     build: impl FnOnce(&mut Window, &mut App) -> gpui::Entity<V>,
 ) -> Option<WindowHandle<V>> {
     let display = mon.and_then(|m| m.display(cx));
@@ -256,7 +258,7 @@ pub fn open_window<V: Render + 'static>(
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display, gpui::size(px(size.0), px(size.1)), cx))),
         app_id: Some(app_id.into()),
         display_id: display,
-        window_min_size: Some(gpui::size(px(640.), px(420.))),
+        window_min_size: Some(gpui::size(px(min.0), px(min.1))),
         ..Default::default()
     };
     match cx.open_window(options, |window, cx| {

@@ -137,7 +137,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
         let walls = wallpaper_thumbs().await;
         let _ = cx.update(|cx| {
             let size = (stage.0 + 2. * STAGE_PAD + SIDEBAR, stage.1 + chrome_h - 80.);
-            kit::open_window(cx, "kadr-studio", Some(&mon), size, |window, cx| {
+            kit::open_window(cx, "kadr-studio", Some(&mon), size, (960., 620.), |window, cx| {
                 cx.new(|cx| {
                     let focus = cx.focus_handle();
                     window.focus(&focus, cx);
@@ -1149,7 +1149,6 @@ impl StudioEditor {
                             .tooltip(Tooltip::text(t("studio.build_720p_preview_with_all")))
                             .on_click(cx.listener(|this, _, _, cx| studio::export(this.video.clone(), this.project.clone(), true, cx))),
                     )
-                    .child(div().px_1().child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small).color(Color::Muted)))
                     .child(
                         Button::new("export", if gif { t("studio.export_gif") } else { t("studio.export") })
                             .style(ButtonStyle::Accent)
@@ -1230,7 +1229,7 @@ impl StudioEditor {
                                 cx.notify();
                             })),
                     )
-                    .child(div().w(px(110.)).child(self.slider(Knob::TimelineZoom, ((self.timeline_zoom - 1.) / (MAX_TIMELINE_ZOOM - 1.)) as f64, String::new(), cx)))
+                    .child(div().flex_none().w(px(120.)).child(self.slider(Knob::TimelineZoom, ((self.timeline_zoom - 1.) / (MAX_TIMELINE_ZOOM - 1.)) as f64, String::new(), cx)))
                     .child(
                         IconButton::new("timeline-in", IconName::Plus)
                             .shape(IconButtonShape::Square)
@@ -1419,15 +1418,13 @@ impl StudioEditor {
                         cx.notify();
                     })))
             }))
-            .when(active.is_none(), |row| {
-                row.child(
+            .child(
                     Button::new("save-preset", t("common.save_as_preset"))
                         .style(ButtonStyle::Subtle)
                         .color(Color::Muted)
                         .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
                         .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
-                )
-            });
+            );
 
         // The backdrop: colours and gradients, then wallpapers.
         let swatch = |id: SharedString, selected: bool| {

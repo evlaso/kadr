@@ -81,7 +81,7 @@ pub fn open(cx: &mut App) {
         return;
     }
     let mon = util::focused_monitor();
-    kit::open_window(cx, "kadr-settings", mon.as_ref(), (820. * kit::SCALE, 560. * kit::SCALE), |window, cx| {
+    kit::open_window(cx, "kadr-settings", mon.as_ref(), (820. * kit::SCALE, 560. * kit::SCALE), (640., 420.), |window, cx| {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);

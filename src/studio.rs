@@ -16,7 +16,7 @@ use crate::ui::IconName;
 use crate::track::{self, Track};
 use crate::job::{self, Job};
 use crate::settings::Settings;
-use crate::{cards, palette, util};
+use crate::{palette, util};
 use crate::i18n::t;
 
 /// Seconds to ease the zoom in or out.
@@ -891,19 +891,16 @@ pub fn render(video: PathBuf, cx: &mut App) {
 /// (720p) opens in the player.
 pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
     let title = if preview { t("studio.preparing_preview") } else { t("studio.exporting_video") };
-    let running = job::start(title, if preview { IconName::PlayFilled } else { IconName::Sparkle }, cx);
+    let running = job::start(title, if preview { IconName::PlayFilled } else { IconName::Sparkle }, (!preview).then_some(video.as_path()), cx);
     cx.spawn(async move |cx| {
         let out = if preview { preview_path(&video) } else { output_path(&video, project.format) };
         let result = run(&video, &project, &out, preview, &running.job).await;
-        running.finish(cx);
+        running.finish(matches!(result, Ok(true)).then(|| out.clone()).filter(|_| !preview), cx);
         match result {
             Ok(true) if preview => {
                 util::spawn(&[OsStr::new("mpv"), "--force-window=yes".as_ref(), "--loop-file=inf".as_ref(), out.as_os_str()]);
             }
-            Ok(true) => {
-                let _ = cx.update(|cx| cards::show(out, cx));
-            }
-            Ok(false) => {}
+            Ok(_) => {}
             Err(e) => util::notify(t("studio.couldnt_build_video"), &e),
         }
     })
