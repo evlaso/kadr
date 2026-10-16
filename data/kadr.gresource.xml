@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/dev/foxqa/Kadr/icons/scalable/actions">
+    <file preprocess="xml-stripblanks" alias="kadr-camera-symbolic.svg">icons/kadr-camera-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-check-symbolic.svg">icons/kadr-check-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-close-symbolic.svg">icons/kadr-close-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-down-symbolic.svg">icons/kadr-down-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-folder-symbolic.svg">icons/kadr-folder-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-mic-symbolic.svg">icons/kadr-mic-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-pause-symbolic.svg">icons/kadr-pause-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-pin-symbolic.svg">icons/kadr-pin-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-play-symbolic.svg">icons/kadr-play-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-region-symbolic.svg">icons/kadr-region-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-screen-symbolic.svg">icons/kadr-screen-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-speaker-symbolic.svg">icons/kadr-speaker-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-stop-symbolic.svg">icons/kadr-stop-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="kadr-trash-symbolic.svg">icons/kadr-trash-symbolic.svg</file>
+  </gresource>
+</gresources>
