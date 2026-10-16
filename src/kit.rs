@@ -49,6 +49,8 @@ assets![
     "icons/play_filled.svg" => "../data/zed/icons/play_filled.svg",
     "icons/check.svg" => "../data/zed/icons/check.svg",
     "icons/chevron_down.svg" => "../data/zed/icons/chevron_down.svg",
+    "icons/chevron_left.svg" => "../data/zed/icons/chevron_left.svg",
+    "icons/chevron_right.svg" => "../data/zed/icons/chevron_right.svg",
     "icons/sparkle.svg" => "../data/zed/icons/sparkle.svg",
     "icons/arrow_up_right.svg" => "../data/zed/icons/arrow_up_right.svg",
     "icons/slash.svg" => "../data/zed/icons/slash.svg",
