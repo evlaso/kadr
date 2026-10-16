@@ -225,22 +225,31 @@ impl Picker {
         cx.notify();
     }
 
-    /// The picked colour under the pointer, as "#rrggbb".
-    /// The magnifier around (x, y): each screen pixel a sharp CELL square,
-    /// a light blue grid along their edges. Made by hand, since a scaled
-    /// image would come out smoothed.
-    /// The pixel (ix, iy) sits in the middle, whole.
+    /// One screen pixel's side in the magnifier, in physical pixels: whole,
+    /// so every pixel there is an equal square.
+    fn cell_px(&self) -> u32 {
+        (CELL * self.scale).round().max(2.) as u32
+    }
+
+    /// The magnifier's side in logical pixels: a whole number of cells.
+    fn loupe(&self) -> f32 {
+        (CELLS * self.cell_px()) as f32 / self.scale
+    }
+
+    /// The magnifier around the pixel (ix, iy), which sits whole in the
+    /// middle: each screen pixel a sharp square, a light blue grid between
+    /// them. Made by hand, since a scaled image would come out smoothed.
     fn lens_at(&self, (ix, iy): (u32, u32)) -> Arc<RenderImage> {
-        let side = (LOUPE * self.scale).round() as u32;
-        let cell = CELL * self.scale;
-        let (cx, cy) = (ix as f32 + 0.5, iy as f32 + 0.5);
+        let cell = self.cell_px();
+        let side = CELLS * cell;
+        let half = (CELLS / 2) as i64;
         let (fw, fh) = self.frozen.dimensions();
         let grid = [0x9C, 0xD0, 0xFF];
         let image = image::RgbaImage::from_fn(side, side, |u, v| {
-            let sx = cx + (u as f32 + 0.5 - side as f32 / 2.) / cell;
-            let sy = cy + (v as f32 + 0.5 - side as f32 / 2.) / cell;
-            let mut p = if sx < 0. || sy < 0. || sx >= fw as f32 || sy >= fh as f32 { [0, 0, 0, 255] } else { self.frozen.get_pixel(sx as u32, sy as u32).0 };
-            if sx.rem_euclid(1.) * cell < 1. || sy.rem_euclid(1.) * cell < 1. {
+            let sx = ix as i64 + (u / cell) as i64 - half;
+            let sy = iy as i64 + (v / cell) as i64 - half;
+            let mut p = if sx < 0 || sy < 0 || sx >= fw as i64 || sy >= fh as i64 { [0, 0, 0, 255] } else { self.frozen.get_pixel(sx as u32, sy as u32).0 };
+            if (u % cell == 0 && u > 0) || (v % cell == 0 && v > 0) {
                 for i in 0..3 {
                     p[i] = (p[i] as f32 * 0.65 + grid[i] as f32 * 0.35) as u8;
                 }
@@ -251,6 +260,7 @@ impl Picker {
         Arc::new(RenderImage::new([image::Frame::new(image)]))
     }
 
+    /// The colour under the pointer, as "#RRGGBB".
     fn color_at(&self, (x, y): (f32, f32)) -> Option<String> {
         let (px_x, px_y) = ((x * self.scale) as u32, (y * self.scale) as u32);
         let p = self.frozen.get_pixel_checked(px_x, px_y)?.0;
@@ -258,8 +268,9 @@ impl Picker {
     }
 }
 
-/// Size of the magnifier, and how big one screen pixel is in it.
-const LOUPE: f32 = 132.;
+/// How many screen pixels the magnifier shows across (odd, so one is in
+/// the middle), and about how big each is, in logical pixels.
+const CELLS: u32 = 13;
 const CELL: f32 = 11.;
 
 impl Render for Picker {
@@ -327,22 +338,28 @@ impl Render for Picker {
                 let _ = window.drop_image(old);
             }
         }
+        let (scale, size_l, cell) = (self.scale, self.loupe(), self.cell_px() as f32 / self.scale);
+        // The white frame sits outside the lens, a whole number of physical
+        // pixels wide, and the lens lands on whole pixels: nothing is cut.
+        let edge = (2. * scale).round() / scale;
+        let outer = size_l + 2. * edge;
         let loupe = cursor.map(|(x, y)| {
-            let (lx, ly) = (if x + 24. + LOUPE < sw { x + 24. } else { x - 24. - LOUPE }, if y + 24. + LOUPE + 40. < sh { y + 24. } else { y - 24. - LOUPE - 40. });
+            let snap = |v: f32| (v * scale).round() / scale;
+            let (lx, ly) = (snap(if x + 24. + outer < sw { x + 24. } else { x - 24. - outer }), snap(if y + 24. + outer + 40. < sh { y + 24. } else { y - 24. - outer - 40. }));
             let picture = self.lens.as_ref().map(|l| l.1.clone());
             let lens = canvas(
                 |_, _, _| {},
                 move |bounds, _, window, _| {
-                    let c = bounds.center();
                     if let Some(picture) = picture.clone() {
                         let _ = window.paint_image(bounds, bounds, px(12.).into(), 0., picture, 0, false);
                     }
-                    // The pixel under the pointer, outlined, always in the middle.
-                    let pixel = Bounds::new(point(c.x - px(CELL / 2.), c.y - px(CELL / 2.)), size(px(CELL + 1.), px(CELL + 1.)));
+                    // The pixel under the pointer, outlined: the middle cell.
+                    let mid = (CELLS / 2) as f32 * cell;
+                    let pixel = Bounds::new(point(bounds.origin.x + px(mid), bounds.origin.y + px(mid)), size(px(cell + 1. / scale), px(cell + 1. / scale)));
                     window.paint_quad(quad(pixel, px(1.), gpui::transparent_black(), px(1.5), gpui::white(), gpui::BorderStyle::Solid));
                 },
             )
-            .size(px(LOUPE));
+            .size(px(size_l));
             div()
                 .absolute()
                 .left(px(lx))
@@ -351,7 +368,7 @@ impl Render for Picker {
                 .flex_col()
                 .items_center()
                 .gap_1()
-                .child(div().size(px(LOUPE)).rounded(px(12.)).border_2().border_color(gpui::white()).shadow(kit::shadow()).child(lens))
+                .child(div().size(px(outer)).p(px(edge)).rounded(px(12. + edge)).bg(gpui::white()).shadow(kit::shadow()).child(lens))
                 .child(
                     div()
                         .px_2()
