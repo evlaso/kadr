@@ -82,10 +82,6 @@ pub fn overlay_kind(spec: &crate::kit::LayerSpec, cx: &App) -> (gpui::WindowKind
     (gpui::WindowKind::PopUp, crate::kit::overlay_bounds(spec, cx))
 }
 
-pub async fn screenshot(_mode: &str, _dir: &Path) -> Option<PathBuf> {
-    super::unsupported("Скриншоты");
-    None
-}
 
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
     std::fs::copy(target, link).map(|_| ())
@@ -98,4 +94,9 @@ impl CursorOffCapture {
     pub fn start() -> Option<Self> {
         None
     }
+}
+
+pub fn grab_monitor(_mon: &Mon) -> Option<image::RgbaImage> {
+    super::unsupported("Снимок экрана");
+    None
 }

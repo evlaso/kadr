@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::kit::{Anchor, KeyboardInteractivity};
-use gpui::{App, Context, SharedString, Window, WindowHandle, div, px};
+use gpui::{App, AsyncApp, Context, SharedString, Window, WindowHandle, div, px};
 use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
@@ -22,7 +22,7 @@ pub fn region(cx: &mut App) {
     let hold = kit::hold(cx);
     cx.spawn(async move |cx| {
         let _hold = hold;
-        let Some(png) = grab_region().await else { return };
+        let Some(png) = grab_region(cx).await else { return };
         let text = recognize(&png, Layout::Block).await;
         let _ = std::fs::remove_file(&png);
         let _ = cx.update(|cx| done(text, cx));
@@ -41,23 +41,12 @@ pub fn image(path: PathBuf, cx: &mut App) {
     .detach();
 }
 
-/// Omarchy's freeze + slurp, then grim on the picked area.
-async fn grab_region() -> Option<PathBuf> {
-    let (_, out) = util::output(&["omarchy-capture-region", "region", "--keep-freeze"]).await?;
-    let mut lines = out.lines();
-    let freeze = lines.next().and_then(|l| l.trim().parse::<u32>().ok());
-    let selection = lines.next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+/// kadr's picker over the frozen screen; the picked part as a PNG.
+async fn grab_region(cx: &mut AsyncApp) -> Option<PathBuf> {
+    let picked = crate::picker::pick(false, cx).await?;
     let png = util::runtime_dir().join(format!("kadr-ocr-{}.png", std::process::id()));
-    let grabbed = match &selection {
-        Some(geometry) => util::output::<&OsStr>(&["grim".as_ref(), "-g".as_ref(), geometry.as_ref(), png.as_os_str()])
-            .await
-            .is_some_and(|(ok, _)| ok),
-        None => false,
-    };
-    if let Some(pid) = freeze {
-        util::signal(pid, util::Signal::Terminate);
-    }
-    grabbed.then_some(png)
+    picked.crop().save(&png).ok()?;
+    Some(png)
 }
 
 enum Layout {

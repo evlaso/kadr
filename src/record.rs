@@ -296,7 +296,7 @@ impl Recorder {
                     let hold = kit::hold(cx);
                     cx.spawn(async move |this, cx| {
                         let _hold = hold;
-                        let target = pick_target().await;
+                        let target = pick_target(cx).await;
                         let _ = this.update(cx, |rec, cx| {
                             rec.state = State::Idle;
                             if let Some(handle) = target.and_then(|t| panel::open(t, cx)) {
@@ -472,7 +472,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
             let focused = mons.iter().find(|m| m.focused).ok_or_else(|| Some("не найден активный монитор".to_string()))?;
             Target::Monitor(focused.name.clone())
         }
-        Area::Pick => pick_target().await.ok_or(None)?,
+        Area::Pick => pick_target(cx).await.ok_or(None)?,
         Area::Fixed(target) => target,
     };
 
@@ -703,17 +703,13 @@ impl Render for RecBar {
 }
 
 /// Omarchy's picker, so selection works like for screenshots.
-async fn pick_target() -> Option<Target> {
-    let (ok, out) = util::output(&["omarchy-capture-region", "smart", "--match-monitor"]).await?;
-    let out = out.trim();
-    if !ok || out.is_empty() {
-        return None;
+async fn pick_target(cx: &mut AsyncApp) -> Option<Target> {
+    let picked = crate::picker::pick(true, cx).await?;
+    if picked.whole {
+        return Some(Target::Monitor(picked.mon.name));
     }
-    if let Some(name) = out.strip_prefix("monitor:") {
-        return Some(Target::Monitor(name.to_owned()));
-    }
-    // "X,Y WxH"
-    parse_area(out)
+    let (x, y, w, h) = picked.area;
+    Some(Target::Region { x, y, w, h })
 }
 
 /// Same mpv overlay as Omarchy's recorder, so its window rules and the

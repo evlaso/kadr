@@ -165,14 +165,6 @@ pub fn overlay_kind(spec: &crate::kit::LayerSpec, _cx: &App) -> (gpui::WindowKin
     (kind, gpui::Bounds { origin: point(px(0.), px(0.)), size: size(px(spec.size.0), px(spec.size.1)) })
 }
 
-/// Take a screenshot with Omarchy's own command, so selection, freezing and
-/// saving behave exactly like the stock one. None when cancelled.
-pub async fn screenshot(mode: &str, dir: &Path) -> Option<PathBuf> {
-    let dir = format!("OMARCHY_SCREENSHOT_DIR={}", dir.display());
-    let (_, stdout) = crate::util::output(&["env", &dir, "omarchy-capture-screenshot", mode, "save"]).await?;
-    let path = stdout.lines().map(str::trim).rfind(|l| !l.is_empty()).map(PathBuf::from)?;
-    path.is_file().then_some(path)
-}
 
 /// Link a file (the OCR models share the system's English data).
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
@@ -209,4 +201,13 @@ fn set_hardware_cursors(value: i64) {
     // starts with the new setting.
     let script = format!("hl.config({{ cursor = {{ no_hardware_cursors = {value} }} }})");
     let _ = std::process::Command::new("hyprctl").args(["eval", &script]).stdout(std::process::Stdio::null()).status();
+}
+
+/// The monitor as it is now, in physical pixels (grim, without the cursor).
+pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
+    let out = std::process::Command::new("grim").args(["-o", &mon.name, "-t", "ppm", "-"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    image::load_from_memory_with_format(&out.stdout, image::ImageFormat::Pnm).ok().map(|i| i.to_rgba8())
 }

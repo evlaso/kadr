@@ -3,6 +3,7 @@ mod cards;
 mod editor;
 mod history;
 mod palette;
+mod picker;
 mod platform;
 mod panel;
 mod pin;

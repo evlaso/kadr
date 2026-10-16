@@ -141,15 +141,10 @@ pub fn start(area: Option<String>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let area = match area {
             Some(area) => area,
-            None => {
-                let Some((ok, out)) = util::output(&["omarchy-capture-region", "region"]).await else {
-                    return crate::platform::unsupported("Скриншот с прокруткой");
-                };
-                if !ok {
-                    return;
-                }
-                out
-            }
+            None => match crate::picker::pick(true, cx).await {
+                Some(picked) => picked.geometry(),
+                None => return,
+            },
         };
         let Some((x, y, w, h)) = parse(area.trim()) else { return };
         let geometry = format!("{x},{y} {w}x{h}");
