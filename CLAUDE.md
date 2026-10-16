@@ -35,6 +35,8 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 - ab_glyph's `PxScale` is the font's full height, not the em. Always go through `editor::em()` so measured and drawn text match GPUI's.
 - libplacebo asserts on fractional crops. Keep studio crop sizes whole, even pixels.
 - Sizes for kadr's own overlays multiply by `kit::SCALE`. Component sizes use `ui::rems_from_px`.
+- A dropdown menu drawn with `deferred` hangs outside its button's box, so the button's `on_mouse_down_out` closes it before a click in the menu lands. Keep the menu's bounds with `ui::track_bounds` and skip clicks inside them (see `presets.rs`).
+- Tooltips are measured and shifted so they sit centred under the pointer (`ui::Tooltip`); GPUI itself puts them at the pointer's corner.
 - Unusual glyphs (✦, ▣) may have no fallback font in GPUI CE. Prefer words or icons. GPUI CE doesn't fall back to other fonts for missing glyphs at all: a script the UI font lacks (e.g. Chinese) shows as boxes.
 - The UI uses the system font (`.SystemUIFont`). Text drawn onto screenshots uses the bundled IBM Plex (`kit::ANNOTATION_FONT`), on the canvas too, so it matches the editor's rasteriser.
 

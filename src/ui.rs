@@ -1038,3 +1038,14 @@ pub fn scrollbar(handle: &gpui::ScrollHandle, grab: &std::rc::Rc<std::cell::Cell
     .absolute()
     .inset_0()
 }
+
+/// Where a dropdown menu was last drawn. Menus hang outside their button's
+/// box, so its `on_mouse_down_out` would close the menu before a click in
+/// it lands; check `contains` first.
+pub type MenuBounds = std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>;
+
+/// Put inside a menu to keep `bounds` up to date.
+pub fn track_bounds(bounds: &MenuBounds) -> impl IntoElement {
+    let cell = bounds.clone();
+    gpui::canvas(move |b, _, _| cell.set(b), |_, _, _, _| {}).absolute().inset_0()
+}

@@ -1186,7 +1186,7 @@ impl StudioEditor {
                         ButtonLike::new("to-start")
                             .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
-                            .child(div().px_1().child(Icon::from_path("icons/kadr/skip_back.svg").size(IconSize::Small)))
+                            .child(div().px_1().child(Icon::from_path("icons/kadr/skip_back.svg").size(IconSize::Medium)))
                             .tooltip(Tooltip::text(t("studio.to_start")))
                             .on_click(cx.listener(move |this, _, _, cx| this.seek(start, cx))),
                     )
@@ -1194,6 +1194,7 @@ impl StudioEditor {
                         IconButton::new("play", if self.playing { IconName::DebugPause } else { IconName::PlayFilled })
                             .shape(IconButtonShape::Square)
                             .size(ButtonSize::Large)
+                            .icon_size(IconSize::Large)
                             .tooltip(|_, cx| cx.new(|_| Tooltip::new(t("studio.play_pause")).key_binding(kit::keys("space"))).into())
                             .on_click(cx.listener(|this, _, window, cx| this.toggle_play(window, cx))),
                     )
@@ -1201,7 +1202,7 @@ impl StudioEditor {
                         ButtonLike::new("to-end")
                             .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
-                            .child(div().px_1().child(Icon::from_path("icons/kadr/skip_forward.svg").size(IconSize::Small)))
+                            .child(div().px_1().child(Icon::from_path("icons/kadr/skip_forward.svg").size(IconSize::Medium)))
                             .tooltip(Tooltip::text(t("studio.to_end")))
                             .on_click(cx.listener(move |this, _, _, cx| this.seek(end, cx))),
                     ),
@@ -1231,7 +1232,7 @@ impl StudioEditor {
                                 cx.notify();
                             })),
                     )
-                    .child(div().flex_none().w(px(120.)).child(self.slider(Knob::TimelineZoom, ((self.timeline_zoom - 1.) / (MAX_TIMELINE_ZOOM - 1.)) as f64, String::new(), cx)))
+                    .child(div().flex_none().w(px(150.)).child(self.slider(Knob::TimelineZoom, ((self.timeline_zoom - 1.) / (MAX_TIMELINE_ZOOM - 1.)) as f64, String::new(), cx)))
                     .child(
                         IconButton::new("timeline-in", IconName::Plus)
                             .shape(IconButtonShape::Square)
@@ -1277,7 +1278,8 @@ impl StudioEditor {
                     this.slide(knob, f32::from(e.position.x), cx);
                 }),
             ))
-            .child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted)))
+            // No value, no room kept for one: the track gets it all.
+            .when(!label.is_empty(), |row| row.child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted))))
     }
 
     /// Settings on the right, like CleanShot's studio: the selected zoom or

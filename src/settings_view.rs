@@ -69,6 +69,7 @@ pub struct SettingsView {
     recording: Option<usize>,
     /// The language dropdown is open.
     languages_open: bool,
+    languages_menu: crate::ui::MenuBounds,
     /// Space kadr's captures take, measured when the window opens.
     usage: storage::Usage,
     /// Type-to-search over every section, like System Settings.
@@ -89,7 +90,7 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, usage: storage::usage(&Settings::load()), query: String::new(), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
+            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, languages_menu: Default::default(), usage: storage::usage(&Settings::load()), query: String::new(), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
         })
     });
 }
@@ -129,13 +130,14 @@ impl SettingsView {
                                 cx.refresh_windows();
                                 cx.notify();
                             }))
-                    })),
+                    }))
+                    .child(crate::ui::track_bounds(&self.languages_menu)),
             )
         });
         div()
             .relative()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if this.languages_open {
+            .on_mouse_down_out(cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| {
+                if this.languages_open && !this.languages_menu.get().contains(&e.position) {
                     this.languages_open = false;
                     cx.notify();
                 }

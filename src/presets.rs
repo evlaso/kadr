@@ -2,10 +2,7 @@
 //! "+" beside it keeps the current look as a new one; in the menu each can
 //! be picked, renamed or deleted.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
-use gpui::{App, Bounds, Context, Pixels, canvas, FocusHandle, KeyDownEvent, SharedString, Window, div, px};
+use gpui::{App, Context, FocusHandle, KeyDownEvent, SharedString, Window, div, px};
 use serde_json::Value;
 
 use crate::i18n::t;
@@ -23,7 +20,7 @@ pub struct Presets {
     save: fn(&[(String, Value)]),
     /// Where the open menu is drawn: it hangs outside the button's box, so
     /// a click in it mustn't count as a click outside.
-    menu_bounds: Rc<Cell<Bounds<Pixels>>>,
+    menu_bounds: crate::ui::MenuBounds,
 }
 
 /// A view with presets: where they are, its current look and how to take one.
@@ -35,7 +32,7 @@ pub trait HasPresets: Sized + 'static {
 
 impl Presets {
     pub fn new(list: Vec<(String, Value)>, save: fn(&[(String, Value)]), cx: &mut App) -> Self {
-        Presets { list, open: false, renaming: None, focus: cx.focus_handle(), back: None, save, menu_bounds: Rc::default() }
+        Presets { list, open: false, renaming: None, focus: cx.focus_handle(), back: None, save, menu_bounds: Default::default() }
     }
 
     fn store(&self) {
@@ -164,10 +161,7 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                 .elevation_3(cx)
                 .children(rows)
                 .children(empty)
-                .child({
-                    let cell = p.menu_bounds.clone();
-                    canvas(move |bounds, _, _| cell.set(bounds), |_, _, _, _| {}).absolute().inset_0()
-                }),
+                .child(crate::ui::track_bounds(&p.menu_bounds)),
         )
         .priority(1)
     });

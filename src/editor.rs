@@ -561,6 +561,7 @@ pub struct Editor {
     windowed: bool,
     /// The colour dropdown in the toolbar is open.
     colors_open: bool,
+    colors_menu: crate::ui::MenuBounds,
     /// The "⋯" menu with the style controls, when the toolbar is too narrow.
     more_open: bool,
     size: (f32, f32),
@@ -655,6 +656,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 stage_h: Rc::new(Cell::new(size.1 - CHROME)),
                 windowed,
                 colors_open: false,
+                colors_menu: Default::default(),
                 more_open: false,
                 size,
                 focus,
@@ -1248,8 +1250,8 @@ impl Editor {
             .collect::<Vec<_>>();
         let palette = div()
             .relative()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if this.colors_open {
+            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                if this.colors_open && !this.colors_menu.get().contains(&e.position) {
                     this.colors_open = false;
                     cx.notify();
                 }
@@ -1283,7 +1285,8 @@ impl Editor {
                     .gap_1()
                     .p_1p5()
                     .elevation_3(cx)
-                    .children(swatches),
+                    .children(swatches)
+                    .child(crate::ui::track_bounds(&self.colors_menu)),
             ))
         });
         // A dot as thick as the stroke, in the current colour, then the slider.
