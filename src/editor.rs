@@ -297,7 +297,44 @@ impl Shape {
         match self.kind {
             Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
             Kind::Line | Kind::Arrow => vec![a, b],
-            _ => Vec::new(),
+            // Text, counters and freehand scale from their box's corners.
+            _ => {
+                let (l, t, r, bt) = self.bounds();
+                vec![(l, t), (r, t), (r, bt), (l, bt)]
+            }
+        }
+    }
+
+    /// Shapes whose corner handles scale them rather than move a point.
+    fn scales(&self) -> bool {
+        matches!(self.kind, Kind::Text(_) | Kind::Counter(_) | Kind::Pen(_) | Kind::Marker(_))
+    }
+
+    /// Scale `orig` by dragging corner `handle` to `p`, the opposite corner
+    /// staying put: text and counters keep their proportions (the size grows
+    /// with them), freehand stretches each way.
+    fn scale_from(&mut self, orig: &Shape, handle: usize, p: P) {
+        let corners = orig.handles();
+        let (Some(&h), Some(&o)) = (corners.get(handle), corners.get((handle + 2) % 4)) else { return };
+        let (dx, dy) = (h.0 - o.0, h.1 - o.1);
+        let around = |q: P, fx: f32, fy: f32| (o.0 + (q.0 - o.0) * fx, o.1 + (q.1 - o.1) * fy);
+        *self = orig.clone();
+        match &mut self.kind {
+            Kind::Pen(points) | Kind::Marker(points) => {
+                let fx = if dx.abs() > 1. { ((p.0 - o.0) / dx).max(0.05) } else { 1. };
+                let fy = if dy.abs() > 1. { ((p.1 - o.1) / dy).max(0.05) } else { 1. };
+                points.iter_mut().for_each(|q| *q = around(*q, fx, fy));
+                self.a = around(orig.a, fx, fy);
+                self.b = around(orig.b, fx, fy);
+            }
+            _ => {
+                // Project the pointer on the corner's diagonal.
+                let len2 = (dx * dx + dy * dy).max(1.);
+                let f = (((p.0 - o.0) * dx + (p.1 - o.1) * dy) / len2).max(0.2);
+                self.size = orig.size * f;
+                self.a = around(orig.a, f, f);
+                self.b = around(orig.b, f, f);
+            }
         }
     }
 
@@ -356,6 +393,7 @@ enum Drag {
     Draw,
     Move { index: usize, last: P, moved: bool },
     Handle { index: usize, handle: usize },
+    Scale { index: usize, handle: usize, orig: Shape },
     Crop { start: P },
     Slider(Knob),
 }
@@ -598,7 +636,8 @@ impl Editor {
         // The selection's handles and body work with any tool.
         if let Some((index, handle)) = self.handle_at(p) {
             self.checkpoint();
-            self.drag = Some(Drag::Handle { index, handle });
+            let shape = &self.doc.shapes[index];
+            self.drag = Some(if shape.scales() { Drag::Scale { index, handle, orig: shape.clone() } } else { Drag::Handle { index, handle } });
             return cx.notify();
         }
         if self.tool == Tool::Crop {
@@ -671,6 +710,10 @@ impl Editor {
                 let (index, handle) = (*index, *handle);
                 self.doc.shapes[index].set_handle(handle, p);
             }
+            Some(Drag::Scale { index, handle, orig }) => {
+                let (index, handle) = (*index, *handle);
+                self.doc.shapes[index].scale_from(orig, handle, p);
+            }
             Some(Drag::Crop { start }) => self.doc.crop = Some((*start, p)),
             Some(Drag::Slider(_)) => {}
             Some(Drag::Draw) => {
@@ -697,7 +740,7 @@ impl Editor {
             Some(Drag::Move { moved: false, .. }) => {
                 self.history.pop();
             }
-            Some(Drag::Move { index, .. } | Drag::Handle { index, .. }) => self.refresh_patch(index, cx),
+            Some(Drag::Move { index, .. } | Drag::Handle { index, .. } | Drag::Scale { index, .. }) => self.refresh_patch(index, cx),
             Some(Drag::Crop { .. }) => {
                 if let Some((a, b)) = self.doc.crop
                     && ((a.0 - b.0).abs() < 4. || (a.1 - b.1).abs() < 4.)
@@ -1481,7 +1524,7 @@ impl Editor {
         });
 
         let crop = self.doc.crop;
-        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.handles()));
+        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.handles(), sh.scales()));
         let accent = cx.theme().colors().text_accent;
         let overlay = canvas(
             |_, _, _| {},
@@ -1502,10 +1545,9 @@ impl Editor {
                 }
                 // Like CleanShot: shapes that resize show only round knobs;
                 // the rest (pen, text, counters) get a light dashed frame.
-                if let Some(((l, t, r, b), handles)) = selection {
-                    if handles.is_empty() {
-                        let pad = 4. / s;
-                        window.paint_quad(outline(area(l - pad, t - pad, r + pad, b + pad), accent, BorderStyle::Dashed));
+                if let Some(((l, t, r, b), handles, framed)) = selection {
+                    if framed {
+                        window.paint_quad(outline(area(l, t, r, b), accent, BorderStyle::Dashed));
                     }
                     for h in handles {
                         let c = pt(h);
@@ -2288,7 +2330,7 @@ mod tests {
 
         let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 10.), (20., 0.)]), a: (0., 0.), b: (20., 0.), color: red(), size: 2., filled: false, text: TextStyle::Plain };
         assert!(pen.hit((15., 5.), 1.));
-        assert!(pen.handles().is_empty(), "freehand only moves");
+        assert_eq!(pen.handles().len(), 4, "freehand scales from its corners");
     }
 
     #[test]
@@ -2319,6 +2361,27 @@ mod tests {
         if let Ok(path) = std::env::var("KADR_TEST_TEXT") {
             out.save(path).unwrap();
         }
+    }
+
+    #[test]
+    fn corners_scale_text_and_freehand() {
+        let text = Shape { kind: Kind::Text("Hello".into()), a: (100., 100.), b: (100., 100.), color: red(), size: 20., filled: false, text: TextStyle::Plain };
+        let (l, t, r, b) = text.bounds();
+        let mut big = text.clone();
+        // Drag the bottom-right corner to twice the box.
+        big.scale_from(&text, 2, (l + (r - l) * 2., t + (b - t) * 2.));
+        assert!((big.size - 40.).abs() < 0.5, "font doubles: {}", big.size);
+        assert_eq!(big.a, (100., 100.), "top-left stays");
+
+        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 20.)]), a: (0., 0.), b: (10., 20.), color: red(), size: 2., filled: false, text: TextStyle::Plain };
+        let (pl, pt, pr, pb) = pen.bounds();
+        let mut wide = pen.clone();
+        wide.scale_from(&pen, 2, (pl + (pr - pl) * 3., pb));
+        let (wl, _, wr, wb) = wide.bounds();
+        // The stroke's own width doesn't scale, so the box grows a little less.
+        let ratio = (wr - wl) / (pr - pl);
+        assert!(ratio > 2.6 && ratio <= 3. && (wb - pb).abs() < 0.5, "freehand stretches one way: {ratio}");
+        let _ = pt;
     }
 
     #[test]
