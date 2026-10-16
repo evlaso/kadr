@@ -146,10 +146,10 @@ impl Render for Panel {
                 .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
                 .toggle_state(on)
-                .child(div().px_1().child(icon.size(IconSize::Small).color(if on { Color::Default } else { Color::Muted })))
+                .child(div().px_1().child(icon.size(IconSize::Small)))
         };
         let action = |id: &'static str, icon: Icon| {
-            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(icon.size(IconSize::Small).color(Color::Muted)))
+            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(icon.size(IconSize::Small)))
         };
         let mic_desc = self.mics.iter().find(|(n, _)| *n == self.opts.mic_device).map(|(_, d)| SharedString::from(d.clone()));
         let is_region = matches!(self.target, Target::Region { .. });
@@ -178,7 +178,6 @@ impl Render for Panel {
                         IconButton::new("mic-menu", IconName::ChevronDown)
                             .size(ButtonSize::Large)
                             .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Выбрать микрофон")),
                     ),
             );
