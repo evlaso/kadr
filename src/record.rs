@@ -55,6 +55,8 @@ pub struct Opts {
     pub mic_device: String,
     pub audio: bool,
     pub webcam: bool,
+    /// Show shortcuts in the studio render (logs shortcut key codes).
+    pub keys: bool,
 }
 
 impl Opts {
@@ -70,7 +72,7 @@ impl Opts {
             .unwrap_or_default();
         let get = |k: &str| v[k].as_bool().unwrap_or(false);
         let mic_device = v["mic_device"].as_str().unwrap_or_default().to_owned();
-        Opts { mic: get("mic"), mic_device, audio: get("audio"), webcam: get("webcam") }
+        Opts { mic: get("mic"), mic_device, audio: get("audio"), webcam: get("webcam"), keys: get("keys") }
     }
 
     pub fn save(&self) {
@@ -78,7 +80,7 @@ impl Opts {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam });
+        let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam, "keys": self.keys });
         let _ = std::fs::write(path, v.to_string());
     }
 
@@ -179,6 +181,7 @@ impl Clock {
 
 /// What `begin` hands back once capture is running.
 struct Started {
+    keys: bool,
     gsr: async_process::Child,
     file: PathBuf,
     webcam: Option<u32>,
@@ -272,7 +275,7 @@ impl Recorder {
     }
 
     fn on_started(&mut self, started: Started, hold: Hold, cx: &mut Context<Self>) {
-        let Started { mut gsr, file, webcam, target } = started;
+        let Started { keys, mut gsr, file, webcam, target } = started;
         let pid = gsr.id();
         cx.spawn(async move |this, cx| {
             let _ = gsr.status().await;
@@ -285,7 +288,7 @@ impl Recorder {
         // The frame goes first so the controls stack above its dimming.
         windows.extend(open_frame(&target, cx));
         windows.extend(self.open_indicator(&target, clock.clone(), cx));
-        let tracker = Tracker::start(cx, |rec: &Recorder| rec.clock());
+        let tracker = Tracker::start(cx, keys, |rec: &Recorder| rec.clock());
         self.state = State::Recording(Session {
             gsr: pid,
             file,
@@ -458,7 +461,7 @@ async fn begin(mode: &str, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         let _ = std::fs::remove_file(&file);
         return Err(Some(log_tail()));
     }
-    Ok(Started { gsr, file, webcam, target })
+    Ok(Started { keys: opts.keys, gsr, file, webcam, target })
 }
 
 /// Top-left margins of the control pill, relative to the monitor it goes on.

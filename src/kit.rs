@@ -51,6 +51,7 @@ assets![
     "icons/download.svg" => "../data/zed/icons/download.svg",
     "icons/scissors.svg" => "../data/zed/icons/scissors.svg",
     "icons/magnifying_glass.svg" => "../data/zed/icons/magnifying_glass.svg",
+    "icons/keyboard.svg" => "../data/zed/icons/keyboard.svg",
     // Editor tools Zed's set lacks, drawn in the same style.
     "icons/kadr/rect.svg" => "../data/icons/editor/rect.svg",
     "icons/kadr/ellipse.svg" => "../data/icons/editor/ellipse.svg",

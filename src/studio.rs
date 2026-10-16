@@ -4,7 +4,7 @@
 //! filter on the GPU; kadr computes the camera path and hands it over as
 //! time-based crop expressions.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -67,7 +67,7 @@ fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
     Some(((n >> 16) as u8, (n >> 8) as u8, n as u8))
 }
 
-struct Probe {
+pub(crate) struct Probe {
     w: f64,
     h: f64,
     fps: String,
@@ -217,7 +217,7 @@ fn expr(curve: &[(f64, f64)], precision: usize) -> String {
     out
 }
 
-struct Layout {
+pub(crate) struct Layout {
     ow: u32,
     oh: u32,
     x: u32,
@@ -301,15 +301,23 @@ async fn run(video: &Path, progress: &Job) -> Result<Option<PathBuf>, String> {
     let script = tmp.join("filter.txt");
     write_background(&bg, &l, &settings).map_err(|e| e.to_string())?;
 
+    // Click rings go on the recording itself (so they zoom with the camera),
+    // shortcut pills on the finished frame. Inputs 0 and 1 are the video and
+    // the backdrop; the overlays follow.
+    let overlays = overlays::build(&track, &p, &l, &tmp).map_err(|e| e.to_string())?;
+
+    // libplacebo asserts on some fractional crop sizes, so the crop is kept to
+    // whole, even pixels.
     // libplacebo measures corner rounding against a quarter of the shorter side.
     let rounding = (4.0 * l.radius / l.w.min(l.h) as f64).clamp(0.0, 1.0);
     let zexpr = expr(&z, 4);
     let graph = format!(
-        "[0:v]libplacebo=w={ow}:h={oh}:pos_x={px}:pos_y={py}:pos_w={pw}:pos_h={ph}\
-         :crop_w='iw/({zexpr})':crop_h='ih/({zexpr})'\
-         :crop_x='clip({xe}-cw/2,0,iw-cw)':crop_y='clip({ye}-ch/2,0,ih-ch)'\
+        "{pre}[{src}]libplacebo=w={ow}:h={oh}:pos_x={px}:pos_y={py}:pos_w={pw}:pos_h={ph}\
+         :crop_w='2*floor(iw/({zexpr})/2)':crop_h='2*floor(ih/({zexpr})/2)'\
+         :crop_x='floor(clip({xe}-cw/2,0,iw-cw))':crop_y='floor(clip({ye}-ch/2,0,ih-ch))'\
          :corner_rounding={rounding:.4}:fillcolor=black@0:format=rgba[fg];\
-         [1:v][fg]overlay=0:0:shortest=1,format=yuv420p[out]",
+         [1:v][fg]overlay=0:0:shortest=1[framed];{post}[{last}]format=yuv420p[out]",
+        pre = overlays.pre, src = overlays.src, post = overlays.post, last = overlays.last,
         ow = l.ow, oh = l.oh, px = l.x, py = l.y, pw = l.w, ph = l.h,
         xe = expr(&x, 1), ye = expr(&y, 1),
     );
@@ -322,9 +330,12 @@ async fn run(video: &Path, progress: &Job) -> Result<Option<PathBuf>, String> {
             "ffmpeg".as_ref(), "-hide_banner".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(),
             "-i".as_ref(), video.as_os_str(),
             "-loop".as_ref(), "1".as_ref(), "-framerate".as_ref(), p.fps.as_ref(), "-i".as_ref(), bg.as_os_str(),
-            "-/filter_complex".as_ref(), script.as_os_str(),
-            "-map".as_ref(), "[out]".as_ref(), "-map".as_ref(), "0:a?".as_ref(),
         ];
+        argv.extend(overlays.inputs.iter().map(OsString::as_os_str));
+        argv.extend::<[&OsStr; 2]>([
+            "-/filter_complex".as_ref(), script.as_os_str(),
+        ]);
+        argv.extend::<[&OsStr; 4]>(["-map".as_ref(), "[out]".as_ref(), "-map".as_ref(), "0:a?".as_ref()]);
         argv.extend(encoder.iter().map(OsStr::new));
         argv.extend(["-c:a", "copy", "-movflags", "+faststart"].map(OsStr::new));
         argv.push(out.as_os_str());
@@ -341,3 +352,140 @@ async fn run(video: &Path, progress: &Job) -> Result<Option<PathBuf>, String> {
     result.map(|()| Some(out))
 }
 
+
+/// Click rings and shortcut pills, as extra ffmpeg inputs and filter chains.
+mod overlays {
+    use std::ffi::OsString;
+    use std::fmt::Write as _;
+    use std::path::Path;
+
+    use super::{Layout, Probe};
+    use crate::editor;
+    use crate::track::Track;
+
+    /// More than this many of either would mostly slow the render down.
+    const MAX: usize = 120;
+    const RING_FRAMES: usize = 16;
+    const RING_FPS: f64 = 30.;
+
+    pub struct Overlays {
+        pub inputs: Vec<OsString>,
+        /// Chains over the recording, ending in label `src`.
+        pub pre: String,
+        pub src: String,
+        /// Chains over the framed picture (label "framed"), ending in `last`.
+        pub post: String,
+        pub last: String,
+    }
+
+    pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path) -> std::io::Result<Overlays> {
+        let mut o = Overlays { inputs: Vec::new(), pre: String::new(), src: "0:v".into(), post: String::new(), last: "framed".into() };
+        let mut next_input = 2;
+
+        let (rx, ry, rw, rh) = track.rect;
+        let (sx, sy) = (p.w / rw.max(1.), p.h / rh.max(1.));
+        let clicks: Vec<(f64, f64, f64)> = track
+            .clicks
+            .iter()
+            .map(|&(t, x, y)| (t, (x - rx) * sx, (y - ry) * sy))
+            .filter(|&(t, x, y)| t >= 0. && t < p.duration && x >= 0. && y >= 0. && x < p.w && y < p.h)
+            .take(MAX)
+            .collect();
+        if !clicks.is_empty() {
+            let radius = (p.h * 0.03).clamp(16., 64.) as u32;
+            write_ring(tmp, radius)?;
+            let pattern = tmp.join("ring-%02d.png");
+            for (i, &(t, x, y)) in clicks.iter().enumerate() {
+                o.inputs.extend(["-framerate".into(), format!("{RING_FPS}").into(), "-itsoffset".into(), format!("{t:.3}").into(), "-i".into(), pattern.clone().into()]);
+                let (from, to) = (o.src.clone(), format!("c{i}"));
+                let half = radius as f64 + 4.;
+                let _ = write!(o.pre, "[{from}][{next_input}:v]overlay=x={:.1}:y={:.1}:eof_action=pass[{to}];", x - half, y - half);
+                o.src = to;
+                next_input += 1;
+            }
+            // Overlay can hand on frames with alpha; libplacebo's crop path
+            // asserts on those, so go back to plain YUV first.
+            let _ = write!(o.pre, "[{}]format=yuv420p[clicked];", o.src);
+            o.src = "clicked".into();
+        }
+
+        let strokes: Vec<&(f64, String)> = track.keystrokes.iter().filter(|(t, _)| *t >= 0. && *t < p.duration).take(MAX).collect();
+        for (i, (t, label)) in strokes.iter().enumerate() {
+            // Shown until the next shortcut, at most 1.4 s.
+            let next = strokes.get(i + 1).map_or(p.duration, |n| n.0);
+            let show = (next - t).clamp(0.35, 1.4);
+            let png = tmp.join(format!("key-{i}.png"));
+            let (w, h) = write_pill(&png, label, l.oh as f32 * 0.026)?;
+            o.inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), "30".into(), "-t".into(), format!("{show:.3}").into(), "-itsoffset".into(), format!("{t:.3}").into(), "-i".into(), png.into()]);
+            let x = (l.ow as i64 - w as i64) / 2;
+            let y = (l.y + l.h) as i64 - h as i64 - (l.h as f64 * 0.05) as i64;
+            let (from, faded, to) = (o.last.clone(), format!("kf{i}"), format!("k{i}"));
+            let _ = write!(
+                o.post,
+                "[{next_input}:v]format=rgba,fade=t=in:st={t:.3}:d=0.12:alpha=1,fade=t=out:st={:.3}:d=0.2:alpha=1[{faded}];[{from}][{faded}]overlay=x={x}:y={y}:eof_action=pass[{to}];",
+                t + show - 0.2
+            );
+            o.last = to;
+            next_input += 1;
+        }
+        Ok(o)
+    }
+
+    fn ease_out(u: f32) -> f32 {
+        1. - (1. - u).powi(3)
+    }
+
+    /// A ring that expands and fades, as ring-00.png … ring-15.png.
+    fn write_ring(dir: &Path, radius: u32) -> std::io::Result<()> {
+        let r = radius as f32;
+        let size = radius * 2 + 8;
+        let c = size as f32 / 2.;
+        for k in 0..RING_FRAMES {
+            let u = k as f32 / (RING_FRAMES - 1) as f32;
+            let ring = r * (0.3 + 0.7 * ease_out(u));
+            let width = (r * 0.16 * (1. - 0.5 * u)).max(2.);
+            let alpha = 0.9 * (1. - u).powf(1.3);
+            let img = image::RgbaImage::from_fn(size, size, |x, y| {
+                let d = ((x as f32 + 0.5 - c).hypot(y as f32 + 0.5 - c) - ring).abs();
+                let core = (width / 2. - d + 0.5).clamp(0., 1.);
+                // A soft dark halo keeps the ring visible on white pages.
+                let halo = ((width / 2. + 2.5 - d) / 2.5).clamp(0., 1.) * 0.35;
+                let a = (core + halo * (1. - core)) * alpha;
+                let v = (255. * core / (core + halo * (1. - core)).max(1e-3)) as u8;
+                image::Rgba([v, v, v, (a * 255.) as u8])
+            });
+            img.save(dir.join(format!("ring-{k:02}.png"))).map_err(std::io::Error::other)?;
+        }
+        Ok(())
+    }
+
+    /// "Ctrl + C" on a dark rounded pill; returns its size.
+    fn write_pill(path: &Path, label: &str, size: f32) -> std::io::Result<(u32, u32)> {
+        use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
+        let m = editor::metrics(size);
+        let pad = size * 0.75;
+        let w = (editor::text_width(label, size) + 2. * pad).ceil();
+        let h = (size * 1.9).ceil();
+        let mut pm = Pixmap::new(w as u32, h as u32).ok_or_else(|| std::io::Error::other("pill size"))?;
+        let r = h / 2.;
+        let mut b = PathBuilder::new();
+        b.move_to(r, 0.);
+        b.line_to(w - r, 0.);
+        b.quad_to(w, 0., w, r);
+        b.quad_to(w, h, w - r, h);
+        b.line_to(r, h);
+        b.quad_to(0., h, 0., r);
+        b.quad_to(0., 0., r, 0.);
+        b.close();
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(22, 22, 24, 220);
+        paint.anti_alias = true;
+        if let Some(path) = b.finish() {
+            pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        let baseline = (h - (m.ascent - m.descent)) / 2. + m.ascent;
+        editor::draw_line(&mut pm, label, (pad, baseline), size, gpui::white());
+        pm.save_png(path).map_err(std::io::Error::other)?;
+        Ok((w as u32, h as u32))
+    }
+}

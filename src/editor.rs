@@ -1281,19 +1281,19 @@ fn on_color(c: Hsla) -> Hsla {
     if c.l > 0.65 { gpui::hsla(0., 0., 0.08, 1.) } else { gpui::white() }
 }
 
-fn font() -> &'static FontRef<'static> {
+pub(crate) fn font() -> &'static FontRef<'static> {
     static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
     FONT.get_or_init(|| FontRef::try_from_slice(include_bytes!("../data/zed/fonts/IBMPlexSans-SemiBold.ttf")).expect("bundled font"))
 }
 
-struct Metrics {
-    ascent: f32,
-    descent: f32,
+pub(crate) struct Metrics {
+    pub ascent: f32,
+    pub descent: f32,
     /// Line box height; text sits centered in it, as in GPUI.
-    line: f32,
+    pub line: f32,
 }
 
-fn metrics(size: f32) -> Metrics {
+pub(crate) fn metrics(size: f32) -> Metrics {
     let f = font().as_scaled(PxScale::from(size));
     let (ascent, descent) = (f.ascent(), f.descent());
     Metrics { ascent, descent, line: ((ascent - descent) * 1.2).ceil() }
@@ -1440,7 +1440,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
     RgbaImage::from_raw(w, h, data)
 }
 
-fn text_width(text: &str, size: f32) -> f32 {
+pub(crate) fn text_width(text: &str, size: f32) -> f32 {
     let f = font().as_scaled(PxScale::from(size));
     let mut prev = None;
     let mut w = 0.;
@@ -1456,7 +1456,7 @@ fn text_width(text: &str, size: f32) -> f32 {
 }
 
 /// One line of text with its baseline at `origin.1`.
-fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size: f32, color: Hsla) {
+pub(crate) fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size: f32, color: Hsla) {
     let font = font();
     let scale = PxScale::from(size);
     let f = font.as_scaled(scale);

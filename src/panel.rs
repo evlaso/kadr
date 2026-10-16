@@ -25,7 +25,7 @@ pub fn open(cx: &mut App) -> Option<WindowHandle<Panel>> {
         namespace: "kadr-panel",
         anchor: Anchor::TOP,
         margin: (40., 0., 0., 0.),
-        size: (920., 80.),
+        size: (1060., 80.),
         keyboard: KeyboardInteractivity::Exclusive,
         ignore_zones: false,
         monitor: util::focused_monitor(),
@@ -147,6 +147,14 @@ impl Render for Panel {
                 this.opts.webcam = !this.opts.webcam;
                 cx.notify();
             })))
+            .child(
+                toggle("keys", Icon::new(IconName::Keyboard), "Клавиши", self.opts.keys)
+                    .tooltip(Tooltip::text("Показать сочетания клавиш в «Улучшить». Обычный набор текста не записывается"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.opts.keys = !this.opts.keys;
+                        cx.notify();
+                    })),
+            )
             .child(Divider::vertical().h_5().mx_1())
             .child(
                 Button::new("region", "Записать область")

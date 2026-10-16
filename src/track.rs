@@ -19,6 +19,11 @@ use crate::util;
 /// finalize() drops the first 0.1 s of the recording.
 const TRIM: f64 = 0.1;
 
+/// While this file exists the Lua hook logs shortcut key codes too.
+pub fn keys_flag() -> PathBuf {
+    util::runtime_dir().join("kadr-keys.on")
+}
+
 pub fn input_log() -> PathBuf {
     util::runtime_dir().join("kadr-input.log")
 }
@@ -36,6 +41,8 @@ pub struct Track {
     pub cursor: Vec<(f64, f64, f64)>,
     pub clicks: Vec<(f64, f64, f64)>,
     pub keys: Vec<f64>,
+    /// Shortcuts pressed, as shown on screen: (t, "Ctrl + C").
+    pub keystrokes: Vec<(f64, String)>,
 }
 
 impl Track {
@@ -54,6 +61,12 @@ impl Track {
             cursor: triples("cursor"),
             clicks: triples("clicks"),
             keys: v["keys"].as_array().into_iter().flatten().map(f).collect(),
+            keystrokes: v["keystrokes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|k| Some((k[0].as_f64()?, k[1].as_str()?.to_owned())))
+                .collect(),
         })
     }
 
@@ -80,14 +93,18 @@ pub struct Tracker {
 impl Tracker {
     /// Samples at ~60 Hz on the entity's context. `clock` returns seconds of
     /// recorded video so far, or None while paused.
-    pub fn start<T: 'static>(cx: &mut Context<T>, clock: impl Fn(&T) -> Option<f64> + 'static) -> Tracker {
+    pub fn start<T: 'static>(cx: &mut Context<T>, show_keys: bool, clock: impl Fn(&T) -> Option<f64> + 'static) -> Tracker {
         let log = input_log();
         let _ = std::fs::write(&log, b"");
+        if show_keys {
+            let _ = std::fs::write(keys_flag(), b"");
+        }
         let data = Rc::new(RefCell::new(Track::default()));
         let shared = data.clone();
         let task = cx.spawn(async move |this, cx| {
             let offset = Cell::new(0u64);
             let mut last_key = f64::NEG_INFINITY;
+            let mut held: Vec<u32> = Vec::new();
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
                 let Ok(t) = this.update(cx, |owner, _| clock(owner)) else { break };
@@ -117,6 +134,23 @@ impl Tracker {
                             d.keys.push(t);
                             last_key = t;
                         }
+                        // x CODE p|r: modifiers and shortcut keys (show keys on).
+                        Some("x") => {
+                            let (Some(code), pressed) = (x.map(|c| c as u32), line.ends_with(" p")) else { continue };
+                            if is_modifier(code) {
+                                held.retain(|&m| m != code);
+                                if pressed {
+                                    held.push(code);
+                                }
+                            } else if pressed {
+                                d.keys.push(t);
+                                last_key = t;
+                                if let Some(label) = shortcut_label(&held, code) {
+                                    d.keystrokes.push((t, label));
+                                }
+                            }
+                        }
+                        Some("?") => eprintln!("kadr: key hook: {line}"),
                         _ => {}
                     }
                 }
@@ -133,6 +167,7 @@ impl Tracker {
             "cursor": d.cursor.iter().map(|&(t, x, y)| [r(t), r(x), r(y)]).collect::<Vec<_>>(),
             "clicks": d.clicks.iter().map(|&(t, x, y)| [r(t), r(x), r(y)]).collect::<Vec<_>>(),
             "keys": d.keys.iter().map(|&t| r(t)).collect::<Vec<_>>(),
+            "keystrokes": d.keystrokes.iter().map(|(t, k)| json!([r(*t), k])).collect::<Vec<_>>(),
         });
         let path = path_for(video);
         if let Some(dir) = path.parent() {
@@ -148,6 +183,7 @@ impl Drop for Tracker {
     fn drop(&mut self) {
         // Stops the Lua hook from logging; the task is cancelled with `_task`.
         let _ = std::fs::remove_file(input_log());
+        let _ = std::fs::remove_file(keys_flag());
     }
 }
 
@@ -178,6 +214,12 @@ pub fn trim(original: &Path, trimmed: &Path, start: f64, end: f64) {
             }
         }
     }
+    if let Some(list) = v["keystrokes"].as_array_mut() {
+        list.retain(|k| k[0].as_f64().is_some_and(keep));
+        for k in list.iter_mut() {
+            k[0] = json!(k[0].as_f64().unwrap_or(0.) - start);
+        }
+    }
     if let Some(keys) = v["keys"].as_array_mut() {
         keys.retain(|t| t.as_f64().is_some_and(keep));
         for t in keys.iter_mut() {
@@ -185,4 +227,97 @@ pub fn trim(original: &Path, trimmed: &Path, start: f64, end: f64) {
         }
     }
     let _ = std::fs::write(path_for(trimmed), v.to_string());
+}
+
+/// evdev key codes.
+fn is_modifier(code: u32) -> bool {
+    matches!(code, 29 | 97 | 42 | 54 | 56 | 100 | 125 | 126)
+}
+
+/// "Ctrl + Shift + T" for a key pressed with `held` modifiers; None for keys
+/// that shouldn't be shown on their own.
+fn shortcut_label(held: &[u32], code: u32) -> Option<String> {
+    let has = |codes: &[u32]| held.iter().any(|m| codes.contains(m));
+    let mut parts: Vec<&str> = Vec::new();
+    if has(&[125, 126]) {
+        parts.push("Super");
+    }
+    if has(&[29, 97]) {
+        parts.push("Ctrl");
+    }
+    if has(&[56, 100]) {
+        parts.push("Alt");
+    }
+    if has(&[42, 54]) {
+        parts.push("Shift");
+    }
+    let key = key_name(code)?;
+    let shortcut = parts.iter().any(|p| *p != "Shift");
+    let special = !(key.chars().count() == 1 && key.chars().all(|c| c.is_alphanumeric()));
+    // A bare letter (or Shift+letter) is typing, not a shortcut.
+    if !shortcut && !special {
+        return None;
+    }
+    parts.push(key);
+    Some(parts.join(" + "))
+}
+
+fn key_name(code: u32) -> Option<&'static str> {
+    const ROW1: [&str; 10] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
+    const QWERTY: [&str; 10] = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"];
+    const ASDF: [&str; 9] = ["A", "S", "D", "F", "G", "H", "J", "K", "L"];
+    const ZXCV: [&str; 7] = ["Z", "X", "C", "V", "B", "N", "M"];
+    const FKEYS: [&str; 10] = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"];
+    Some(match code {
+        1 => "Esc",
+        2..=11 => ROW1[(code - 2) as usize],
+        12 => "-",
+        13 => "=",
+        14 => "⌫",
+        15 => "Tab",
+        16..=25 => QWERTY[(code - 16) as usize],
+        26 => "[",
+        27 => "]",
+        28 | 96 => "Enter",
+        30..=38 => ASDF[(code - 30) as usize],
+        39 => ";",
+        40 => "'",
+        41 => "`",
+        43 => "\\",
+        44..=50 => ZXCV[(code - 44) as usize],
+        51 => ",",
+        52 => ".",
+        53 => "/",
+        57 => "Space",
+        59..=68 => FKEYS[(code - 59) as usize],
+        87 => "F11",
+        88 => "F12",
+        102 => "Home",
+        103 => "↑",
+        104 => "PgUp",
+        105 => "←",
+        106 => "→",
+        107 => "End",
+        108 => "↓",
+        109 => "PgDn",
+        110 => "Ins",
+        111 => "Del",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shortcut_labels() {
+        assert_eq!(shortcut_label(&[29], 46).as_deref(), Some("Ctrl + C"));
+        assert_eq!(shortcut_label(&[29, 42], 20).as_deref(), Some("Ctrl + Shift + T"));
+        assert_eq!(shortcut_label(&[125], 28).as_deref(), Some("Super + Enter"));
+        assert_eq!(shortcut_label(&[], 1).as_deref(), Some("Esc"));
+        assert_eq!(shortcut_label(&[42], 103).as_deref(), Some("Shift + ↑"));
+        assert_eq!(shortcut_label(&[], 30), None, "plain typing stays hidden");
+        assert_eq!(shortcut_label(&[42], 30), None, "Shift+letter is typing too");
+    }
 }
