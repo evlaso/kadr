@@ -5,7 +5,8 @@
 //! re-draws every shape at full resolution with tiny-skia, so the file
 //! matches what was on screen without the screen's scaling.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
@@ -13,16 +14,16 @@ use std::sync::{Arc, OnceLock};
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use gpui::{
     FillOptions, PathStyle,
-    App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
+    App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
     Window, canvas, div, fill, img, layer_shell::*, linear_color_stop, linear_gradient, outline,
     point, px, rgba, size,
 };
 use image::RgbaImage;
-use ui::{ButtonLike, Divider, IconButtonShape, Tooltip, prelude::*};
+use ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
-use crate::{cards, ocr, palette, util};
+use crate::{cards, ocr, palette, studio_editor, util};
 
 /// A point in image pixels.
 type P = (f32, f32);
@@ -37,6 +38,69 @@ const MARKER_ALPHA: f32 = 0.4;
 const FRAME_PAD: f32 = 0.06;
 /// Grab distance for shapes and handles, in screen pixels.
 const GRAB: f32 = 7.;
+/// Width of the background panel.
+const PANEL: f32 = 300. * kit::SCALE;
+/// Slider ranges, as fractions of the picture's longer side.
+const MAX_PAD: f32 = 0.2;
+const MAX_ROUND: f32 = 0.05;
+/// Output shapes for the framed picture.
+const ASPECTS: [(&str, Option<f32>); 5] = [("Авто", None), ("16:9", Some(16. / 9.)), ("4:3", Some(4. / 3.)), ("1:1", Some(1.)), ("9:16", Some(9. / 16.))];
+
+#[derive(Clone, PartialEq)]
+enum Backdrop {
+    None,
+    /// Index into `palette::backdrops()`.
+    Gradient(usize),
+    Wallpaper(PathBuf),
+}
+
+/// The background the picture is put on, like CleanShot's background tool.
+#[derive(Clone)]
+struct Frame {
+    backdrop: Backdrop,
+    /// Margin around the picture, as a fraction of its longer side.
+    padding: f32,
+    /// Corner radius, as a fraction of the longer side.
+    radius: f32,
+    /// 0..1.
+    shadow: f32,
+    /// Index into `ASPECTS`.
+    aspect: usize,
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        Frame { backdrop: Backdrop::None, padding: FRAME_PAD, radius: 0.012, shadow: 0.5, aspect: 0 }
+    }
+}
+
+impl Frame {
+    fn on(&self) -> bool {
+        self.backdrop != Backdrop::None
+    }
+
+    /// The whole output's size and the picture's offset in it, for a picture
+    /// of `w`×`h` (any unit).
+    fn layout(&self, w: f32, h: f32) -> ((f32, f32), (f32, f32)) {
+        let pad = (w.max(h) * self.padding).round();
+        let (mut ow, mut oh) = (w + 2. * pad, h + 2. * pad);
+        if let Some(a) = ASPECTS[self.aspect.min(ASPECTS.len() - 1)].1 {
+            if ow / oh < a {
+                ow = (oh * a).round();
+            } else {
+                oh = (ow / a).round();
+            }
+        }
+        ((ow, oh), (((ow - w) / 2.).round(), ((oh - h) / 2.).round()))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Knob {
+    Padding,
+    Radius,
+    Shadow,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
@@ -50,11 +114,12 @@ enum Tool {
     Text,
     Counter,
     Blur,
+    Spotlight,
     Crop,
 }
 
 impl Tool {
-    const ALL: [Tool; 11] = [
+    const ALL: [Tool; 12] = [
         Tool::Select,
         Tool::Arrow,
         Tool::Rect,
@@ -65,6 +130,7 @@ impl Tool {
         Tool::Text,
         Tool::Counter,
         Tool::Blur,
+        Tool::Spotlight,
         Tool::Crop,
     ];
 
@@ -80,6 +146,7 @@ impl Tool {
             Tool::Text => Icon::new(IconName::CaseSensitive),
             Tool::Counter => Icon::from_path("icons/kadr/counter.svg"),
             Tool::Blur => Icon::from_path("icons/kadr/pixelate.svg"),
+            Tool::Spotlight => Icon::from_path("icons/kadr/spotlight.svg"),
             Tool::Crop => Icon::from_path("icons/kadr/crop.svg"),
         }
     }
@@ -96,6 +163,7 @@ impl Tool {
             Tool::Text => "Текст",
             Tool::Counter => "Нумерация шагов",
             Tool::Blur => "Скрыть (пикселизация)",
+            Tool::Spotlight => "Прожектор: затемнить всё вокруг",
             Tool::Crop => "Обрезать",
         }
     }
@@ -113,6 +181,7 @@ impl Tool {
             Tool::Text => "t",
             Tool::Counter => "n",
             Tool::Blur => "b",
+            Tool::Spotlight => "s",
             Tool::Crop => "c",
         }
     }
@@ -130,6 +199,8 @@ enum Kind {
     Counter(u32),
     /// The pixelated patch, once computed for the current position.
     Blur(Option<Arc<Image>>),
+    /// Everything outside the a–b box is dimmed.
+    Spotlight,
 }
 
 /// Geometry is in image pixels. For text `a` is the top-left corner and
@@ -142,6 +213,8 @@ struct Shape {
     b: P,
     color: Hsla,
     size: f32,
+    /// Boxes and ellipses: solid instead of an outline.
+    filled: bool,
 }
 
 impl Shape {
@@ -170,7 +243,7 @@ impl Shape {
                 let w = self.size / 2.;
                 (l - w, t - w, r + w, b + w)
             }
-            Kind::Rect | Kind::Ellipse | Kind::Blur(_) => rect(self.a, self.b),
+            Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => rect(self.a, self.b),
         }
     }
 
@@ -191,7 +264,7 @@ impl Shape {
         let (a, b) = (self.a, self.b);
         let mid = ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
         match self.kind {
-            Kind::Rect | Kind::Ellipse | Kind::Blur(_) => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
+            Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
             Kind::Line | Kind::Arrow => vec![a, b],
             _ => Vec::new(),
         }
@@ -199,14 +272,14 @@ impl Shape {
 
     fn set_handle(&mut self, handle: usize, p: P) {
         match (&self.kind, handle) {
-            (Kind::Line | Kind::Arrow, 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 0) => self.a = p,
-            (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 2) => self.b = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 1) => (self.b.0, self.a.1) = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 3) => (self.a.0, self.b.1) = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 4) => self.a.1 = p.1,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 5) => self.b.0 = p.0,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 6) => self.b.1 = p.1,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_), 7) => self.a.0 = p.0,
+            (Kind::Line | Kind::Arrow, 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 0) => self.a = p,
+            (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 2) => self.b = p,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 1) => (self.b.0, self.a.1) = p,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 3) => (self.a.0, self.b.1) = p,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 4) => self.a.1 = p.1,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 5) => self.b.0 = p.0,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 6) => self.b.1 = p.1,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 7) => self.a.0 = p.0,
             _ => {}
         }
         self.stale_patch();
@@ -235,7 +308,7 @@ impl Shape {
             Kind::Text(_) => FONT_SIZES[weight],
             Kind::Counter(_) => COUNTER_SIZES[weight],
             Kind::Marker(_) => WIDTHS[weight] * 3.,
-            Kind::Blur(_) => return,
+            Kind::Blur(_) | Kind::Spotlight => return,
             _ => WIDTHS[weight],
         } / s;
     }
@@ -253,6 +326,7 @@ enum Drag {
     Move { index: usize, last: P, moved: bool },
     Handle { index: usize, handle: usize },
     Crop { start: P },
+    Slider(Knob),
 }
 
 enum Export {
@@ -280,8 +354,17 @@ pub struct Editor {
     colors: Vec<Hsla>,
     color: usize,
     weight: usize,
-    /// Backdrop preset; 0 is none.
-    backdrop: usize,
+    /// Boxes and ellipses are drawn solid.
+    fill: bool,
+    frame: Frame,
+    /// The background panel is open.
+    panel: bool,
+    walls: Vec<(PathBuf, Arc<Image>)>,
+    /// The picture's largest on-screen size; `disp` shrinks from it to make
+    /// room for the background.
+    natural: (f32, f32),
+    /// Slider tracks (x, width) in window coordinates.
+    sliders: Rc<RefCell<HashMap<Knob, (f32, f32)>>>,
     /// Picture origin in window coordinates, updated every frame.
     origin: Rc<Cell<(f32, f32)>>,
     focus: FocusHandle,
@@ -301,8 +384,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
     // Real size on screen (screenshots are in physical pixels), shrunk to
     // leave room for the toolbars and a backdrop.
     let natural = (w as f32 / mon.scale as f32, h as f32 / mon.scale as f32);
-    let room = 1. + 2. * FRAME_PAD;
-    let fit = ((mw - 160.) / room / natural.0).min((mh - 260. * kit::SCALE) / room / natural.1).min(1.0);
+    let fit = ((mw - 160.) / natural.0).min((mh - 260. * kit::SCALE) / natural.1).min(1.0);
     let disp = (natural.0 * fit, natural.1 * fit);
 
     let image = Arc::new(Image::from_bytes(ImageFormat::Png, bytes.clone()));
@@ -328,6 +410,11 @@ pub fn open(path: PathBuf, cx: &mut App) {
                     editor.source = decoded;
                     cx.notify();
                 });
+                let walls = studio_editor::wallpaper_thumbs().await;
+                let _ = this.update(cx, |editor: &mut Editor, cx| {
+                    editor.walls = walls;
+                    cx.notify();
+                });
             })
             .detach();
             Editor {
@@ -347,7 +434,12 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 colors: palette::annotation_colors(),
                 color: 0,
                 weight: 1,
-                backdrop: 0,
+                fill: false,
+                frame: Frame::default(),
+                panel: false,
+                walls: Vec::new(),
+                natural: disp,
+                sliders: Rc::new(RefCell::new(HashMap::new())),
                 origin: Rc::new(Cell::new((0., 0.))),
                 focus,
             }
@@ -493,7 +585,7 @@ impl Editor {
             Tool::Select | Tool::Crop => return cx.notify(),
             Tool::Text => {
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: FONT_SIZES[self.weight] / s });
+                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: FONT_SIZES[self.weight] / s, filled: false });
                 self.editing = Some(self.doc.shapes.len() - 1);
                 self.selected = self.editing;
                 return cx.notify();
@@ -501,7 +593,7 @@ impl Editor {
             Tool::Counter => {
                 let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: COUNTER_SIZES[self.weight] / s });
+                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: COUNTER_SIZES[self.weight] / s, filled: false });
                 self.selected = Some(self.doc.shapes.len() - 1);
                 return cx.notify();
             }
@@ -512,9 +604,11 @@ impl Editor {
             Tool::Pen => Kind::Pen(vec![p]),
             Tool::Marker => Kind::Marker(vec![p]),
             Tool::Blur => Kind::Blur(None),
+            Tool::Spotlight => Kind::Spotlight,
         };
         let width = if self.tool == Tool::Marker { WIDTHS[self.weight] * 3. } else { WIDTHS[self.weight] };
-        self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s });
+        let filled = self.fill && matches!(kind, Kind::Rect | Kind::Ellipse);
+        self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s, filled });
         self.drag = Some(Drag::Draw);
         cx.notify();
     }
@@ -522,6 +616,9 @@ impl Editor {
     fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
         if e.pressed_button != Some(MouseButton::Left) {
             return;
+        }
+        if let Some(Drag::Slider(knob)) = self.drag {
+            return self.slide(knob, f32::from(e.position.x), cx);
         }
         let Some(p) = self.to_image(e.position, true) else { return };
         match &mut self.drag {
@@ -536,6 +633,7 @@ impl Editor {
                 self.doc.shapes[index].set_handle(handle, p);
             }
             Some(Drag::Crop { start }) => self.doc.crop = Some((*start, p)),
+            Some(Drag::Slider(_)) => {}
             Some(Drag::Draw) => {
                 let min_step = 2.5 / self.scale();
                 let Some(d) = self.draft.as_mut() else { return };
@@ -555,6 +653,7 @@ impl Editor {
 
     fn mouse_up(&mut self, cx: &mut Context<Self>) {
         match self.drag.take() {
+            Some(Drag::Slider(_)) => {}
             // A click without movement isn't an edit.
             Some(Drag::Move { moved: false, .. }) => {
                 self.history.pop();
@@ -653,19 +752,57 @@ impl Editor {
         palette::backdrops()
     }
 
+    /// Solid or outline for boxes and ellipses; restyles the selection too.
+    fn pick_fill(&mut self, fill: bool) {
+        self.fill = fill;
+        if let Some(index) = self.selected
+            && matches!(self.doc.shapes[index].kind, Kind::Rect | Kind::Ellipse)
+        {
+            self.checkpoint();
+            self.doc.shapes[index].filled = fill;
+        }
+    }
+
+    fn slide(&mut self, knob: Knob, x: f32, cx: &mut Context<Self>) {
+        let Some(&(x0, w)) = self.sliders.borrow().get(&knob) else { return };
+        let v = ((x - x0) / w.max(1.)).clamp(0., 1.);
+        match knob {
+            Knob::Padding => self.frame.padding = v * MAX_PAD,
+            Knob::Radius => self.frame.radius = v * MAX_ROUND,
+            Knob::Shadow => self.frame.shadow = v,
+        }
+        if !self.frame.on() {
+            self.frame.backdrop = Backdrop::Gradient(0);
+        }
+        cx.notify();
+    }
+
+    fn pick_wallpaper(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Выбрать картинку для фона".into()) });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(path) = paths.into_iter().next() else { return };
+            let _ = this.update(cx, |editor, cx| {
+                editor.frame.backdrop = Backdrop::Wallpaper(path);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn export(&mut self, how: Export, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_text();
         let Some(src) = self.source.clone() else {
             return util::notify("kadr", "Картинка ещё загружается, попробуй через секунду");
         };
         let doc = self.doc.clone();
-        let backdrop = self.backdrop.checked_sub(1).map(|i| self.backdrops()[i]);
+        let frame = self.frame.clone();
         let path = self.path.clone();
         window.remove_window();
         let hold = kit::hold(cx);
         cx.spawn(async move |_, cx| {
             let _hold = hold;
-            let png = cx.background_executor().spawn(async move { compose(&src, &doc, backdrop) }).await;
+            let png = cx.background_executor().spawn(async move { compose(&src, &doc, &frame) }).await;
             let Some(png) = png else {
                 return util::notify("Не удалось сохранить", &path.display().to_string());
             };
@@ -697,7 +834,7 @@ impl Editor {
             let _hold = hold;
             let tmp = util::runtime_dir().join(format!("kadr-ocr-editor-{}.png", std::process::id()));
             let doc = Doc { shapes: Vec::new(), crop };
-            let png = cx.background_executor().spawn(async move { compose(&src, &doc, None) }).await;
+            let png = cx.background_executor().spawn(async move { compose(&src, &doc, &Frame::default()) }).await;
             if let Some(png) = png
                 && std::fs::write(&tmp, png).is_ok()
             {
@@ -723,7 +860,7 @@ impl Editor {
                     cx.notify();
                 }))
         };
-        let drawing: Vec<_> = Tool::ALL[1..10].iter().map(|&t| tool_button(t, cx)).collect();
+        let drawing: Vec<_> = Tool::ALL[1..11].iter().map(|&t| tool_button(t, cx)).collect();
         let select = tool_button(Tool::Select, cx);
         let crop = tool_button(Tool::Crop, cx);
 
@@ -793,7 +930,29 @@ impl Editor {
             .children(drawing)
             .child(Divider::vertical().h_5().mx_1())
             .child(crop);
-        let style = h_flex().gap_0p5().child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).children(weights);
+        // Solid or outline, for boxes and ellipses.
+        let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
+            || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
+        let fill_toggle = shapes_fill.then(|| {
+            let option = |id: &'static str, solid: bool, icon: &'static str, tip: &'static str| {
+                ButtonLike::new(id)
+                    .style(if self.fill == solid { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(self.fill == solid)
+                    .child(div().px_1().child(Icon::from_path(icon).size(IconSize::Small)))
+                    .tooltip(Tooltip::text(tip))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.pick_fill(solid);
+                        cx.notify();
+                    }))
+            };
+            h_flex()
+                .gap_0p5()
+                .child(option("outline", false, "icons/kadr/rect.svg", "Контур"))
+                .child(option("solid", true, "icons/kadr/fill.svg", "Заливка"))
+                .child(Divider::vertical().h_5().mx_1())
+        });
+        let style = h_flex().gap_0p5().children(fill_toggle).child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).children(weights);
 
         h_flex()
             .w(px(width))
@@ -813,36 +972,8 @@ impl Editor {
     /// middle, and drag-out, copy and save on the right.
     fn render_footer(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let ring = cx.theme().colors().text;
-        let backdrops = std::iter::once(None).chain(self.backdrops().into_iter().map(Some)).enumerate().map(|(i, colors)| {
-            let selected = i == self.backdrop;
-            let swatch = div().size(px(16.)).rounded(px(4.));
-            let swatch = match colors {
-                Some((c0, c1)) => swatch.bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))),
-                None => swatch.border_1().border_color(cx.theme().colors().border).child(
-                    div().size_full().flex().items_center().justify_center().child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Muted)),
-                ),
-            };
-            div()
-                .id(("backdrop", i))
-                .size(px(26.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.))
-                .border_2()
-                .border_color(if selected { ring } else { gpui::transparent_black() })
-                .cursor_pointer()
-                .child(swatch)
-                .tooltip(Tooltip::text(if i == 0 { "Без фона" } else { "Фон с отступами и тенью" }))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.backdrop = i;
-                    cx.notify();
-                }))
-        });
-
         // Drag the annotated picture out, rendered at the moment the drag starts.
-        let drag_state = self.source.clone().map(|src| (src, self.doc.clone(), self.backdrop.checked_sub(1).map(|i| self.backdrops()[i]), self.path.clone()));
+        let drag_state = self.source.clone().map(|src| (src, self.doc.clone(), self.frame.clone(), self.path.clone()));
         let drag_out = div()
             .id("drag-out")
             .flex()
@@ -860,8 +991,8 @@ impl Editor {
             .tooltip(Tooltip::text("Утащи картинку с пометками в чат, браузер или папку"))
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
-                let (src, doc, backdrop, path) = drag_state.as_ref()?;
-                let png = compose(src, doc, *backdrop)?;
+                let (src, doc, frame, path) = drag_state.as_ref()?;
+                let png = compose(src, doc, frame)?;
                 let dir = util::runtime_dir().join("kadr-drag");
                 let _ = std::fs::create_dir_all(&dir);
                 let out = dir.join(path.file_name()?);
@@ -883,8 +1014,23 @@ impl Editor {
                 h_flex()
                     .flex_1()
                     .gap_1()
-                    .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(Color::Muted))
-                    .children(backdrops)
+                    .child(
+                        ButtonLike::new("background")
+                            .style(if self.panel { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                            .toggle_state(self.panel)
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .px_1()
+                                    .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(if self.frame.on() { Color::Accent } else { Color::Muted }))
+                                    .child(Label::new("Фон").size(LabelSize::Small)),
+                            )
+                            .tooltip(Tooltip::text("Фон, отступы, скругление, тень и формат"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.panel = !this.panel;
+                                cx.notify();
+                            })),
+                    )
                     .when(self.doc.crop.is_some(), |row| {
                         row.child(
                             Button::new("uncrop", "Без обрезки").style(ButtonStyle::Subtle).color(Color::Muted).on_click(cx.listener(|this, _, _, cx| {
@@ -938,6 +1084,171 @@ impl Editor {
             )
     }
 
+    fn slider(&self, knob: Knob, value: f32, label: String, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        let (track, filled, knob_color) = (colors.element_background, colors.text_accent, colors.text);
+        let sliders = self.sliders.clone();
+        let v = value.clamp(0., 1.);
+        let bar = canvas(
+            move |bounds, _, _| {
+                sliders.borrow_mut().insert(knob, (f32::from(bounds.origin.x), f32::from(bounds.size.width)));
+                bounds
+            },
+            move |_, bounds, window, _| {
+                let mid = bounds.origin.y + bounds.size.height / 2.;
+                let (x0, w) = (bounds.origin.x, bounds.size.width);
+                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
+                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
+                let c = x0 + w * v;
+                window.paint_quad(gpui::quad(Bounds::new(point(c - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
+            },
+        )
+        .size_full();
+        h_flex()
+            .w_full()
+            .gap_3()
+            .child(div().id(SharedString::from(format!("slider-{}", knob as u8))).flex_1().h(px(22.)).mx_2().cursor(CursorStyle::PointingHand).child(bar).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.drag = Some(Drag::Slider(knob));
+                    this.slide(knob, f32::from(e.position.x), cx);
+                }),
+            ))
+            .child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted)))
+            .into_any_element()
+    }
+
+    /// The background tool, like CleanShot's: what's behind the picture, its
+    /// margins, corners, shadow and the output's shape.
+    fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        let line = cx.theme().colors().border_variant;
+        let ring = cx.theme().colors().text;
+        let section = |title: &'static str| v_flex().w_full().gap_2().pb_4().border_b_1().border_color(line).child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
+        let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
+        let chip = |id: SharedString, label: &str, on: bool| {
+            ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label.to_owned()).size(LabelSize::Small)))
+        };
+        let swatch = |id: SharedString, selected: bool| {
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(10.))
+                .border_2()
+                .border_color(if selected { ring } else { gpui::transparent_black() })
+                .cursor_pointer()
+        };
+        let gradients = self
+            .backdrops()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (c0, c1))| {
+                swatch(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
+                    .size(px(40.))
+                    .child(div().size(px(30.)).rounded(px(7.)).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.frame.backdrop = Backdrop::Gradient(i);
+                        cx.notify();
+                    }))
+            })
+            .collect::<Vec<_>>();
+        let walls = self
+            .walls
+            .iter()
+            .enumerate()
+            .map(|(i, (path, thumb))| {
+                let path = path.clone();
+                swatch(SharedString::from(format!("wall-{i}")), self.frame.backdrop == Backdrop::Wallpaper(path.clone()))
+                    .w(px(64.))
+                    .h(px(44.))
+                    .child(img(thumb.clone()).w(px(56.)).h(px(36.)).rounded(px(6.)).object_fit(ObjectFit::Cover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.frame.backdrop = Backdrop::Wallpaper(path.clone());
+                        cx.notify();
+                    }))
+            })
+            .collect::<Vec<_>>();
+        let aspects = ASPECTS
+            .iter()
+            .enumerate()
+            .map(|(i, (label, _))| {
+                chip(SharedString::from(format!("aspect-{i}")), label, self.frame.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
+                    this.frame.aspect = i;
+                    if !this.frame.on() {
+                        this.frame.backdrop = Backdrop::Gradient(0);
+                    }
+                    cx.notify();
+                }))
+            })
+            .collect::<Vec<_>>();
+        let padding = self.slider(Knob::Padding, self.frame.padding / MAX_PAD, format!("{}%", (self.frame.padding * 100.).round()), cx);
+        let radius = self.slider(Knob::Radius, self.frame.radius / MAX_ROUND, format!("{}", (self.frame.radius / MAX_ROUND * 100.).round()), cx);
+        let shadow = self.slider(Knob::Shadow, self.frame.shadow, format!("{}%", (self.frame.shadow * 100.).round()), cx);
+        let size = self.source.as_ref().map(|src| {
+            let (w, h) = match self.doc.crop {
+                Some((a, b)) => {
+                    let (l, t, r, bt) = rect(a, b);
+                    (r - l, bt - t)
+                }
+                None => (src.width() as f32, src.height() as f32),
+            };
+            let ((ow, oh), _) = self.frame.layout(w.round(), h.round());
+            format!("Итог: {}×{}", ow, oh)
+        });
+
+        v_flex()
+            .id("background-panel")
+            .flex_none()
+            .w(px(PANEL))
+            .h(px(height))
+            .overflow_y_scroll()
+            .gap_4()
+            .p_4()
+            .border_l_1()
+            .border_color(line)
+            .bg(cx.theme().colors().panel_background)
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new("Фон"))
+                    .child(Switch::new("frame-on", ToggleState::from(self.frame.on())).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                        this.frame.backdrop = if *state == ToggleState::Selected { Backdrop::Gradient(0) } else { Backdrop::None };
+                        cx.notify();
+                    }))),
+            )
+            .child(
+                section("Подложка")
+                    .child(h_flex().flex_wrap().gap_1().children(gradients))
+                    .child(h_flex().flex_wrap().gap_1().children(walls))
+                    .child(
+                        Button::new("own-wallpaper", "Своя картинка…")
+                            .style(ButtonStyle::Subtle)
+                            .start_icon(Icon::new(IconName::Image).size(IconSize::Small))
+                            .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx))),
+                    ),
+            )
+            .child(
+                section("Оформление")
+                    .child(caption("Отступ"))
+                    .child(padding)
+                    .child(caption("Скругление углов"))
+                    .child(radius)
+                    .child(caption("Тень"))
+                    .child(shadow),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(Label::new("Формат").size(LabelSize::Small).color(Color::Muted))
+                    .child(h_flex().flex_wrap().gap_1().children(aspects))
+                    .children(size.filter(|_| self.frame.on()).map(|s| Label::new(s).size(LabelSize::XSmall).color(Color::Muted))),
+            )
+    }
+
     /// Output size after cropping, as shown in the footer.
     fn size_label(&self) -> String {
         match self.doc.crop {
@@ -964,6 +1275,8 @@ impl Editor {
         });
 
         let vector: Vec<Shape> = self.doc.shapes.iter().chain(self.draft.iter()).cloned().collect();
+        let spots: Vec<(P, P)> = vector.iter().filter(|sh| matches!(sh.kind, Kind::Spotlight)).map(|sh| (sh.a, sh.b)).collect();
+        let picture_size = (self.px.0 as f32, self.px.1 as f32);
         let origin = self.origin.clone();
         let strokes = canvas(
             move |bounds, _, _| {
@@ -973,6 +1286,8 @@ impl Editor {
             move |_, bounds, window, _| {
                 let o = bounds.origin;
                 let pt = |p: P| point(o.x + px(p.0 * s), o.y + px(p.1 * s));
+                // The dimming goes under the other shapes.
+                paint_spotlights(window, &spots, picture_size, &pt);
                 for shape in &vector {
                     paint_shape(window, shape, s, &pt);
                 }
@@ -1073,8 +1388,8 @@ impl Editor {
             Tool::Text => CursorStyle::IBeam,
             _ => CursorStyle::Crosshair,
         };
-        let framed = self.backdrop > 0;
-        let radius = if framed { self.disp.0.max(self.disp.1) * 0.012 } else { 6. };
+        let framed = self.frame.on();
+        let radius = if framed { self.disp.0.max(self.disp.1) * self.frame.radius } else { 6. };
         let picture = div()
             .id("canvas")
             .relative()
@@ -1083,7 +1398,17 @@ impl Editor {
             .h(px(self.disp.1))
             .rounded(px(radius))
             .overflow_hidden()
-            .shadow(kit::shadow())
+            .when(!framed, |d| d.shadow(kit::shadow()))
+            .when(framed && self.frame.shadow > 0., |d| {
+                let big = self.disp.0.max(self.disp.1);
+                d.shadow(vec![BoxShadow {
+                    color: gpui::hsla(0., 0., 0., 0.6 * self.frame.shadow),
+                    offset: point(px(0.), px(big * 0.012)),
+                    blur_radius: px(big * 0.035),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+            })
             .cursor(pointer)
             .child(img(self.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(radius)))
             .children(patches)
@@ -1092,34 +1417,64 @@ impl Editor {
             .child(overlay)
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.mouse_down(e, cx)));
 
-        // The backdrop preview mirrors what Save produces.
-        match self.backdrop.checked_sub(1).map(|i| self.backdrops()[i]) {
-            Some((c0, c1)) => div()
-                .p(px(self.disp.0.max(self.disp.1) * FRAME_PAD))
+        // The background preview mirrors what Save produces.
+        let ((ow, oh), _) = self.frame.layout(self.disp.0, self.disp.1);
+        let backdrop = match &self.frame.backdrop {
+            Backdrop::None => None,
+            Backdrop::Gradient(i) => {
+                let (c0, c1) = self.backdrops()[(*i).min(self.backdrops().len() - 1)];
+                Some(div().absolute().inset_0().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))).into_any_element())
+            }
+            Backdrop::Wallpaper(path) => Some(img(path.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Cover).into_any_element()),
+        };
+        match backdrop {
+            Some(backdrop) => div()
+                .relative()
+                .flex_none()
+                .w(px(ow))
+                .h(px(oh))
                 .rounded_lg()
-                .bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.)))
-                .child(picture),
-            None => div().p(px(self.disp.0.max(self.disp.1) * FRAME_PAD)).child(picture),
+                .overflow_hidden()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(backdrop)
+                .child(picture)
+                .into_any_element(),
+            None => div().p(px(self.disp.0.max(self.disp.1) * FRAME_PAD)).child(picture).into_any_element(),
         }
     }
 }
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // One CleanShot-like window: tools on top, the picture on a stage,
-        // actions at the bottom. It's as wide as the framed picture plus some
-        // air, but never narrower than the tools need.
+        // One CleanShot-like window: tools on top, the picture on a stage
+        // (with the background panel beside it when open), actions at the
+        // bottom. The picture shrinks to make room for its background.
         let viewport = window.viewport_size();
-        let pad = self.disp.0.max(self.disp.1) * FRAME_PAD;
-        let frame = (self.disp.0 + 2. * pad, self.disp.1 + 2. * pad);
-        let width = (frame.0 + 48.).max(1180. * kit::SCALE).min(f32::from(viewport.width) - 32.);
-        let stage = v_flex()
+        let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+        let panel = if self.panel { PANEL } else { 0. };
+        let box_of = |frame: &Frame, (w, h): (f32, f32)| {
+            if frame.on() {
+                frame.layout(w, h).0
+            } else {
+                let pad = w.max(h) * FRAME_PAD;
+                (w + 2. * pad, h + 2. * pad)
+            }
+        };
+        let full = box_of(&self.frame, self.natural);
+        let room = (vw - 32. - 48. - panel, vh - 230. * kit::SCALE);
+        let k = (room.0 / full.0).min(room.1 / full.1).min(1.);
+        self.disp = (self.natural.0 * k, self.natural.1 * k);
+        let frame = box_of(&self.frame, self.disp);
+        let stage_w = (frame.0 + 48.).max(1180. * kit::SCALE - panel);
+        let width = (stage_w + panel).min(vw - 32.);
+        let stage_h = frame.1 + 48.;
+        let stage = h_flex()
             .w_full()
-            .h(px(frame.1 + 48.))
-            .items_center()
-            .justify_center()
-            .bg(cx.theme().colors().editor_background)
-            .child(self.render_canvas(cx));
+            .h(px(stage_h))
+            .child(div().flex_1().h_full().flex().items_center().justify_center().bg(cx.theme().colors().editor_background).child(self.render_canvas(cx)))
+            .when(self.panel, |row| row.child(self.render_panel(stage_h, cx)));
         kit::root(cx)
             .bg(rgba(0x00000040))
             .flex()
@@ -1164,7 +1519,7 @@ fn constrain(d: &Shape, p: P, shift: bool) -> P {
     }
     let (dx, dy) = (p.0 - d.a.0, p.1 - d.a.1);
     match d.kind {
-        Kind::Rect | Kind::Ellipse | Kind::Blur(_) => {
+        Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => {
             let m = dx.abs().max(dy.abs());
             (d.a.0 + m * dx.signum(), d.a.1 + m * dy.signum())
         }
@@ -1186,7 +1541,7 @@ fn segment_distance(p: P, a: P, b: P) -> f32 {
 }
 
 /// Annotated, cropped, optionally framed picture as PNG bytes.
-fn compose(src: &RgbaImage, doc: &Doc, backdrop: Option<(Hsla, Hsla)>) -> Option<Vec<u8>> {
+fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
     let mut out = rasterize(src, &doc.shapes)?;
     if let Some((a, b)) = doc.crop {
         let (l, t, r, bt) = rect(a, b);
@@ -1197,53 +1552,74 @@ fn compose(src: &RgbaImage, doc: &Doc, backdrop: Option<(Hsla, Hsla)>) -> Option
             out = image::imageops::crop_imm(&out, x, y, w, h).to_image();
         }
     }
-    if let Some((c0, c1)) = backdrop {
-        out = framed(&out, c0, c1);
+    if frame.on() {
+        out = framed(&out, frame);
     }
     let mut png = Vec::new();
     out.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
     Some(png)
 }
 
-/// The picture with rounded corners and a soft shadow on a gradient, like the
-/// studio render does for recordings.
-fn framed(img: &RgbaImage, c0: Hsla, c1: Hsla) -> RgbaImage {
-    let (w, h) = (img.width() as f32, img.height() as f32);
-    let pad = (w.max(h) * FRAME_PAD).round();
-    let radius = w.max(h) * 0.012;
-    let (ow, oh) = ((w + 2. * pad) as u32, (h + 2. * pad) as u32);
+/// The backdrop picture at `w`×`h`: the wallpaper cropped to fill, or the
+/// gradient.
+fn backdrop_pixels(backdrop: &Backdrop, w: u32, h: u32) -> RgbaImage {
+    if let Backdrop::Wallpaper(path) = backdrop
+        && let Ok(img) = image::open(path)
+    {
+        return img.resize_to_fill(w, h, image::imageops::FilterType::Triangle).to_rgba8();
+    }
+    let all = palette::backdrops();
+    let (c0, c1) = match backdrop {
+        Backdrop::Gradient(i) => all[(*i).min(all.len() - 1)],
+        _ => all[0],
+    };
     let (a, b) = (c0.to_rgb(), c1.to_rgb());
-    let blur = pad * 0.45;
+    RgbaImage::from_fn(w, h, |x, y| {
+        let g = ((x as f32 / w as f32) * 0.6 + (y as f32 / h as f32) * 0.4).clamp(0., 1.);
+        let mix = |p: f32, q: f32| ((p + (q - p) * g) * 255.).round() as u8;
+        image::Rgba([mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b), 255])
+    })
+}
+
+/// The picture with rounded corners and a soft shadow on its background,
+/// like the studio render does for recordings.
+fn framed(img: &RgbaImage, frame: &Frame) -> RgbaImage {
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let ((ow, oh), (left, top)) = frame.layout(w, h);
+    let radius = w.max(h) * frame.radius;
+    let blur = (w.max(h) * frame.padding * 0.45).max(w.max(h) * 0.02);
+    let strength = frame.shadow.clamp(0., 1.);
+    let mut out = backdrop_pixels(&frame.backdrop, ow as u32, oh as u32);
     // Signed distance to a rounded rectangle centered at (cx, cy).
     let sdf = |x: f32, y: f32, cx: f32, cy: f32| {
         let qx = (x - cx).abs() - (w / 2. - radius);
         let qy = (y - cy).abs() - (h / 2. - radius);
         qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - radius
     };
-    let (cx, cy) = (pad + w / 2., pad + h / 2.);
-    RgbaImage::from_fn(ow, oh, |x, y| {
+    let (cx, cy) = (left + w / 2., top + h / 2.);
+    for (x, y, px) in out.enumerate_pixels_mut() {
         let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-        let g = ((fx / ow as f32) * 0.6 + (fy / oh as f32) * 0.4).clamp(0., 1.);
-        let d = sdf(fx, fy, cx, cy + pad * 0.15);
-        let k = (((d + blur * 0.4) / (blur * 1.4)).clamp(0., 1.)).powi(2) * (3. - 2. * ((d + blur * 0.4) / (blur * 1.4)).clamp(0., 1.));
-        let shade = 1. - 0.45 * (1. - k);
-        let mut px = [
-            (a.r + (b.r - a.r) * g) * shade,
-            (a.g + (b.g - a.g) * g) * shade,
-            (a.b + (b.b - a.b) * g) * shade,
-        ];
+        let mut c = [px.0[0] as f32 / 255., px.0[1] as f32 / 255., px.0[2] as f32 / 255.];
+        if strength > 0. {
+            let d = sdf(fx, fy, cx, cy + blur * 0.35);
+            let u = ((d + blur * 0.4) / (blur * 1.4)).clamp(0., 1.);
+            let k = u * u * (3. - 2. * u);
+            let shade = 1. - 0.9 * strength * (1. - k);
+            c.iter_mut().for_each(|v| *v *= shade);
+        }
         // The picture itself, antialiased along its rounded edge.
         let cover = (0.5 - sdf(fx, fy, cx, cy)).clamp(0., 1.);
         if cover > 0. {
-            let (ix, iy) = ((fx - pad).clamp(0., w - 1.) as u32, (fy - pad).clamp(0., h - 1.) as u32);
+            let (ix, iy) = ((fx - left).clamp(0., w - 1.) as u32, (fy - top).clamp(0., h - 1.) as u32);
             let p = img.get_pixel(ix, iy).0;
             let k = cover * p[3] as f32 / 255.;
-            for (c, v) in px.iter_mut().zip(p) {
-                *c = *c * (1. - k) + v as f32 / 255. * k;
+            for (v, s) in c.iter_mut().zip(p) {
+                *v = *v * (1. - k) + s as f32 / 255. * k;
             }
         }
-        image::Rgba([(px[0] * 255.) as u8, (px[1] * 255.) as u8, (px[2] * 255.) as u8, 255])
-    })
+        *px = image::Rgba([(c[0] * 255.) as u8, (c[1] * 255.) as u8, (c[2] * 255.) as u8, 255]);
+    }
+    out
 }
 
 fn push_text(shape: &mut Shape, s: &str) {
@@ -1357,6 +1733,20 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
     };
     let (a, b, c, w) = (shape.a, shape.b, shape.color, shape.size);
     match &shape.kind {
+        Kind::Rect | Kind::Ellipse if shape.filled => {
+            let points = if matches!(shape.kind, Kind::Rect) { vec![a, (b.0, a.1), b, (a.0, b.1)] } else { ellipse_points(a, b) };
+            let mut f = PathBuilder::fill();
+            if let Some((first, rest)) = points.split_first() {
+                f.move_to(pt(*first));
+                for p in rest {
+                    f.line_to(pt(*p));
+                }
+                f.close();
+            }
+            if let Ok(path) = f.build() {
+                window.paint_path(path, c);
+            }
+        }
         Kind::Rect => stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, c, w),
         Kind::Ellipse => stroke(window, &ellipse_points(a, b), true, c, w),
         Kind::Line => stroke(window, &[a, b], false, c, w),
@@ -1384,7 +1774,33 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             outline.a = 0.8;
             stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, outline, 1.5 / s);
         }
-        Kind::Blur(Some(_)) | Kind::Text(_) | Kind::Counter(_) => {}
+        Kind::Blur(Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Spotlight => {}
+    }
+}
+
+/// How dark a spotlight leaves everything around it.
+const SPOT_SHADE: f32 = 0.55;
+
+/// Dim the picture outside every spotlight box, one even-odd path.
+fn paint_spotlights(window: &mut Window, spots: &[(P, P)], size: P, pt: &impl Fn(P) -> Point<gpui::Pixels>) {
+    if spots.is_empty() {
+        return;
+    }
+    let mut b = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::even_odd()));
+    let mut add = |l: f32, t: f32, r: f32, bt: f32| {
+        b.move_to(pt((l, t)));
+        b.line_to(pt((r, t)));
+        b.line_to(pt((r, bt)));
+        b.line_to(pt((l, bt)));
+        b.close();
+    };
+    add(0., 0., size.0, size.1);
+    for &(a, c) in spots {
+        let (l, t, r, bt) = rect(a, c);
+        add(l, t, r, bt);
+    }
+    if let Ok(path) = b.build() {
+        window.paint_path(path, gpui::hsla(0., 0., 0., SPOT_SHADE));
     }
 }
 
@@ -1448,6 +1864,18 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
             image::imageops::replace(&mut base, &patch, l.floor().max(0.) as i64, t.floor().max(0.) as i64);
         }
     }
+    let spots: Vec<(f32, f32, f32, f32)> = shapes.iter().filter(|sh| matches!(sh.kind, Kind::Spotlight)).map(|sh| rect(sh.a, sh.b)).collect();
+    if !spots.is_empty() {
+        let keep = 1. - SPOT_SHADE;
+        for (x, y, px) in base.enumerate_pixels_mut() {
+            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+            if !spots.iter().any(|&(l, t, r, b)| fx >= l && fx < r && fy >= t && fy < b) {
+                for c in &mut px.0[..3] {
+                    *c = (*c as f32 * keep) as u8;
+                }
+            }
+        }
+    }
     let (w, h) = base.dimensions();
     let mut data = base.into_raw();
     // tiny-skia works on premultiplied pixels.
@@ -1486,13 +1914,21 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
         match &shape.kind {
             Kind::Rect => {
                 if let Some(path) = polyline(&[a, (b.0, a.1), b, (a.0, b.1)], true) {
-                    pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
+                    if shape.filled {
+                        pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
+                    } else {
+                        pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
+                    }
                 }
             }
             Kind::Ellipse => {
                 let (l, t, r, bt) = rect(a, b);
                 if let Some(path) = Rect::from_ltrb(l, t, r, bt).and_then(PathBuilder::from_oval) {
-                    pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
+                    if shape.filled {
+                        pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
+                    } else {
+                        pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
+                    }
                 }
             }
             Kind::Line => {
@@ -1537,7 +1973,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
                     draw_line(&mut pm, line, (a.0, baseline), size, c);
                 }
             }
-            Kind::Blur(_) => {}
+            Kind::Blur(_) | Kind::Spotlight => {}
         }
     }
     let mut data = pm.take();
@@ -1627,10 +2063,10 @@ mod tests {
         // Raw polyline (old behaviour) via a chain of lines, then the smoothed pen.
         let raw = trace(60.);
         for w in raw.windows(2) {
-            shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6. });
+            shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6., filled: false });
         }
-        shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6. });
-        let png = compose(&src, &Doc { shapes, crop: None }, None).unwrap();
+        shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6., filled: false });
+        let png = compose(&src, &Doc { shapes, crop: None }, &Frame::default()).unwrap();
         assert!(!png.is_empty());
         // KADR_TEST_OUT=/path/out.png to look at the result.
         if let Ok(out) = std::env::var("KADR_TEST_OUT") {
@@ -1644,7 +2080,7 @@ mod tests {
 
     #[test]
     fn hit_handles_and_move() {
-        let mut line = Shape { kind: Kind::Arrow, a: (10., 10.), b: (110., 10.), color: red(), size: 4. };
+        let mut line = Shape { kind: Kind::Arrow, a: (10., 10.), b: (110., 10.), color: red(), size: 4., filled: false };
         assert!(line.hit((60., 13.), 2.));
         assert!(!line.hit((60., 30.), 2.));
         assert_eq!(line.handles(), vec![(10., 10.), (110., 10.)]);
@@ -1653,31 +2089,49 @@ mod tests {
         line.translate((5., 5.));
         assert_eq!((line.a, line.b), ((15., 15.), (115., 65.)));
 
-        let mut boxy = Shape { kind: Kind::Rect, a: (0., 0.), b: (50., 40.), color: red(), size: 3. };
+        let mut boxy = Shape { kind: Kind::Rect, a: (0., 0.), b: (50., 40.), color: red(), size: 3., filled: false };
         assert!(boxy.hit((25., 20.), 1.), "inside a box selects it");
         boxy.set_handle(1, (80., -10.)); // top-right corner
         assert_eq!((boxy.a, boxy.b), ((0., -10.), (80., 40.)));
 
-        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 10.), (20., 0.)]), a: (0., 0.), b: (20., 0.), color: red(), size: 2. };
+        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 10.), (20., 0.)]), a: (0., 0.), b: (20., 0.), color: red(), size: 2., filled: false };
         assert!(pen.hit((15., 5.), 1.));
         assert!(pen.handles().is_empty(), "freehand only moves");
     }
 
     #[test]
+    fn spotlight_dims_around_and_fill_is_solid() {
+        let src = RgbaImage::from_pixel(200, 100, image::Rgba([200, 200, 200, 255]));
+        let shapes = vec![
+            Shape { kind: Kind::Spotlight, a: (10., 10.), b: (60., 60.), color: red(), size: 3., filled: false },
+            Shape { kind: Kind::Rect, a: (120., 20.), b: (180., 80.), color: red(), size: 3., filled: true },
+        ];
+        let out = image::load_from_memory(&compose(&src, &Doc { shapes, crop: None }, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.get_pixel(30, 30).0[0], 200, "inside the spotlight stays");
+        assert!(out.get_pixel(90, 90).0[0] < 100, "outside is dimmed");
+        let inner = out.get_pixel(150, 50).0;
+        assert!(inner[0] > inner[1] + 40, "the box is filled with its colour: {inner:?}");
+    }
+
+    #[test]
     fn crop_and_backdrop_sizes() {
         let src = RgbaImage::from_pixel(400, 300, image::Rgba([200, 200, 200, 255]));
-        let shapes = vec![Shape { kind: Kind::Rect, a: (60., 60.), b: (220., 180.), color: red(), size: 6. }];
+        let shapes = vec![Shape { kind: Kind::Rect, a: (60., 60.), b: (220., 180.), color: red(), size: 6., filled: false }];
         let doc = Doc { shapes, crop: Some(((50., 40.), (250., 200.))) };
-        let plain = image::load_from_memory(&compose(&src, &doc, None).unwrap()).unwrap();
+        let plain = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap();
         assert_eq!((plain.width(), plain.height()), (200, 160));
-        let backdrop = (gpui::hsla(0.58, 0.5, 0.5, 1.), gpui::hsla(0.9, 0.5, 0.5, 1.));
-        let png = compose(&src, &doc, Some(backdrop)).unwrap();
+        let frame = Frame { backdrop: Backdrop::Gradient(0), ..Frame::default() };
+        let png = compose(&src, &doc, &frame).unwrap();
         let framed = image::load_from_memory(&png).unwrap();
         // 6% of the longer side on each edge.
         assert_eq!((framed.width(), framed.height()), (224, 184));
+        // A square output grows the short side.
+        let square = Frame { aspect: 3, ..frame.clone() };
+        let sq = image::load_from_memory(&compose(&src, &doc, &square).unwrap()).unwrap();
+        assert_eq!((sq.width(), sq.height()), (224, 224));
         if let Ok(out) = std::env::var("KADR_TEST_FRAME") {
             let big = Doc { shapes: doc.shapes.clone(), crop: None };
-            std::fs::write(out, compose(&src, &big, Some(backdrop)).unwrap()).unwrap();
+            std::fs::write(out, compose(&src, &big, &frame).unwrap()).unwrap();
         }
     }
 }

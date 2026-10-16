@@ -162,7 +162,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
 }
 
 /// Omarchy's wallpapers, current theme first, as small previews.
-async fn wallpaper_thumbs() -> Vec<(PathBuf, Arc<Image>)> {
+pub(crate) async fn wallpaper_thumbs() -> Vec<(PathBuf, Arc<Image>)> {
     let (tx, rx) = futures::channel::oneshot::channel();
     std::thread::spawn(move || {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
@@ -202,6 +202,14 @@ async fn wallpaper_thumbs() -> Vec<(PathBuf, Arc<Image>)> {
                     small.save(&thumb).ok()?;
                 }
                 let bytes = std::fs::read(&thumb).ok()?;
+                // Plain one-colour pictures add nothing next to the gradients.
+                let luma = image::load_from_memory(&bytes).ok()?.to_luma8();
+                let n = luma.len() as f64;
+                let mean = luma.iter().map(|&v| v as f64).sum::<f64>() / n;
+                let spread = (luma.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n).sqrt();
+                if spread < 4. {
+                    return None;
+                }
                 seen.insert(bytes.clone()).then(|| (path, Arc::new(Image::from_bytes(ImageFormat::Png, bytes))))
             })
             .take(WALLPAPERS)
