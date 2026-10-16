@@ -2079,6 +2079,15 @@ pub(crate) fn font() -> &'static FontRef<'static> {
     FONT.get_or_init(|| FontRef::try_from_slice(include_bytes!("../data/zed/fonts/IBMPlexSans-SemiBold.ttf")).expect("bundled font"))
 }
 
+/// ab_glyph scales by the font's whole height (ascender to descender), GPUI
+/// and everyone else by the em; this turns an em size into ab_glyph's scale
+/// so text measures and draws the size it shows on screen.
+fn em(size: f32) -> PxScale {
+    let f = font();
+    let height = f.ascent_unscaled() - f.descent_unscaled();
+    PxScale::from(size * height / f.units_per_em().unwrap_or(1000.))
+}
+
 pub(crate) struct Metrics {
     pub ascent: f32,
     pub descent: f32,
@@ -2087,7 +2096,7 @@ pub(crate) struct Metrics {
 }
 
 pub(crate) fn metrics(size: f32) -> Metrics {
-    let f = font().as_scaled(PxScale::from(size));
+    let f = font().as_scaled(em(size));
     let (ascent, descent) = (f.ascent(), f.descent());
     Metrics { ascent, descent, line: ((ascent - descent) * 1.2).ceil() }
 }
@@ -2285,7 +2294,7 @@ fn rounded_rect(l: f32, t: f32, r: f32, b: f32, radius: f32) -> Option<tiny_skia
 }
 
 pub(crate) fn text_width(text: &str, size: f32) -> f32 {
-    let f = font().as_scaled(PxScale::from(size));
+    let f = font().as_scaled(em(size));
     let mut prev = None;
     let mut w = 0.;
     for ch in text.chars() {
@@ -2302,7 +2311,7 @@ pub(crate) fn text_width(text: &str, size: f32) -> f32 {
 /// One line of text with its baseline at `origin.1`.
 pub(crate) fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size: f32, color: Hsla) {
     let font = font();
-    let scale = PxScale::from(size);
+    let scale = em(size);
     let f = font.as_scaled(scale);
     let rgb = color.to_rgb();
     let (w, h) = (pm.width() as i32, pm.height() as i32);
