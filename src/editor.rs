@@ -425,6 +425,8 @@ pub struct Editor {
     weight: usize,
     /// Boxes and ellipses are drawn solid.
     fill: bool,
+    /// Pointer shape over a handle or a shape, while no button is held.
+    hover: Option<CursorStyle>,
     text_style: TextStyle,
     /// Canvas zoom on top of fitting the window; 1 fits.
     zoom: f32,
@@ -509,6 +511,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 color: 0,
                 weight: 1,
                 fill: false,
+                hover: None,
                 text_style: TextStyle::Plain,
                 zoom: 1.,
                 real: natural,
@@ -693,6 +696,31 @@ impl Editor {
 
     fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
         if e.pressed_button != Some(MouseButton::Left) {
+            // Show what a press would do: resize at a knob, move over a shape.
+            let hover = self.to_image(e.position, false).and_then(|p| {
+                if let Some((index, handle)) = self.handle_at(p) {
+                    let shape = &self.doc.shapes[index];
+                    let corners = shape.handles();
+                    let (h, mid) = (corners[handle], shape.bounds());
+                    let centre = ((mid.0 + mid.2) / 2., (mid.1 + mid.3) / 2.);
+                    return Some(match (shape.kind.clone(), handle) {
+                        (Kind::Line | Kind::Arrow, _) => CursorStyle::Crosshair,
+                        (_, 4 | 6) => CursorStyle::ResizeUpDown,
+                        (_, 5 | 7) => CursorStyle::ResizeLeftRight,
+                        _ if (h.0 - centre.0) * (h.1 - centre.1) > 0. => CursorStyle::ResizeUpLeftDownRight,
+                        _ => CursorStyle::ResizeUpRightDownLeft,
+                    });
+                }
+                let over = match self.tool {
+                    Tool::Select => self.shape_at(p).is_some(),
+                    _ => self.selected.is_some_and(|i| self.doc.shapes[i].hit(p, GRAB / self.scale())),
+                };
+                over.then_some(CursorStyle::OpenHand)
+            });
+            if hover != self.hover {
+                self.hover = hover;
+                cx.notify();
+            }
             return;
         }
         if let Some(Drag::Slider(knob)) = self.drag {
@@ -796,6 +824,22 @@ impl Editor {
             ("escape", _, _) if self.selected.is_some() => self.selected = None,
             ("escape", _, _) => window.remove_window(),
             ("delete" | "backspace", false, _) => self.delete_selected(),
+            ("d", true, _) => self.duplicate(cx),
+            ("left" | "right" | "up" | "down", false, _) if self.selected.is_some() => {
+                // A screen pixel, or ten with Shift.
+                let step = if shift { 10. } else { 1. } / self.scale();
+                let d = match k.key.as_str() {
+                    "left" => (-step, 0.),
+                    "right" => (step, 0.),
+                    "up" => (0., -step),
+                    _ => (0., step),
+                };
+                if let Some(index) = self.selected {
+                    self.checkpoint();
+                    self.doc.shapes[index].translate(d);
+                    self.refresh_patch(index, cx);
+                }
+            }
             ("z", true, false) => self.undo(),
             ("z", true, true) | ("y", true, _) => self.redo(),
             ("c", true, _) => self.export(Export::Copy, window, cx),
@@ -846,6 +890,23 @@ impl Editor {
             self.checkpoint();
             self.doc.shapes[index].filled = fill;
         }
+    }
+
+    /// Copy the selection a little down and right, and select the copy.
+    fn duplicate(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.selected else { return };
+        self.checkpoint();
+        let mut copy = self.doc.shapes[index].clone();
+        if let Kind::Counter(_) = copy.kind {
+            let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
+            copy.kind = Kind::Counter(n);
+        }
+        let step = 16. / self.scale();
+        copy.translate((step, step));
+        self.doc.shapes.push(copy);
+        let new = self.doc.shapes.len() - 1;
+        self.selected = Some(new);
+        self.refresh_patch(new, cx);
     }
 
     /// Text look; restyles the selected text too.
@@ -1563,6 +1624,7 @@ impl Editor {
         .size_full();
 
         let pointer = match self.tool {
+            _ if self.drag.is_none() && self.hover.is_some() => self.hover.unwrap_or(CursorStyle::Arrow),
             Tool::Select => CursorStyle::Arrow,
             Tool::Text => CursorStyle::IBeam,
             _ => CursorStyle::Crosshair,
