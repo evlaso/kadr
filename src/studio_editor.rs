@@ -29,14 +29,14 @@ use crate::studio::{
 use crate::track::Track;
 use crate::{palette, trim, util};
 
-const FILMSTRIP: f32 = 44.;
+const FILMSTRIP: f32 = 52.;
 const RULER: f32 = 18.;
-const LANE: f32 = 30.;
+const LANE: f32 = 40.;
 const SIDEBAR: f32 = 320. * kit::SCALE;
 /// Air around the preview inside the window.
 const STAGE_PAD: f32 = 24.;
 /// Edge grab width on segments, in pixels.
-const EDGE: f32 = 7.;
+const EDGE: f32 = 9.;
 const MIN_SEG: f64 = 0.3;
 const NEW_SEG: f64 = 2.0;
 const NEW_CUT: f64 = 1.0;
@@ -93,6 +93,8 @@ pub struct StudioEditor {
     drag: Option<Drag>,
     /// Waiting for a click on the preview to set the selected segment's focus.
     placing: bool,
+    /// The pointer over the timeline: what a press there would do.
+    timeline_cursor: CursorStyle,
     /// Room for the preview (it fits the output's shape inside).
     stage: (f32, f32),
     /// The preview area measured in the last layout; `stage` follows it.
@@ -120,7 +122,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
         let project = Project::load(&video, &track, &probe);
         // Fit the whole window (sidebar, title, transport, timeline) on screen.
         let chrome_h = 2. * STAGE_PAD + 260. * kit::SCALE + 80.;
-        let stage_w = (mon.w as f32 - 80. - 2. * STAGE_PAD - SIDEBAR).min((mon.h as f32 - chrome_h) * 16. / 9.).min(mon.w as f32 * 0.62);
+        let stage_w = (mon.w as f32 - 80. - 2. * STAGE_PAD - SIDEBAR).min((mon.h as f32 - chrome_h) * 16. / 9.).min(mon.w as f32 * 0.5);
         let stage = (stage_w, stage_w * 9. / 16.);
         let thumbs = trim::filmstrip(&video, probe.duration).await;
         let frame = trim::frame(&video, project.trim.0, (stage.0 * 2.) as u32, 0).await;
@@ -168,6 +170,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         cut: None,
                         drag: None,
                         placing: false,
+                        timeline_cursor: CursorStyle::PointingHand,
                         stage,
                         stage_cell: Rc::new(Cell::new(stage)),
                         timeline: Rc::new(Cell::new((0., 1., 0.))),
@@ -555,8 +558,43 @@ impl StudioEditor {
         cx.notify();
     }
 
+    /// What the pointer over the timeline would grab: edges resize, bodies
+    /// move, the rest seeks or adds a zoom.
+    fn timeline_cursor_at(&self, x: f32, y: f32) -> CursorStyle {
+        let (ox, w, lane_top) = self.timeline.get();
+        let strip_top = lane_top - 6. - FILMSTRIP;
+        let local = x - ox;
+        if local < -EDGE || local > w + EDGE || y < strip_top - RULER {
+            return CursorStyle::Arrow;
+        }
+        let near = |t: f64| (local - self.x_of(t)).abs() <= EDGE;
+        if y >= strip_top && y < lane_top {
+            if near(self.project.trim.0) || near(self.project.trim.1) || self.project.cuts.iter().any(|&(a, b)| near(a) || near(b)) {
+                return CursorStyle::ResizeLeftRight;
+            }
+            if self.project.cuts.iter().any(|&(a, b)| local > self.x_of(a) && local < self.x_of(b)) {
+                return CursorStyle::OpenHand;
+            }
+            return CursorStyle::PointingHand;
+        }
+        if y >= lane_top {
+            if self.project.segments.iter().any(|s| near(s.start) || near(s.end)) {
+                return CursorStyle::ResizeLeftRight;
+            }
+            if self.project.segments.iter().any(|s| local > self.x_of(s.start) && local < self.x_of(s.end)) {
+                return CursorStyle::OpenHand;
+            }
+        }
+        CursorStyle::PointingHand
+    }
+
     fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
         if e.pressed_button != Some(MouseButton::Left) {
+            let cursor = self.timeline_cursor_at(f32::from(e.position.x), f32::from(e.position.y));
+            if cursor != self.timeline_cursor {
+                self.timeline_cursor = cursor;
+                cx.notify();
+            }
             return;
         }
         let x = f32::from(e.position.x);
@@ -908,6 +946,16 @@ impl StudioEditor {
                     let mut fill_color = accent;
                     fill_color.alpha = if selected { 0.55 } else { 0.3 };
                     window.paint_quad(crate::ui::quad(block, px(6.), fill_color, px(if selected { 2. } else { 1. }), accent, BorderStyle::Solid));
+                    // Grips at both ends, like Final Cut's: something to catch.
+                    let mut grip = text;
+                    grip.alpha = if selected { 0.9 } else { 0.55 };
+                    for x in [at(s) + px(6.), at(e) - px(9.)] {
+                        if at(e) - at(s) > px(24.) {
+                            for dx in [0., 3.] {
+                                window.paint_quad(crate::ui::quad(Bounds::new(point(x + px(dx), lane_top + px(LANE / 2. - 7.)), size(px(1.5), px(14.))), px(1.), grip, px(0.), grip, BorderStyle::Solid));
+                            }
+                        }
+                    }
                     // Ease-in/out ramps either side, faint.
                     let mut ramp = accent;
                     ramp.alpha = 0.12;
@@ -968,7 +1016,11 @@ impl StudioEditor {
                 .relative()
                 .w_full()
                 .h(px(lane_y + LANE))
-                .cursor(CursorStyle::PointingHand)
+                .cursor(match self.drag {
+                    Some(Drag::Move { .. } | Drag::CutMove { .. }) => CursorStyle::ClosedHand,
+                    Some(Drag::Edge { .. } | Drag::CutEdge { .. } | Drag::Trim { .. }) => CursorStyle::ResizeLeftRight,
+                    _ => self.timeline_cursor,
+                })
                 .children(ruler)
                 .child(div().absolute().top(px(top)).left_0().right_0().h(px(FILMSTRIP)).rounded_md().overflow_hidden().child(h_flex().size_full().children(thumbs)))
                 .child(
@@ -1127,7 +1179,17 @@ impl StudioEditor {
         let chip = |id: SharedString, label: String, on: bool| {
             ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
         };
-        let section = |title: &'static str| v_flex().w_full().gap_2().pb_2().child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
+        // Groups stand apart: a hairline and a title above each.
+        let line = cx.theme().colors().border_variant;
+        let section = move |title: &'static str| {
+            v_flex()
+                .w_full()
+                .gap_2()
+                .pt_3()
+                .border_t_1()
+                .border_color(line)
+                .child(div().pb_0p5().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
+        };
         let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
 
         let context = if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
@@ -1428,8 +1490,9 @@ impl StudioEditor {
             .w(px(SIDEBAR))
             .h_full()
             .overflow_y_scroll()
-            .gap_4()
-            .p_4()
+            .gap_3()
+            .px_4()
+            .pb_4()
                         .child(context)
             .child(presets)
             .child(section("Формат").child(h_flex().flex_wrap().gap_1().children(aspects)))
@@ -1549,10 +1612,7 @@ impl StudioEditor {
                 )),
             )
             .child(
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(Label::new("Экспорт").size(LabelSize::Small).color(Color::Muted))
+                section("Экспорт")
                     .child(caption("Файл"))
                     .child(h_flex().gap_1().children(formats))
                     .child(caption("Размер"))

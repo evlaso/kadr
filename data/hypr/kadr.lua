@@ -61,7 +61,7 @@ end
 
 local last_event
 
--- This Hyprland calls the handler with (keycode, time in ms, state 1/0); some
+-- This Hyprland calls the handler with (xkb keycode, time in ms, state 1/0); some
 -- versions pass one event table. Each event also arrives twice: the repeat
 -- (same key, time and state) is dropped.
 hl.on("input.keyboard.key", function(ev, a2, a3)
@@ -73,7 +73,8 @@ hl.on("input.keyboard.key", function(ev, a2, a3)
     code = field(ev, { "keycode", "key", "code" })
     state = field(ev, { "state", "pressed", "down" })
   elseif a3 ~= nil then
-    code, state = ev, a3
+    -- xkb keycodes: evdev's plus 8.
+    code, state = ev - 8, a3
     local id = string.format("%s:%s:%s", ev, a2, a3)
     if id == last_event then
       return
