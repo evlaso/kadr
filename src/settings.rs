@@ -29,6 +29,8 @@ pub struct Settings {
     /// 0 keeps cards until closed.
     pub card_seconds: u32,
     pub card_side: Side,
+    /// The `kadr tray` icon.
+    pub tray: bool,
     pub max_cards: usize,
     /// None keeps the XDG videos folder.
     pub video_dir: Option<PathBuf>,
@@ -49,6 +51,7 @@ impl Default for Settings {
             show_card: true,
             card_seconds: 10,
             card_side: Side::Left,
+            tray: true,
             max_cards: 4,
             video_dir: None,
             fps: 60,
@@ -80,6 +83,7 @@ impl Settings {
             show_card: bool_or("show_card", d.show_card),
             card_seconds: num_or("card_seconds", d.card_seconds as u64) as u32,
             card_side: if v["card_side"].as_str() == Some("right") { Side::Right } else { Side::Left },
+            tray: bool_or("tray", d.tray),
             max_cards: (num_or("max_cards", d.max_cards as u64) as usize).clamp(1, 8),
             video_dir: dir("video_dir"),
             fps: num_or("fps", d.fps as u64) as u32,
@@ -99,6 +103,7 @@ impl Settings {
             "show_card": self.show_card,
             "card_seconds": self.card_seconds,
             "card_side": if self.card_side == Side::Right { "right" } else { "left" },
+            "tray": self.tray,
             "max_cards": self.max_cards,
             "video_dir": dir(&self.video_dir),
             "fps": self.fps,

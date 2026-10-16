@@ -12,6 +12,7 @@ mod studio;
 mod studio_editor;
 mod track;
 mod trim;
+mod tray;
 mod ui;
 mod job;
 mod kit;
@@ -46,6 +47,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr gif <видео>                               сохранить запись как GIF (720px, 15 к/с)
   kadr history                                   история скриншотов и записей
   kadr settings                                  настройки
+  kadr tray                                      иконка в трее (для автозапуска)
   kadr text [картинка]                           распознать текст (в области или на картинке) и скопировать
 ";
 
@@ -188,6 +190,10 @@ fn main() {
     if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
         print!("{USAGE}");
         return;
+    }
+    // The tray icon is its own small process, without GPUI.
+    if args.first().map(String::as_str) == Some("tray") {
+        return tray::run();
     }
     // Validate and resolve paths here, before handing off to the running instance.
     let command = match Command::from_args(&args) {

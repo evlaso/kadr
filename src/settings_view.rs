@@ -12,7 +12,7 @@ use crate::ui::{ButtonLike, Divider, Switch, ToggleState, Tooltip, prelude::*};
 use crate::kit::{self, LayerSpec};
 use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
 use crate::studio::{PADDINGS, ZOOMS};
-use crate::{ocr, palette, util};
+use crate::{ocr, palette, tray, util};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -172,6 +172,17 @@ impl SettingsView {
             Tab::General => vec![
                 row(line, "Показывать карточку", "Миниатюра в углу экрана после снимка или записи", switch("show_card", s.show_card, cx, |s, on| s.show_card = on)),
                 row(line, "Копировать скриншот", "Сразу класть снимок в буфер обмена", switch("copy", s.copy_screenshot, cx, |s, on| s.copy_screenshot = on)),
+                row(
+                    line,
+                    "Иконка в трее",
+                    "Клик открывает настройки, правый клик — снимки и запись",
+                    switch("tray", s.tray, cx, |s, on| {
+                        s.tray = on;
+                        // Saved first: the new tray process reads the setting.
+                        s.save();
+                        if on { tray::start() } else { tray::stop() }
+                    }),
+                ),
                 row(
                     line,
                     "Карточка исчезает через",
