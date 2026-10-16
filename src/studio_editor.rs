@@ -72,6 +72,8 @@ pub struct StudioEditor {
     cursor: Vec<(f64, f64, f64)>,
     thumbs: Vec<Arc<Image>>,
     walls: Vec<(PathBuf, Arc<Image>)>,
+    /// Saved looks, by name.
+    presets: Vec<(String, serde_json::Value)>,
     frame: Option<ImageSource>,
     /// Playing inside the editor; any seek stops it.
     playing: bool,
@@ -140,6 +142,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         cursor,
                         thumbs,
                         walls,
+                        presets: studio::presets(),
                         frame: frame.map(ImageSource::from),
                         playing: false,
                         stale: Vec::new(),
@@ -228,6 +231,15 @@ impl StudioEditor {
             self.cursor = studio::cursor_path(&self.track, &self.probe, self.project.cursor_smooth);
         }
         self.project.save(&self.video);
+        // The next recording starts with this look.
+        self.project.remember_look();
+        cx.notify();
+    }
+
+    fn save_preset(&mut self, cx: &mut Context<Self>) {
+        let next = self.presets.iter().filter_map(|(name, _)| name.strip_prefix("Пресет ")?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
+        self.presets.push((format!("Пресет {next}"), self.project.look()));
+        studio::save_presets(&self.presets);
         cx.notify();
     }
 
@@ -1105,6 +1117,52 @@ impl StudioEditor {
                 )
         };
 
+        // Presets: the current look is one when it matches exactly.
+        let current = self.project.look();
+        let active = self.presets.iter().position(|(_, look)| *look == current);
+        let preset_chips = self
+            .presets
+            .iter()
+            .enumerate()
+            .map(|(i, (name, look))| {
+                let look = look.clone();
+                chip(SharedString::from(format!("preset-{i}")), name.clone(), active == Some(i)).on_click(cx.listener(move |this, _, _, cx| {
+                    this.project = this.project.with_look(&look, &this.probe);
+                    this.changed(cx);
+                }))
+            })
+            .collect::<Vec<_>>();
+        let presets = section("Пресеты")
+            .when(self.presets.is_empty(), |s| {
+                s.child(Label::new("Сохрани текущий вид (фон, отступы, курсор, экспорт), чтобы включать его одним кликом").size(LabelSize::XSmall).color(Color::Muted))
+            })
+            .child(h_flex().flex_wrap().gap_1().children(preset_chips))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .when(active.is_none(), |row| {
+                        row.child(
+                            Button::new("save-preset", "Сохранить как пресет")
+                                .style(ButtonStyle::Subtle)
+                                .start_icon(Icon::new(IconName::Plus).size(IconSize::Small))
+                                .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
+                        )
+                    })
+                    .when_some(active, |row, i| {
+                        row.child(
+                            Button::new("delete-preset", "Удалить пресет")
+                                .style(ButtonStyle::Subtle)
+                                .color(Color::Muted)
+                                .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Muted))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.presets.remove(i);
+                                    studio::save_presets(&this.presets);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
+            );
+
         let aspects = ASPECTS.iter().enumerate().map(|(i, (label, _))| {
             chip(SharedString::from(format!("aspect-{i}")), (*label).into(), self.project.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
                 this.project.aspect = i;
@@ -1274,6 +1332,7 @@ impl StudioEditor {
             .gap_4()
             .p_4()
                         .child(context)
+            .child(presets)
             .child(section("Формат").child(h_flex().flex_wrap().gap_1().children(aspects)))
             .child(
                 section("Фон")

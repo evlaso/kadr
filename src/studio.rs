@@ -126,8 +126,16 @@ impl Project {
     pub fn load(video: &Path, track: &Track, p: &Probe) -> Project {
         let saved = std::fs::read_to_string(Self::path(video)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
         let d = Project::auto(track, p);
-        let Some(v) = saved else { return d };
-        let segments = v["segments"]
+        match saved {
+            Some(v) => Project::from_json(&v, d, p),
+            None => d,
+        }
+    }
+
+    /// A project from its JSON; anything missing keeps `d`'s value.
+    fn from_json(v: &serde_json::Value, d: Project, p: &Probe) -> Project {
+        let segments = if v["segments"].is_array() {
+            v["segments"]
             .as_array()
             .into_iter()
             .flatten()
@@ -139,7 +147,10 @@ impl Project {
                     focus: s["focus"].as_array().and_then(|f| Some((f.first()?.as_f64()?, f.get(1)?.as_f64()?))),
                 })
             })
-            .collect();
+            .collect()
+        } else {
+            d.segments.clone()
+        };
         let pair = |x: &serde_json::Value| Some((x.get(0)?.as_f64()?, x.get(1)?.as_f64()?));
         let index = |key: &str, default: usize, len: usize| (v[key].as_u64().map_or(default, |i| i as usize)).min(len - 1);
         // Older projects kept padding as an index into PADDINGS.
@@ -147,25 +158,29 @@ impl Project {
         let trim = pair(&v["trim"]).map(|(a, b)| (a.clamp(0., p.duration), b.clamp(0., p.duration))).filter(|(a, b)| b - a > 0.1).unwrap_or(d.trim);
         Project {
             segments,
-            backdrop: v["backdrop"].as_u64().unwrap_or(0) as usize,
-            wallpaper: v["wallpaper"].as_str().map(PathBuf::from).filter(|w| w.exists()),
+            backdrop: v["backdrop"].as_u64().map_or(d.backdrop, |b| b as usize),
+            wallpaper: if v.get("wallpaper").is_some() { v["wallpaper"].as_str().map(PathBuf::from).filter(|w| w.exists()) } else { d.wallpaper.clone() },
             padding: padding.clamp(0., MAX_PADDING),
             radius: v["radius"].as_f64().unwrap_or(d.radius).clamp(0., MAX_RADIUS),
             shadow: v["shadow"].as_f64().unwrap_or(d.shadow).clamp(0., 1.),
-            clicks: v["clicks"].as_bool().unwrap_or(true),
-            keys: v["keys"].as_bool().unwrap_or(true),
-            keys_top: v["keys_top"].as_bool().unwrap_or(false),
-            keys_size: index("keys_size", 1, KEY_SIZES.len()),
+            clicks: v["clicks"].as_bool().unwrap_or(d.clicks),
+            keys: v["keys"].as_bool().unwrap_or(d.keys),
+            keys_top: v["keys_top"].as_bool().unwrap_or(d.keys_top),
+            keys_size: index("keys_size", d.keys_size, KEY_SIZES.len()),
             trim,
-            cuts: v["cuts"].as_array().into_iter().flatten().filter_map(pair).collect(),
-            audio: v["audio"].as_bool().unwrap_or(true),
-            aspect: index("aspect", 0, ASPECTS.len()),
+            cuts: if v["cuts"].is_array() { v["cuts"].as_array().into_iter().flatten().filter_map(pair).collect() } else { d.cuts.clone() },
+            audio: v["audio"].as_bool().unwrap_or(d.audio),
+            aspect: index("aspect", d.aspect, ASPECTS.len()),
             resolution: index("resolution", d.resolution, RESOLUTIONS.len()),
-            frame_rate: index("frame_rate", 0, FRAME_RATES.len()),
-            format: if v["format"].as_str() == Some("gif") { Format::Gif } else { Format::Mp4 },
+            frame_rate: index("frame_rate", d.frame_rate, FRAME_RATES.len()),
+            format: match v["format"].as_str() {
+                Some("gif") => Format::Gif,
+                Some(_) => Format::Mp4,
+                None => d.format,
+            },
             quality: index("quality", d.quality, QUALITIES.len()),
-            cursor: v["cursor"].as_bool().unwrap_or(true),
-            cursor_style: index("cursor_style", 0, CURSOR_STYLES.len()),
+            cursor: v["cursor"].as_bool().unwrap_or(d.cursor),
+            cursor_style: index("cursor_style", d.cursor_style, CURSOR_STYLES.len()),
             cursor_size: v["cursor_size"].as_f64().unwrap_or(d.cursor_size).clamp(0.5, MAX_CURSOR),
             cursor_smooth: v["cursor_smooth"].as_f64().unwrap_or(d.cursor_smooth).clamp(0., 1.),
             motion_blur: index("motion_blur", d.motion_blur, MOTION_BLUR.len()),
@@ -173,12 +188,20 @@ impl Project {
     }
 
     pub fn save(&self, video: &Path) {
+        let path = Self::path(video);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, self.to_json().to_string());
+    }
+
+    fn to_json(&self) -> serde_json::Value {
         let segments: Vec<_> = self
             .segments
             .iter()
             .map(|s| json!({ "start": s.start, "end": s.end, "zoom": s.zoom, "focus": s.focus.map(|(x, y)| [x, y]) }))
             .collect();
-        let v = json!({
+        json!({
             "segments": segments,
             "backdrop": self.backdrop,
             "wallpaper": self.wallpaper.as_ref().map(|w| w.display().to_string()),
@@ -202,12 +225,31 @@ impl Project {
             "cursor_size": self.cursor_size,
             "cursor_smooth": self.cursor_smooth,
             "motion_blur": self.motion_blur,
-        });
-        let path = Self::path(video);
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        })
+    }
+
+    /// The look of the video, without its edit: what presets keep and what
+    /// carries over to the next recording.
+    pub fn look(&self) -> serde_json::Value {
+        let all = self.to_json();
+        serde_json::Value::Object(LOOK_KEYS.iter().filter_map(|k| Some((k.to_string(), all.get(*k)?.clone()))).collect())
+    }
+
+    /// This project with another look; the edit stays.
+    pub fn with_look(&self, look: &serde_json::Value, p: &Probe) -> Project {
+        let mut merged = self.to_json();
+        if let (Some(target), Some(source)) = (merged.as_object_mut(), look.as_object()) {
+            for (k, v) in source.iter().filter(|(k, _)| LOOK_KEYS.contains(&k.as_str())) {
+                target.insert(k.clone(), v.clone());
+            }
         }
-        let _ = std::fs::write(path, v.to_string());
+        Project::from_json(&merged, self.clone(), p)
+    }
+
+    /// Keep this look for the next recording.
+    pub fn remember_look(&self) {
+        let _ = std::fs::create_dir_all(util::config_dir());
+        let _ = std::fs::write(last_look_path(), self.look().to_string());
     }
 
     /// Zoom on clicks: a stretch per burst of clicks, held while typing.
@@ -237,7 +279,7 @@ impl Project {
                 }
             }
         }
-        Project {
+        let project = Project {
             segments: segs
                 .into_iter()
                 .map(|(s, e)| Seg { start: s.max(0.), end: (e + HOLD).min(p.duration), zoom: settings.studio_zoom, focus: None })
@@ -265,6 +307,11 @@ impl Project {
             cursor_size: 1.5,
             cursor_smooth: 0.5,
             motion_blur: 1,
+        };
+        // The look last used in the studio carries over.
+        match std::fs::read_to_string(last_look_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
+            Some(look) => project.with_look(&look, p),
+            None => project,
         }
     }
 
@@ -753,6 +800,39 @@ fn motion_ranges(camera: &Camera, cursor: Option<&[(f64, f64, f64)]>, p: &Probe)
     ranges.into_iter().map(|(a, b)| ((a - 0.05).max(0.), b + 0.05)).collect()
 }
 
+/// What a preset or the remembered look carries: everything but the edit
+/// (zooms, trim, cuts).
+const LOOK_KEYS: [&str; 20] = [
+    "backdrop", "wallpaper", "pad", "radius", "shadow", "clicks", "keys", "keys_top", "keys_size", "audio", "aspect", "resolution",
+    "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "motion_blur",
+];
+
+fn last_look_path() -> PathBuf {
+    util::config_dir().join("studio-look.json")
+}
+
+fn presets_path() -> PathBuf {
+    util::config_dir().join("studio-presets.json")
+}
+
+/// Saved looks, by name.
+pub fn presets() -> Vec<(String, serde_json::Value)> {
+    let saved = std::fs::read_to_string(presets_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    saved
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|p| Some((p["name"].as_str()?.to_owned(), p["look"].clone())))
+        .collect()
+}
+
+pub fn save_presets(presets: &[(String, serde_json::Value)]) {
+    let v: Vec<_> = presets.iter().map(|(name, look)| json!({ "name": name, "look": look })).collect();
+    let _ = std::fs::create_dir_all(util::config_dir());
+    let _ = std::fs::write(presets_path(), serde_json::to_string_pretty(&v).unwrap_or_default());
+}
+
 /// `select` expression keeping the given stretches.
 fn keep_expr(kept: &[(f64, f64)]) -> String {
     kept.iter().map(|(a, b)| format!("between(t,{a:.3},{b:.3})")).collect::<Vec<_>>().join("+")
@@ -1117,6 +1197,22 @@ mod tests {
         assert_eq!(project.next_kept(9.), None);
         let l = layout(&probe(), &Project { aspect: 4, padding: 0., ..project }, false);
         assert_eq!((l.ow, l.oh, l.w), (1080, 1920, 1080));
+    }
+
+    #[test]
+    fn a_look_moves_between_projects_without_the_edit() {
+        let mut source = Project::auto(&Track::default(), &probe());
+        source.padding = 0.02;
+        source.aspect = 4;
+        source.cursor_size = 2.5;
+        source.cuts = vec![(1., 2.)];
+        let mut target = Project::auto(&Track::default(), &probe());
+        target.trim = (1., 9.);
+        let moved = target.with_look(&source.look(), &probe());
+        assert_eq!((moved.padding, moved.aspect, moved.cursor_size), (0.02, 4, 2.5));
+        assert_eq!(moved.trim, (1., 9.), "the edit stays");
+        assert!(moved.cuts.is_empty(), "cuts aren't part of a look");
+        assert_eq!(moved.look(), source.look());
     }
 
     #[test]
