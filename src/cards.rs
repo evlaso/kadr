@@ -8,18 +8,18 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
-    MouseButton, MouseDownEvent, ObjectFit, Window, WindowHandle, div, ease_out_quint,
+    MouseButton, MouseDownEvent, ObjectFit, Stateful, hsla, Window, WindowHandle, div, ease_out_quint,
     img, layer_shell::*, px, rgba,
 };
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use ui::{Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::settings::{Settings, Side};
 use crate::{editor, ocr, pin, studio_editor, track, trim, util};
 
-const CARD_WIDTH: f32 = 300. * kit::SCALE;
+const CARD_WIDTH: f32 = 240. * kit::SCALE;
 const THUMB_WIDTH: f32 = CARD_WIDTH;
-const THUMB_MAX: f32 = 220. * kit::SCALE;
+const THUMB_MAX: f32 = 176. * kit::SCALE;
 const CHROME: f32 = 0.;
 const GAP: f32 = 14.;
 /// Room above and to the right of the stack so card shadows aren't cut off by
@@ -43,6 +43,9 @@ struct Card {
     id: usize,
     path: PathBuf,
     image: Arc<Image>,
+    /// The same picture blurred: the hover backdrop for the frosted buttons
+    /// (GPUI has no backdrop blur of its own).
+    blurred: Arc<Image>,
     /// Thumbnail height.
     height: f32,
     /// Clip duration in seconds for recordings.
@@ -74,11 +77,11 @@ pub fn show(path: PathBuf, cx: &mut App) {
             cx.background_executor()
                 .spawn(async move { card_thumbnail(&std::fs::read(&file).ok()?) })
                 .await
-                .map(|(image, height, _)| (image, height, None))
+                .map(|(image, blurred, height, _)| (image, blurred, height, None))
         };
         match loaded {
-            Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(path, image, height, video, cx));
+            Some((image, blurred, height, video)) => {
+                let _ = cx.update(|cx| add(path, image, blurred, height, video, cx));
             }
             None => util::notify("Не удалось открыть файл", &path.display().to_string()),
         }
@@ -99,9 +102,9 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
         .unwrap_or(false)
 }
 
-fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
+fn add(path: PathBuf, image: Arc<Image>, blurred: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
     let settings = Settings::load();
-    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: dismiss_at(&settings), hovered: false });
+    let mut slot = Some(Card { id: 0, path, image, blurred, height, video, deadline: dismiss_at(&settings), hovered: false });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
@@ -202,11 +205,31 @@ impl CardStack {
                 action(this, &path, id, window, cx)
             })
         };
+        // Frosted pills over the blurred picture, like CleanShot's.
+        let glass = |el: Stateful<Div>| {
+            el.flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(hsla(0., 0., 1., 0.18))
+                .border_1()
+                .border_color(hsla(0., 0., 1., 0.22))
+                .text_color(gpui::white())
+                .cursor_pointer()
+                .hover(|s| s.bg(hsla(0., 0., 1., 0.3)))
+                .active(|s| s.bg(hsla(0., 0., 1., 0.4)))
+        };
         let big = |key: &'static str, label: &'static str| {
-            Button::new((key, id), label).style(ButtonStyle::Filled).size(ButtonSize::Large).width(px(150. * kit::SCALE))
+            glass(div().id((key, id)))
+                .w(px(124. * kit::SCALE))
+                .h(px(30. * kit::SCALE))
+                .child(Label::new(label).size(LabelSize::Small).color(Color::Custom(gpui::white())))
         };
         let corner = |key: &'static str, icon: IconName, tip: &'static str| {
-            IconButton::new((key, id), icon).style(ButtonStyle::Filled).shape(IconButtonShape::Square).tooltip(Tooltip::text(tip))
+            glass(div().id((key, id)))
+                .size(px(26. * kit::SCALE))
+                .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(gpui::white())))
+                .tooltip(Tooltip::text(tip))
         };
 
         let mut center = v_flex().items_center().gap_1p5().child(big("copy", "Копировать").on_click(act(|this, path, id, window, cx| {
@@ -250,8 +273,10 @@ impl CardStack {
         // Bottom right: text recognition for pictures, GIF for recordings, the folder for both.
         let extra = if video {
             (!gif).then(|| {
-                Button::new(("gif", id), "GIF")
-                    .style(ButtonStyle::Filled)
+                glass(div().id(("gif", id)))
+                    .h(px(26. * kit::SCALE))
+                    .px_2()
+                    .child(Label::new("GIF").size(LabelSize::XSmall).color(Color::Custom(gpui::white())))
                     .tooltip(Tooltip::text("Сохранить как GIF (720px, 15 к/с)"))
                     .on_click(act(|_, path, _, _, cx| trim::quick_gif(path.to_owned(), cx)))
                     .into_any_element()
@@ -265,8 +290,9 @@ impl CardStack {
             .absolute()
             .inset_0()
             .rounded(px(kit::RADIUS))
-            .bg(rgba(0x0000008c))
             .opacity(if shown { 1. } else { 0. })
+            .child(img(card.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
+            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000052)))
             .flex()
             .items_center()
             .justify_center()
@@ -427,10 +453,11 @@ pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
 /// Card-sized thumbnail: center-cropped to the card's aspect and scaled to
 /// twice its width, so corners round correctly and a 4K screenshot isn't kept
 /// in memory. Returns the image and the card height.
-fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
+/// Card picture, its blurred twin, the card height and the source size.
+fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, Arc<Image>, f32, (u32, u32))> {
     let src = image::load_from_memory(bytes).ok()?;
     let (w, h) = (src.width().max(1), src.height().max(1));
-    let height = (THUMB_WIDTH * h as f32 / w as f32).clamp(110. * kit::SCALE, THUMB_MAX);
+    let height = (THUMB_WIDTH * h as f32 / w as f32).clamp(96. * kit::SCALE, THUMB_MAX);
     let aspect = THUMB_WIDTH / height;
     let (cw, ch) = if (w as f32 / h as f32) > aspect {
         ((h as f32 * aspect).round() as u32, h)
@@ -439,13 +466,19 @@ fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
     };
     let cropped = src.crop_imm((w - cw.min(w)) / 2, (h - ch.min(h)) / 2, cw.min(w), ch.min(h));
     let thumb = cropped.resize_exact((THUMB_WIDTH * 2.) as u32, (height * 2.) as u32, image::imageops::FilterType::Triangle);
-    let mut png = Vec::new();
-    thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-    Some((Arc::new(Image::from_bytes(ImageFormat::Png, png)), height, (w, h)))
+    let encode = |img: &image::DynamicImage| {
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+        Some(Arc::new(Image::from_bytes(ImageFormat::Png, png)))
+    };
+    // Blurring a quarter-size copy is quick and looks the same once stretched.
+    let small = thumb.resize_exact(thumb.width() / 4, thumb.height() / 4, image::imageops::FilterType::Triangle);
+    let blurred = image::DynamicImage::ImageRgba8(image::imageops::blur(&small.to_rgba8(), 4.));
+    Some((encode(&thumb)?, encode(&blurred)?, height, (w, h)))
 }
 
 /// First frame (scaled down) and duration in seconds.
-async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>)> {
+async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, Arc<Image>, f32, Option<f64>)> {
     use std::ffi::OsStr;
     let thumb = util::runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
     let (ok, _) = util::output::<&OsStr>(&[
@@ -460,7 +493,7 @@ async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Imag
         "-of".as_ref(), "csv=p=0".as_ref(), path.as_os_str(),
     ])
     .await?;
-    let (image, height, _) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
+    let (image, blurred, height, _) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
     let seconds: f64 = duration.trim().parse().unwrap_or(0.0);
-    Some((image, height, Some(seconds)))
+    Some((image, blurred, height, Some(seconds)))
 }
