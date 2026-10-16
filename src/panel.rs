@@ -96,7 +96,10 @@ impl Panel {
         let panel = cx.weak_entity();
         let entries = self.mics.clone();
         let selected = self.opts.mic_device.clone();
-        let height = (12. + 34. * entries.len() as f32) * kit::SCALE;
+        // Exactly the rows, their gaps, the padding and the border: the popup
+        // can't size itself to its content.
+        let n = entries.len().max(1) as f32;
+        let height = n * MENU_ROW + (n - 1.) * MENU_GAP + 2. * MENU_PAD + 2.;
         let mut options = WindowOptions {
             titlebar: None,
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.), px(0.)), size: size(px(380. * kit::SCALE), px(height)) })),
@@ -299,6 +302,11 @@ struct MicMenu {
     selected: String,
 }
 
+/// Microphone menu metrics, shared by the popup's size and its layout.
+const MENU_ROW: f32 = 32. * kit::SCALE;
+const MENU_GAP: f32 = 2. * kit::SCALE;
+const MENU_PAD: f32 = 5. * kit::SCALE;
+
 impl Render for MicMenu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
@@ -309,10 +317,11 @@ impl Render for MicMenu {
             let checked = name == self.selected;
             h_flex()
                 .id(i)
-                .h(px(32.))
+                .h(px(MENU_ROW))
+                .flex_none()
                 .px_2()
                 .gap_2()
-                .rounded_md()
+                .rounded(crate::ui::rems_from_px(7.))
                 .cursor_pointer()
                 .when(checked, |row| row.bg(selected))
                 .hover(move |s| s.bg(hover))
@@ -327,6 +336,6 @@ impl Render for MicMenu {
                     window.remove_window();
                 })
         });
-        kit::root(cx).child(v_flex().size_full().p_1().gap_0p5().elevation_2(cx).children(rows))
+        kit::root(cx).child(v_flex().size_full().p(px(MENU_PAD)).gap(px(MENU_GAP)).elevation_2(cx).children(rows))
     }
 }
