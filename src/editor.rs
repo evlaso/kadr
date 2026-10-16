@@ -287,6 +287,9 @@ struct Shape {
     /// Boxes and ellipses: solid instead of an outline.
     filled: bool,
     text: TextStyle,
+    /// Lines and arrows: a point the line bends through, set by dragging
+    /// the middle handle. None keeps it straight.
+    bend: Option<P>,
 }
 
 /// How text stands out from the picture.
@@ -341,7 +344,10 @@ impl Shape {
                 (self.a.0 - r, self.a.1 - r, self.a.0 + r, self.a.1 + r)
             }
             Kind::Line | Kind::Arrow => {
-                let (l, t, r, b) = rect(self.a, self.b);
+                let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                for p in self.path() {
+                    (l, t, r, b) = (l.min(p.0), t.min(p.1), r.max(p.0), b.max(p.1));
+                }
                 let w = self.size / 2.;
                 (l - w, t - w, r + w, b + w)
             }
@@ -352,7 +358,7 @@ impl Shape {
     fn hit(&self, p: P, tol: f32) -> bool {
         let reach = tol + self.size / 2.;
         match &self.kind {
-            Kind::Line | Kind::Arrow => segment_distance(p, self.a, self.b) <= reach,
+            Kind::Line | Kind::Arrow => self.path().windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach),
             Kind::Pen(points) | Kind::Marker(points) => points.windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach),
             _ => {
                 let (l, t, r, b) = self.bounds();
@@ -367,7 +373,8 @@ impl Shape {
         let mid = ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
         match self.kind {
             Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
-            Kind::Line | Kind::Arrow => vec![a, b],
+            // Ends, then the middle that bends it.
+            Kind::Line | Kind::Arrow => vec![a, b, self.bend.unwrap_or(mid)],
             // Text, counters and freehand scale from their box's corners.
             _ => {
                 let (l, t, r, bt) = self.bounds();
@@ -412,6 +419,12 @@ impl Shape {
     fn set_handle(&mut self, handle: usize, p: P) {
         match (&self.kind, handle) {
             (Kind::Line | Kind::Arrow, 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 0) => self.a = p,
+            (Kind::Line | Kind::Arrow, 2) => {
+                // Back to straight when the middle is dragged onto the line.
+                let mid = ((self.a.0 + self.b.0) / 2., (self.a.1 + self.b.1) / 2.);
+                let len = (self.b.0 - self.a.0).hypot(self.b.1 - self.a.1);
+                self.bend = (segment_distance(p, self.a, self.b) > len * 0.02 || (p.0 - mid.0).hypot(p.1 - mid.1) > len * 0.3).then_some(p);
+            }
             (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 2) => self.b = p,
             (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 1) => (self.b.0, self.a.1) = p,
             (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 3) => (self.a.0, self.b.1) = p,
@@ -428,10 +441,18 @@ impl Shape {
         let shift = |p: &mut P| *p = (p.0 + d.0, p.1 + d.1);
         shift(&mut self.a);
         shift(&mut self.b);
+        if let Some(bend) = &mut self.bend {
+            shift(bend);
+        }
         if let Kind::Pen(points) | Kind::Marker(points) = &mut self.kind {
             points.iter_mut().for_each(shift);
         }
         self.stale_patch();
+    }
+
+    /// Points along a line or arrow: its two ends, or a curve through the bend.
+    fn path(&self) -> Vec<P> {
+        curve(self.a, self.b, self.bend)
     }
 
     /// A moved pixelation shows its outline until the new patch is ready.
@@ -744,7 +765,7 @@ impl Editor {
             Tool::Select | Tool::Crop => return cx.notify(),
             Tool::Text => {
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: sized(FONT_SIZES, self.weight) / s, filled: false, text: self.text_style });
+                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: sized(FONT_SIZES, self.weight) / s, filled: false, text: self.text_style, bend: None });
                 self.editing = Some(self.doc.shapes.len() - 1);
                 self.selected = self.editing;
                 return cx.notify();
@@ -752,7 +773,7 @@ impl Editor {
             Tool::Counter => {
                 let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: sized(COUNTER_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain });
+                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: sized(COUNTER_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain, bend: None });
                 self.selected = Some(self.doc.shapes.len() - 1);
                 return cx.notify();
             }
@@ -767,7 +788,7 @@ impl Editor {
         };
         let width = if self.tool == Tool::Marker { sized(WIDTHS, self.weight) * 3. } else { sized(WIDTHS, self.weight) };
         let filled = self.fill && matches!(kind, Kind::Rect | Kind::Ellipse);
-        self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s, filled, text: TextStyle::Plain });
+        self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s, filled, text: TextStyle::Plain, bend: None });
         self.drag = Some(Drag::Draw);
         cx.notify();
     }
@@ -1005,6 +1026,7 @@ impl Editor {
             size: 0.,
             filled: false,
             text: TextStyle::Plain,
+            bend: None,
         });
         self.selected = Some(self.doc.shapes.len() - 1);
         self.tool = Tool::Select;
@@ -1991,6 +2013,46 @@ fn constrain(d: &Shape, p: P, shift: bool) -> P {
     }
 }
 
+/// A straight segment, or a quadratic curve from `a` to `b` passing through
+/// `bend` halfway, as points close enough to draw as a polyline.
+fn curve(a: P, b: P, bend: Option<P>) -> Vec<P> {
+    let Some(m) = bend else { return vec![a, b] };
+    // The control point that puts the curve's midpoint on `m`.
+    let c = (2. * m.0 - (a.0 + b.0) / 2., 2. * m.1 - (a.1 + b.1) / 2.);
+    const STEPS: usize = 48;
+    (0..=STEPS)
+        .map(|i| {
+            let t = i as f32 / STEPS as f32;
+            let (u, v, w) = ((1. - t) * (1. - t), 2. * (1. - t) * t, t * t);
+            (u * a.0 + v * c.0 + w * b.0, u * a.1 + v * c.1 + w * b.1)
+        })
+        .collect()
+}
+
+/// An arrow along `points`: the shaft, stopping where the head begins, and
+/// the head pointing along the line's last stretch.
+fn arrow_parts(points: &[P], w: f32) -> (Vec<P>, [P; 3]) {
+    let (a, b) = (points[0], points[points.len() - 1]);
+    let length: f32 = points.windows(2).map(|s| (s[1].0 - s[0].0).hypot(s[1].1 - s[0].1)).sum();
+    // The direction the curve comes in at; a straight arrow is its own.
+    let from = if points.len() > 2 {
+        let reach = (w * 4.).max(w + 10.).min(length * 0.7);
+        *points.iter().rev().find(|p| (p.0 - b.0).hypot(p.1 - b.1) >= reach).unwrap_or(&a)
+    } else {
+        a
+    };
+    let (dx, dy) = (b.0 - from.0, b.1 - from.1);
+    let d = dx.hypot(dy).max(0.001);
+    let (end, head) = arrow_geometry((b.0 - dx / d * length, b.1 - dy / d * length), b, w);
+    let cut = (end.0 - b.0).hypot(end.1 - b.1);
+    let mut shaft: Vec<P> = points.iter().copied().filter(|p| (p.0 - b.0).hypot(p.1 - b.1) > cut).collect();
+    if shaft.is_empty() {
+        shaft.push(a);
+    }
+    shaft.push(end);
+    (shaft, head)
+}
+
 fn segment_distance(p: P, a: P, b: P) -> f32 {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let len2 = dx * dx + dy * dy;
@@ -2218,7 +2280,7 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
         }
         Kind::Rect => stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, c, w),
         Kind::Ellipse => stroke(window, &ellipse_points(a, b), true, c, w),
-        Kind::Line => stroke(window, &[a, b], false, c, w),
+        Kind::Line => stroke(window, &shape.path(), false, c, w),
         Kind::Pen(points) => stroke(window, &smooth(points), false, c, w),
         Kind::Marker(points) => {
             let mut faded = c;
@@ -2226,8 +2288,8 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             stroke(window, &smooth(points), false, faded, w)
         }
         Kind::Arrow => {
-            let (shaft, head) = arrow_geometry(a, b, w);
-            stroke(window, &[a, shaft], false, c, w);
+            let (shaft, head) = arrow_parts(&shape.path(), w);
+            stroke(window, &shaft, false, c, w);
             let mut f = PathBuilder::fill();
             f.move_to(pt(head[0]));
             f.line_to(pt(head[1]));
@@ -2419,7 +2481,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
                 }
             }
             Kind::Line => {
-                if let Some(path) = polyline(&[a, b], false) {
+                if let Some(path) = polyline(&shape.path(), false) {
                     pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
                 }
             }
@@ -2434,8 +2496,8 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
                 }
             }
             Kind::Arrow => {
-                let (shaft, head) = arrow_geometry(a, b, size);
-                if let Some(path) = polyline(&[a, shaft], false) {
+                let (shaft, head) = arrow_parts(&shape.path(), size);
+                if let Some(path) = polyline(&shaft, false) {
                     pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
                 }
                 if let Some(path) = polyline(&head, true) {
@@ -2581,9 +2643,9 @@ mod tests {
         // Raw polyline (old behaviour) via a chain of lines, then the smoothed pen.
         let raw = trace(60.);
         for w in raw.windows(2) {
-            shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6., filled: false, text: TextStyle::Plain });
+            shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6., filled: false, text: TextStyle::Plain, bend: None });
         }
-        shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6., filled: false, text: TextStyle::Plain });
+        shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6., filled: false, text: TextStyle::Plain, bend: None });
         let png = compose(&src, &Doc { shapes, crop: None }, &Frame::default()).unwrap();
         assert!(!png.is_empty());
         // KADR_TEST_OUT=/path/out.png to look at the result.
@@ -2602,7 +2664,7 @@ mod tests {
         let mut png = Vec::new();
         RgbaImage::from_pixel(10, 10, image::Rgba([200, 0, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
         let picture = Picture::decode(&png).unwrap();
-        let shape = Shape { kind: Kind::Picture(picture), a: (20., 20.), b: (40., 40.), color: gpui::white(), size: 0., filled: false, text: TextStyle::Plain };
+        let shape = Shape { kind: Kind::Picture(picture), a: (20., 20.), b: (40., 40.), color: gpui::white(), size: 0., filled: false, text: TextStyle::Plain, bend: None };
         let out = rasterize(&src, &[shape]).unwrap();
         assert_eq!(out.get_pixel(30, 30).0, [200, 0, 0, 255]);
         assert_eq!(out.get_pixel(45, 30).0, [255, 255, 255, 255]);
@@ -2610,21 +2672,31 @@ mod tests {
 
     #[test]
     fn hit_handles_and_move() {
-        let mut line = Shape { kind: Kind::Arrow, a: (10., 10.), b: (110., 10.), color: red(), size: 4., filled: false, text: TextStyle::Plain };
+        let mut line = Shape { kind: Kind::Arrow, a: (10., 10.), b: (110., 10.), color: red(), size: 4., filled: false, text: TextStyle::Plain, bend: None };
         assert!(line.hit((60., 13.), 2.));
         assert!(!line.hit((60., 30.), 2.));
-        assert_eq!(line.handles(), vec![(10., 10.), (110., 10.)]);
+        assert_eq!(line.handles(), vec![(10., 10.), (110., 10.), (60., 10.)]);
+        // The middle handle bends it: the curve runs through the point.
+        line.set_handle(2, (60., 50.));
+        assert_eq!(line.bend, Some((60., 50.)));
+        assert!(line.hit((60., 50.), 2.) && !line.hit((60., 10.), 2.));
+        let (shaft, head) = arrow_parts(&line.path(), line.size);
+        assert_eq!(head[0], (110., 10.));
+        assert!(shaft.last().unwrap().1 > 10., "the head comes in along the curve, from below");
+        // Dragged back onto the line, it's straight again.
+        line.set_handle(2, (61., 10.));
+        assert_eq!(line.bend, None);
         line.set_handle(1, (110., 60.));
         assert_eq!(line.b, (110., 60.));
         line.translate((5., 5.));
         assert_eq!((line.a, line.b), ((15., 15.), (115., 65.)));
 
-        let mut boxy = Shape { kind: Kind::Rect, a: (0., 0.), b: (50., 40.), color: red(), size: 3., filled: false, text: TextStyle::Plain };
+        let mut boxy = Shape { kind: Kind::Rect, a: (0., 0.), b: (50., 40.), color: red(), size: 3., filled: false, text: TextStyle::Plain, bend: None };
         assert!(boxy.hit((25., 20.), 1.), "inside a box selects it");
         boxy.set_handle(1, (80., -10.)); // top-right corner
         assert_eq!((boxy.a, boxy.b), ((0., -10.), (80., 40.)));
 
-        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 10.), (20., 0.)]), a: (0., 0.), b: (20., 0.), color: red(), size: 2., filled: false, text: TextStyle::Plain };
+        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 10.), (20., 0.)]), a: (0., 0.), b: (20., 0.), color: red(), size: 2., filled: false, text: TextStyle::Plain, bend: None };
         assert!(pen.hit((15., 5.), 1.));
         assert_eq!(pen.handles().len(), 4, "freehand scales from its corners");
     }
@@ -2633,8 +2705,8 @@ mod tests {
     fn spotlight_dims_around_and_fill_is_solid() {
         let src = RgbaImage::from_pixel(200, 100, image::Rgba([200, 200, 200, 255]));
         let shapes = vec![
-            Shape { kind: Kind::Spotlight, a: (10., 10.), b: (60., 60.), color: red(), size: 3., filled: false, text: TextStyle::Plain },
-            Shape { kind: Kind::Rect, a: (120., 20.), b: (180., 80.), color: red(), size: 3., filled: true, text: TextStyle::Plain },
+            Shape { kind: Kind::Spotlight, a: (10., 10.), b: (60., 60.), color: red(), size: 3., filled: false, text: TextStyle::Plain, bend: None },
+            Shape { kind: Kind::Rect, a: (120., 20.), b: (180., 80.), color: red(), size: 3., filled: true, text: TextStyle::Plain, bend: None },
         ];
         let out = image::load_from_memory(&compose(&src, &Doc { shapes, crop: None }, &Frame::default()).unwrap()).unwrap().to_rgba8();
         assert_eq!(out.get_pixel(30, 30).0[0], 200, "inside the spotlight stays");
@@ -2646,7 +2718,7 @@ mod tests {
     #[test]
     fn text_on_a_plate_and_outlined() {
         let src = RgbaImage::from_pixel(300, 120, image::Rgba([240, 240, 240, 255]));
-        let text = |a: P, style| Shape { kind: Kind::Text("Hi".into()), a, b: a, color: red(), size: 30., filled: false, text: style };
+        let text = |a: P, style| Shape { kind: Kind::Text("Hi".into()), a, b: a, color: red(), size: 30., filled: false, text: style, bend: None };
         let plate = text((20., 20.), TextStyle::Plate);
         let (l, t, _, _) = plate.bounds();
         assert!(l < 20. && t < 20., "the plate reaches around the text");
@@ -2661,7 +2733,7 @@ mod tests {
 
     #[test]
     fn corners_scale_text_and_freehand() {
-        let text = Shape { kind: Kind::Text("Hello".into()), a: (100., 100.), b: (100., 100.), color: red(), size: 20., filled: false, text: TextStyle::Plain };
+        let text = Shape { kind: Kind::Text("Hello".into()), a: (100., 100.), b: (100., 100.), color: red(), size: 20., filled: false, text: TextStyle::Plain, bend: None };
         let (l, t, r, b) = text.bounds();
         let mut big = text.clone();
         // Drag the bottom-right corner to twice the box.
@@ -2669,7 +2741,7 @@ mod tests {
         assert!((big.size - 40.).abs() < 0.5, "font doubles: {}", big.size);
         assert_eq!(big.a, (100., 100.), "top-left stays");
 
-        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 20.)]), a: (0., 0.), b: (10., 20.), color: red(), size: 2., filled: false, text: TextStyle::Plain };
+        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 20.)]), a: (0., 0.), b: (10., 20.), color: red(), size: 2., filled: false, text: TextStyle::Plain, bend: None };
         let (pl, pt, pr, pb) = pen.bounds();
         let mut wide = pen.clone();
         wide.scale_from(&pen, 2, (pl + (pr - pl) * 3., pb));
@@ -2691,7 +2763,7 @@ mod tests {
     #[test]
     fn crop_and_backdrop_sizes() {
         let src = RgbaImage::from_pixel(400, 300, image::Rgba([200, 200, 200, 255]));
-        let shapes = vec![Shape { kind: Kind::Rect, a: (60., 60.), b: (220., 180.), color: red(), size: 6., filled: false, text: TextStyle::Plain }];
+        let shapes = vec![Shape { kind: Kind::Rect, a: (60., 60.), b: (220., 180.), color: red(), size: 6., filled: false, text: TextStyle::Plain, bend: None }];
         let doc = Doc { shapes, crop: Some(((50., 40.), (250., 200.))) };
         let plain = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap();
         assert_eq!((plain.width(), plain.height()), (200, 160));
