@@ -14,7 +14,7 @@ use gpui::{
 use ui::{IconButtonShape, TintColor, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
-use crate::{editor, ocr, pin, studio, track, util};
+use crate::{editor, ocr, pin, studio, track, trim, util};
 
 const CARD_WIDTH: f32 = 320.;
 /// Inner padding of the card panel.
@@ -262,6 +262,21 @@ impl CardStack {
                 this.remove(id, window, cx);
             })));
         }
+        // Trimming and GIF export are for recordings, not for GIFs themselves.
+        if video && !is_gif(&path) {
+            tools = tools
+                .child(tool("trim", IconName::Scissors, "Обрезать").on_click(act(|this, path, id, window, cx| {
+                    this.remove(id, window, cx);
+                    trim::open(path.to_owned(), cx);
+                })))
+                .child(
+                    Button::new(("gif", id), "GIF")
+                        .style(ButtonStyle::Subtle)
+                        .label_size(LabelSize::Small)
+                        .tooltip(Tooltip::text("Сохранить как GIF (720px, 15 к/с)"))
+                        .on_click(act(|_, path, _, _, cx| trim::quick_gif(path.to_owned(), cx))),
+                );
+        }
         tools = tools
             .child(tool("folder", IconName::Folder, "Показать в папке").on_click(act(|_, path, _, _, _| util::open_folder(path))))
             .child(tool("trash", IconName::Trash, "Удалить файл").on_click(act(|this, path, id, window, cx| {
@@ -346,10 +361,14 @@ fn edit(path: PathBuf, cx: &mut App) {
     editor::open(path, cx);
 }
 
+fn is_gif(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("gif"))
+}
+
 pub fn is_video(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
-        Some("mp4" | "mkv" | "webm" | "mov")
+        Some("mp4" | "mkv" | "webm" | "mov" | "gif")
     )
 }
 

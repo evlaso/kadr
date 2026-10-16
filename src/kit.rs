@@ -49,6 +49,7 @@ assets![
     "icons/case_sensitive.svg" => "../data/zed/icons/case_sensitive.svg",
     "icons/undo.svg" => "../data/zed/icons/undo.svg",
     "icons/download.svg" => "../data/zed/icons/download.svg",
+    "icons/scissors.svg" => "../data/zed/icons/scissors.svg",
     // Editor tools Zed's set lacks, drawn in the same style.
     "icons/kadr/rect.svg" => "../data/icons/editor/rect.svg",
     "icons/kadr/ellipse.svg" => "../data/icons/editor/ellipse.svg",

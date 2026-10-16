@@ -163,3 +163,26 @@ fn read_new(path: &Path, offset: &Cell<u64>) -> String {
     }
     out
 }
+
+/// Carry a recording's track over to a trimmed copy covering `start..end`
+/// seconds of the original.
+pub fn trim(original: &Path, trimmed: &Path, start: f64, end: f64) {
+    let Ok(text) = std::fs::read_to_string(path_for(original)) else { return };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let keep = |t: f64| t >= start && t <= end;
+    for key in ["cursor", "clicks"] {
+        if let Some(list) = v[key].as_array_mut() {
+            list.retain(|p| p[0].as_f64().is_some_and(keep));
+            for p in list.iter_mut() {
+                p[0] = json!(p[0].as_f64().unwrap_or(0.) - start);
+            }
+        }
+    }
+    if let Some(keys) = v["keys"].as_array_mut() {
+        keys.retain(|t| t.as_f64().is_some_and(keep));
+        for t in keys.iter_mut() {
+            *t = json!(t.as_f64().unwrap_or(0.) - start);
+        }
+    }
+    let _ = std::fs::write(path_for(trimmed), v.to_string());
+}

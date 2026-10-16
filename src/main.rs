@@ -7,6 +7,8 @@ mod pin;
 mod record;
 mod studio;
 mod track;
+mod trim;
+mod job;
 mod kit;
 mod ocr;
 mod util;
@@ -34,6 +36,8 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr record stop                               остановить запись
   kadr studio <видео>                            автозум к кликам, фон, тень и скругления
   kadr edit <картинка>                           редактор: стрелки, текст, маркер, размытие…
+  kadr trim <видео> [--from С --to С]            обрезать запись (без флагов — окно обрезки)
+  kadr gif <видео>                               сохранить запись как GIF (720px, 15 к/с)
   kadr text [картинка]                           распознать текст (в области или на картинке) и скопировать
 ";
 
@@ -48,6 +52,8 @@ enum Command {
     Studio(PathBuf),
     Edit(PathBuf),
     Text(Option<PathBuf>),
+    Trim(PathBuf, Option<(f64, f64)>),
+    Gif(PathBuf),
 }
 
 impl Command {
@@ -72,6 +78,22 @@ impl Command {
             Some("edit") => file(1).map(Command::Edit),
             Some("text") if args.len() > 1 => file(1).map(|p| Command::Text(Some(p))),
             Some("text") => Ok(Command::Text(None)),
+            Some("trim") => {
+                let path = file(1)?;
+                let flag = |name: &str| -> Result<Option<f64>, String> {
+                    match args.iter().position(|a| a == name) {
+                        Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).map(Some).ok_or(format!("{name}: нужны секунды")),
+                        None => Ok(None),
+                    }
+                };
+                let range = match (flag("--from")?, flag("--to")?) {
+                    (None, None) => None,
+                    (from, Some(to)) => Some((from.unwrap_or(0.), to)),
+                    (Some(_), None) => return Err("укажи и --to".into()),
+                };
+                Ok(Command::Trim(path, range))
+            }
+            Some("gif") => file(1).map(Command::Gif),
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
@@ -108,6 +130,9 @@ impl Command {
             Command::Edit(path) => editor::open(path, cx),
             Command::Text(None) => ocr::region(cx),
             Command::Text(Some(path)) => ocr::image(path, cx),
+            Command::Trim(path, None) => trim::open(path, cx),
+            Command::Trim(path, Some((from, to))) => trim::save_trim(path, from, to, cx),
+            Command::Gif(path) => trim::quick_gif(path, cx),
         }
     }
 }
@@ -158,6 +183,14 @@ fn main() {
         Command::Studio(p) => vec!["studio".into(), p.display().to_string()],
         Command::Edit(p) => vec!["edit".into(), p.display().to_string()],
         Command::Text(Some(p)) => vec!["text".into(), p.display().to_string()],
+        Command::Trim(p, range) => {
+            let mut v = vec!["trim".into(), p.display().to_string()];
+            if let Some((from, to)) = range {
+                v.extend(["--from".into(), from.to_string(), "--to".into(), to.to_string()]);
+            }
+            v
+        }
+        Command::Gif(p) => vec!["gif".into(), p.display().to_string()],
         _ => args.clone(),
     };
     if send_to_running(&resolved) {

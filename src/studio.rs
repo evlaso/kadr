@@ -4,20 +4,15 @@
 //! filter on the GPU; kadr computes the camera path and hands it over as
 //! time-based crop expressions.
 
-use std::cell::Cell;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::rc::Rc;
-use std::time::Duration;
 
-use futures::{AsyncBufReadExt, StreamExt, io::BufReader};
-use gpui::{App, Context, Window, layer_shell::*};
-use ui::{IconButtonShape, ProgressBar, Tooltip, prelude::*};
+use gpui::App;
+use ui::IconName;
 
 use crate::track::Track;
-use crate::kit::{self, InputRegion, LayerSpec};
+use crate::job::{self, Job};
 use crate::{cards, util};
 
 /// Seconds to ease the zoom in or out.
@@ -279,37 +274,21 @@ pub fn output_path(video: &Path) -> PathBuf {
 }
 
 pub fn render(video: PathBuf, cx: &mut App) {
-    let hold = kit::hold(cx);
-    let state = Rc::new(Progress::default());
-    let spec = LayerSpec {
-        namespace: "kadr-progress",
-        anchor: Anchor::BOTTOM,
-        margin: (0., 0., 24., 0.),
-        size: (340., 90.),
-        keyboard: KeyboardInteractivity::None,
-        ignore_zones: false,
-        monitor: util::focused_monitor(),
-    };
-    let window = kit::open_layer(cx, spec, |window, cx| cx.new(|cx| ProgressView::new(state.clone(), window, cx)));
+    let running = job::start("Улучшаю видео", IconName::Sparkle, cx);
     cx.spawn(async move |cx| {
-        let _hold = hold;
-        let result = run(&video, &state).await;
-        let _ = cx.update(|cx| {
-            if let Some(w) = window {
-                let _ = w.update(cx, |_, window, _| window.remove_window());
-            }
-            match result {
-                Ok(Some(out)) => cards::show(out, cx),
-                Ok(None) => {}
-                Err(e) => util::notify("Не удалось улучшить видео", &e),
-            }
+        let result = run(&video, &running.job).await;
+        running.finish(cx);
+        let _ = cx.update(|cx| match result {
+            Ok(Some(out)) => cards::show(out, cx),
+            Ok(None) => {}
+            Err(e) => util::notify("Не удалось улучшить видео", &e),
         });
     })
     .detach();
 }
 
 /// Ok(None) when cancelled.
-async fn run(video: &Path, progress: &Progress) -> Result<Option<PathBuf>, String> {
+async fn run(video: &Path, progress: &Job) -> Result<Option<PathBuf>, String> {
     let settings = Settings::load();
     let p = probe(video).await.ok_or("ffprobe не смог прочитать видео")?;
     let track = Track::load(video).unwrap_or_else(|| Track { rect: (0.0, 0.0, p.w, p.h), ..Default::default() });
@@ -341,7 +320,6 @@ async fn run(video: &Path, progress: &Progress) -> Result<Option<PathBuf>, Strin
     for encoder in [&["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-b:v", "0"][..], &["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"][..]] {
         let mut argv: Vec<&OsStr> = vec![
             "ffmpeg".as_ref(), "-hide_banner".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(),
-            "-nostats".as_ref(), "-progress".as_ref(), "pipe:1".as_ref(),
             "-i".as_ref(), video.as_os_str(),
             "-loop".as_ref(), "1".as_ref(), "-framerate".as_ref(), p.fps.as_ref(), "-i".as_ref(), bg.as_os_str(),
             "-/filter_complex".as_ref(), script.as_os_str(),
@@ -350,113 +328,16 @@ async fn run(video: &Path, progress: &Progress) -> Result<Option<PathBuf>, Strin
         argv.extend(encoder.iter().map(OsStr::new));
         argv.extend(["-c:a", "copy", "-movflags", "+faststart"].map(OsStr::new));
         argv.push(out.as_os_str());
-        result = encode(&argv, p.duration, progress).await;
-        if progress.cancelled.get() || result.is_ok() {
+        result = job::ffmpeg(progress, &argv, p.duration, "studio.log").await;
+        if progress.cancelled() || result.is_ok() {
             break;
         }
     }
     let _ = std::fs::remove_dir_all(&tmp);
-    if progress.cancelled.get() {
+    if progress.cancelled() {
         let _ = std::fs::remove_file(&out);
         return Ok(None);
     }
     result.map(|()| Some(out))
 }
 
-async fn encode(argv: &[&OsStr], duration: f64, progress: &Progress) -> Result<(), String> {
-    let log = util::cache_dir().join("studio.log");
-    let _ = std::fs::create_dir_all(util::cache_dir());
-    let stderr = std::fs::File::create(&log).map_err(|e| e.to_string())?;
-    let mut child = async_process::Command::new(argv[0])
-        .args(&argv[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(stderr)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    progress.pid.set(Some(child.id()));
-
-    let stdout = child.stdout.take().ok_or("нет вывода ffmpeg")?;
-    let mut lines = BufReader::new(stdout).lines();
-    while let Some(Ok(line)) = lines.next().await {
-        if let Some(us) = line.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {
-            progress.fraction.set(us / 1e6 / duration.max(0.1));
-        }
-    }
-    let status = child.status().await.map_err(|e| e.to_string())?;
-    progress.pid.set(None);
-    if status.success() {
-        Ok(())
-    } else {
-        let tail = std::fs::read_to_string(&log).unwrap_or_default();
-        Err(tail.lines().rev().take(3).collect::<Vec<_>>().join("\n"))
-    }
-}
-
-#[derive(Default)]
-struct Progress {
-    fraction: Cell<f64>,
-    cancelled: Cell<bool>,
-    pid: Cell<Option<u32>>,
-}
-
-/// Small pill at the bottom of the screen while ffmpeg works.
-struct ProgressView {
-    state: Rc<Progress>,
-    region: InputRegion,
-}
-
-impl ProgressView {
-    fn new(state: Rc<Progress>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(200)).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
-        ProgressView { state, region: InputRegion::default() }
-    }
-}
-
-impl Render for ProgressView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.region.reset();
-        let fraction = self.state.fraction.get().clamp(0.0, 0.99) as f32;
-        let state = self.state.clone();
-        kit::root(cx).flex().items_center().justify_center().child(
-            v_flex()
-                .relative()
-                .w(px(300.))
-                .gap_1p5()
-                .pl_2p5()
-                .pr_1()
-                .pt_1()
-                .pb_2p5()
-                .elevation_3(cx)
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .child(Icon::new(IconName::Sparkle).size(IconSize::Small).color(Color::Accent))
-                        .child(div().flex_1().child(Label::new("Улучшаю видео").size(LabelSize::Small)))
-                        .child(Label::new(format!("{}%", (fraction * 100.) as u32)).size(LabelSize::Small).color(Color::Muted))
-                        .child(
-                            IconButton::new("cancel", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("Отменить"))
-                                .on_click(move |_, _, _| {
-                                    state.cancelled.set(true);
-                                    if let Some(pid) = state.pid.get() {
-                                        util::signal(pid, libc::SIGTERM);
-                                    }
-                                }),
-                        ),
-                )
-                .child(div().pr_1p5().child(ProgressBar::new("progress", fraction, 1., cx)))
-                .child(self.region.mark()),
-        )
-    }
-}
