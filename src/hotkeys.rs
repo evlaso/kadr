@@ -12,7 +12,8 @@ pub struct Action {
     pub command: &'static str,
 }
 
-pub const ACTIONS: [Action; 8] = [
+pub const ACTIONS: [Action; 9] = [
+    Action { title: "Все режимы на одной панели", command: "kadr capture" },
     Action { title: "Скриншот области", command: "kadr shot region" },
     Action { title: "Скриншот окна или области", command: "kadr shot smart" },
     Action { title: "Скриншот экрана", command: "kadr shot fullscreen" },

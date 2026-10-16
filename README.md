@@ -1,6 +1,6 @@
 # kadr
 
-Скриншоты и запись экрана в духе CleanShot X для Linux, на Rust и GPUI CE. Написан под [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland). Цвета берёт из текущей темы Omarchy.
+Скриншоты и запись экрана в духе CleanShot X для Linux, на Rust и GPUI CE. Написан под [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland). Тёмная и светлая темы встроены, по умолчанию следуют системе.
 
 ## Что умеет
 
@@ -58,7 +58,8 @@ o.launch_on_start("kadr tray")
 ## Команды
 
 ```
-kadr shot [smart|region|windows|fullscreen]    скриншот
+kadr capture                                   все режимы на одной панели
+kadr shot [smart|region|windows|fullscreen|timer]  скриншот
 kadr record                                    панель записи (повторный вызов — стоп)
 kadr record region|fullscreen [--studio] …     начать запись сразу
 kadr edit <картинка>                           редактор скриншотов

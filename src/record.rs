@@ -352,6 +352,7 @@ impl Recorder {
         })
         .detach();
 
+        webcam::lock(cx);
         let clock = Clock::new();
         let mut windows = Vec::new();
         // The frame goes first so the controls stack above its dimming.
@@ -849,7 +850,7 @@ fn log_tail() -> String {
 
 /// A countdown over the area before recording starts, like CleanShot's.
 /// False when cancelled with Esc.
-async fn countdown(target: &Target, seconds: u32, mons: &[Mon], cx: &mut AsyncApp) -> bool {
+pub(crate) async fn countdown(target: &Target, seconds: u32, mons: &[Mon], cx: &mut AsyncApp) -> bool {
     if seconds == 0 {
         return true;
     }

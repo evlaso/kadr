@@ -43,6 +43,15 @@ pub fn deliver(path: PathBuf, settings: &Settings, cx: &mut App) {
 async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<PathBuf> {
     let picked = match mode {
         "fullscreen" => picker::whole_monitor().await?,
+        // The self-timer: 3, 2, 1 over the screen, then all of it.
+        "timer" => {
+            let mons = util::monitors();
+            let name = mons.iter().find(|m| m.focused)?.name.clone();
+            if !crate::record::countdown(&crate::record::Target::Monitor(name), 3, &mons, cx).await {
+                return None;
+            }
+            picker::whole_monitor().await?
+        }
         // Free selection; the others also snap to windows.
         "region" => picker::pick(false, true, cx).await?,
         _ => picker::pick(true, true, cx).await?,

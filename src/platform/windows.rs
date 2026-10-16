@@ -104,3 +104,8 @@ pub fn grab_monitor(_mon: &Mon) -> Option<image::RgbaImage> {
     super::unsupported("Снимок экрана");
     None
 }
+
+/// GPUI's own appearance is right here.
+pub fn prefers_dark() -> Option<bool> {
+    None
+}

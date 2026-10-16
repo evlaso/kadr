@@ -11,7 +11,7 @@ use gpui::{
 };
 use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
-use crate::kit::{self, LayerSpec};
+use crate::kit::{self, InputRegion, LayerSpec};
 use crate::record::{self, Opts, PanelChoice, Target};
 use crate::util::{self, Mon};
 
@@ -31,6 +31,9 @@ pub struct Panel {
     /// (with the device it reads).
     level: f32,
     meter: Option<(String, u32)>,
+    /// Only the bar takes the pointer: the camera bubble and the windows
+    /// around stay reachable while the panel is up.
+    region: InputRegion,
     focus: FocusHandle,
 }
 
@@ -98,7 +101,7 @@ impl Panel {
             .unwrap_or_else(|| "системный".into());
         let mut mics = vec![(String::new(), format!("По умолчанию — {default_desc}"))];
         mics.extend(found);
-        Panel { opts, mics, target, mon, rect, level: 0., meter: None, focus }
+        Panel { opts, mics, target, mon, rect, level: 0., meter: None, region: InputRegion::default(), focus }
     }
 
     /// Keep a level meter on the chosen microphone while it's on.
@@ -229,6 +232,7 @@ impl Render for Panel {
         let on_off = |on: bool| Some(SharedString::from(if on { "Включено" } else { "Выключено" }));
 
         self.sync_meter(cx);
+        self.region.reset();
         // The mic button shows how loud the microphone is while it's on.
         let level = self.level;
         let (lit, dim) = (cx.theme().colors().text, cx.theme().colors().text_muted);
@@ -268,9 +272,11 @@ impl Render for Panel {
             );
 
         let bar = h_flex()
+            .relative()
             .gap_0p5()
             .p_1()
             .elevation_3(cx)
+            .child(self.region.mark())
             .child(
                 action("cancel", Icon::new(IconName::Close))
                     .tooltip(tip("Отмена", None, Some("escape")))

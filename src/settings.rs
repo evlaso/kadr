@@ -43,9 +43,18 @@ pub struct Settings {
     pub editor_window: bool,
     /// Delete kadr's captures older than this many days; 0 keeps them.
     pub cleanup_days: u32,
+    pub theme: ThemeMode,
     pub studio_zoom: f64,
     pub studio_backdrop: usize,
     pub studio_padding: usize,
+}
+
+/// kadr's colours: following the system's appearance, or always one set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeMode {
+    System,
+    Dark,
+    Light,
 }
 
 impl Default for Settings {
@@ -64,6 +73,7 @@ impl Default for Settings {
             region_frame: true,
             editor_window: true,
             cleanup_days: 0,
+            theme: ThemeMode::System,
             studio_zoom: 1.8,
             studio_backdrop: 0,
             studio_padding: 2,
@@ -98,6 +108,11 @@ impl Settings {
             region_frame: bool_or("region_frame", d.region_frame),
             editor_window: bool_or("editor_window", d.editor_window),
             cleanup_days: num_or("cleanup_days", d.cleanup_days as u64) as u32,
+            theme: match v["theme"].as_str() {
+                Some("dark") => ThemeMode::Dark,
+                Some("light") => ThemeMode::Light,
+                _ => ThemeMode::System,
+            },
             studio_zoom: v["studio_zoom"].as_f64().unwrap_or(d.studio_zoom).clamp(1.0, 4.0),
             studio_backdrop: num_or("studio_backdrop", d.studio_backdrop as u64) as usize,
             studio_padding: num_or("studio_padding", d.studio_padding as u64) as usize,
@@ -120,6 +135,11 @@ impl Settings {
             "region_frame": self.region_frame,
             "editor_window": self.editor_window,
             "cleanup_days": self.cleanup_days,
+            "theme": match self.theme {
+                ThemeMode::System => "system",
+                ThemeMode::Dark => "dark",
+                ThemeMode::Light => "light",
+            },
             "studio_zoom": self.studio_zoom,
             "studio_backdrop": self.studio_backdrop,
             "studio_padding": self.studio_padding,

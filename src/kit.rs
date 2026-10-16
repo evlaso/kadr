@@ -77,6 +77,9 @@ assets![
     "icons/kadr/fill.svg" => "../data/icons/editor/fill.svg",
     "icons/kadr/timer.svg" => "../data/icons/editor/timer.svg",
     "icons/kadr/grip.svg" => "../data/icons/editor/grip.svg",
+    "icons/kadr/area.svg" => "../data/icons/editor/area.svg",
+    "icons/kadr/window.svg" => "../data/icons/editor/window.svg",
+    "icons/kadr/scroll.svg" => "../data/icons/editor/scroll.svg",
     // Zed has no camera icon.
     "icons/kadr/camera.svg" => "../data/icons/kadr-camera-symbolic.svg",
 ];
@@ -103,8 +106,8 @@ pub fn init(cx: &mut App) {
     if let Err(e) = cx.text_system().add_fonts(fonts) {
         eprintln!("kadr: fonts: {e}");
     }
-    // The user's Omarchy theme colors.
-    cx.set_global(crate::palette::theme());
+    let theme = crate::palette::theme(cx);
+    cx.set_global(theme);
     cx.set_global(Busy::default());
 }
 

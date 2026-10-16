@@ -85,6 +85,9 @@ pub fn capture_size(device: &str) -> &'static str {
     ["1280x720", "1920x1080", "640x480", "640x360"].into_iter().find(|r| formats.contains(r)).unwrap_or("640x480")
 }
 
+/// Seconds the bubble takes to settle into its spot after a drop.
+const GLIDE: f32 = 0.22;
+
 /// Side of the live picture, in pixels.
 const LIVE: usize = 360;
 
@@ -150,7 +153,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
     };
     let hold = kit::hold(cx);
     let Some(handle) = kit::open_layer(cx, spec, move |_, cx| {
-        cx.new(|_| CameraView { frame: None, stale: Vec::new(), area, look: Look::load(), drag: None, hovered: false, region: InputRegion::default(), _hold: hold })
+        cx.new(|_| CameraView { frame: None, stale: Vec::new(), area, look: Look::load(), drag: None, glide: None, hovered: false, locked: false, region: InputRegion::default(), _hold: hold })
     }) else {
         util::signal(pid, util::Signal::Terminate);
         return;
@@ -174,6 +177,18 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), cx: &mut App) {
     .detach();
 }
 
+/// Recording started: set up is over.
+pub fn lock(cx: &mut App) {
+    if let Some((handle, _)) = cx.try_global::<Bubble>().and_then(|b| b.0) {
+        let _ = handle.update(cx, |view, _, cx| {
+            view.locked = true;
+            view.hovered = false;
+            view.drag = None;
+            cx.notify();
+        });
+    }
+}
+
 /// Close the bubble and free the camera.
 pub fn hide(cx: &mut App) {
     if let Some((handle, pid)) = cx.try_global::<Bubble>().and_then(|b| b.0) {
@@ -193,7 +208,13 @@ struct CameraView {
     /// While dragged: the pointer's offset inside the bubble, and where the
     /// bubble's top left is now.
     drag: Option<((f32, f32), (f32, f32))>,
+    /// After a drop: where the bubble was let go and when; it glides from
+    /// there to its spot.
+    glide: Option<((f32, f32), std::time::Instant)>,
     hovered: bool,
+    /// Recording: the bubble is part of the picture, so it shows no controls
+    /// and lets clicks through.
+    locked: bool,
     region: InputRegion,
     _hold: kit::Hold,
 }
@@ -233,7 +254,19 @@ impl Render for CameraView {
         }
         self.region.reset();
         let (x, y, side) = place(self.look.anchor, self.look.size, self.area());
-        let (left, top) = self.drag.map(|(_, at)| at).unwrap_or((x as f32, y as f32));
+        let (mut left, mut top) = self.drag.map(|(_, at)| at).unwrap_or((x as f32, y as f32));
+        if let Some((from, since)) = self.glide {
+            let t = (since.elapsed().as_secs_f32() / GLIDE).min(1.);
+            if t < 1. {
+                // Ease out: quick at first, settling into place.
+                let k = 1. - (1. - t).powi(3);
+                left = from.0 + (left - from.0) * k;
+                top = from.1 + (top - from.1) * k;
+                window.request_animation_frame();
+            } else {
+                self.glide = None;
+            }
+        }
         let side = side as f32;
         let radius = self.look.round as f32 * side / 2.;
         let frame = self.frame.clone();
@@ -246,7 +279,10 @@ impl Render for CameraView {
             },
         )
         .size_full();
-        let shown = self.hovered && window.is_window_hovered() && self.drag.is_none();
+        if self.locked {
+            window.set_input_region(Some(&[]));
+        }
+        let shown = !self.locked && self.hovered && window.is_window_hovered() && self.drag.is_none();
         // Controls under the bubble, or above it at the bottom of the area.
         let below = top + side + 52. < self.area.1 + self.area.3 + 40.;
         let controls = shown.then(|| {
@@ -317,6 +353,7 @@ impl Render for CameraView {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
                 if let Some((_, at)) = this.drag.take() {
                     this.snap(at);
+                    this.glide = Some((at, std::time::Instant::now()));
                     cx.notify();
                 }
             }))
@@ -348,7 +385,7 @@ impl Render for CameraView {
                     .rounded(px(radius))
                     .bg(gpui::black())
                     .shadow(kit::shadow())
-                    .cursor_grab()
+                    .when(!self.locked, |d| d.cursor_grab())
                     .on_hover(cx.listener(|this, on: &bool, _, cx| {
                         if *on {
                             this.hovered = true;
@@ -356,12 +393,15 @@ impl Render for CameraView {
                         }
                     }))
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                        if this.locked {
+                            return;
+                        }
                         let p = (f32::from(e.position.x), f32::from(e.position.y));
                         this.drag = Some(((p.0 - left, p.1 - top), (left, top)));
                         cx.notify();
                     }))
                     .child(picture)
-                    .child(self.region.mark()),
+                    .when(!self.locked, |d| d.child(self.region.mark())),
             )
             .children(controls)
     }

@@ -2,6 +2,7 @@ mod capture;
 mod cards;
 mod editor;
 mod history;
+mod launcher;
 mod hotkeys;
 mod palette;
 mod picker;
@@ -37,7 +38,8 @@ use gpui_platform::application;
 const USAGE: &str = "kadr — скриншоты с карточкой быстрого доступа
 
 Использование:
-  kadr shot [smart|region|windows|fullscreen]   снять скриншот (по умолчанию smart)
+  kadr capture                                   все режимы на одной панели
+  kadr shot [smart|region|windows|fullscreen|timer]  снять скриншот (по умолчанию smart)
   kadr shot scroll [\"X,Y WxH\"]                  скриншот с прокруткой (повторный вызов — готово)
   kadr open <файл>                               показать карточку для готовой картинки
   kadr pin <файл>                                закрепить картинку поверх окон
@@ -57,7 +59,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr text [картинка]                           распознать текст (в области или на картинке) и скопировать
 ";
 
-const MODES: [&str; 4] = ["smart", "region", "windows", "fullscreen"];
+const MODES: [&str; 5] = ["smart", "region", "windows", "fullscreen", "timer"];
 
 enum Command {
     Shot(String),
@@ -75,6 +77,16 @@ enum Command {
     Gif(PathBuf),
     History,
     Settings,
+    /// Every mode on one bar.
+    Capture,
+}
+
+/// Run `kadr <args>` inside this instance (the capture bar's modes).
+pub(crate) fn run_args(args: &[String], cx: &mut App) {
+    match Command::from_args(args) {
+        Ok(command) => command.run(cx),
+        Err(e) => util::notify("kadr", &e),
+    }
 }
 
 impl Command {
@@ -118,6 +130,7 @@ impl Command {
             Some("gif") => file(1).map(Command::Gif),
             Some("history") => Ok(Command::History),
             Some("settings") => Ok(Command::Settings),
+            Some("capture") => Ok(Command::Capture),
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
@@ -165,6 +178,7 @@ impl Command {
             Command::Gif(path) => trim::quick_gif(path, cx),
             Command::History => history::open(cx),
             Command::Settings => settings_view::open(cx),
+            Command::Capture => launcher::toggle(cx),
         }
     }
 }

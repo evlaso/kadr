@@ -215,3 +215,11 @@ pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     }
     image::load_from_memory_with_format(&out.stdout, image::ImageFormat::Pnm).ok().map(|i| i.to_rgba8())
 }
+
+/// The desktop's dark or light preference (the colour scheme the portal and
+/// GTK read). GPUI learns it only after its first frames on Wayland.
+pub fn prefers_dark() -> Option<bool> {
+    let out = std::process::Command::new("gsettings").args(["get", "org.gnome.desktop.interface", "color-scheme"]).output().ok()?;
+    let scheme = String::from_utf8_lossy(&out.stdout);
+    out.status.success().then(|| scheme.contains("dark"))
+}

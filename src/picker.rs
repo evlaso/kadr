@@ -4,6 +4,7 @@
 //! screenshots, recording, scrolling capture and text recognition.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::channel::oneshot;
 use gpui::{
@@ -50,6 +51,11 @@ impl Picked {
 /// A click on nothing takes the whole monitor, or with `color` copies the
 /// colour under the pointer instead. None when cancelled.
 pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> {
+    // One selection at a time: a second hotkey while picking does nothing.
+    if PICKING.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    let _picking = Picking;
     let mon = util::focused_monitor()?;
     let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
     let windows = if snap { windows_on(&mon) } else { Vec::new() };
@@ -83,6 +89,17 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
         mon,
         frozen,
     })
+}
+
+static PICKING: AtomicBool = AtomicBool::new(false);
+
+/// Clears `PICKING` however `pick` ends.
+struct Picking;
+
+impl Drop for Picking {
+    fn drop(&mut self) {
+        PICKING.store(false, Ordering::SeqCst);
+    }
 }
 
 /// GPUI keeps images as BGRA.

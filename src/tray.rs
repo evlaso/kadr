@@ -123,7 +123,7 @@ mod sni {
     /// as ARGB32 for the tray.
     fn icon(size: u32) -> Option<Icon> {
         use tiny_skia::{FillRule, LineCap, Paint, PathBuilder, Pixmap, Stroke, Transform};
-        let color = crate::ui::rgb_of(crate::palette::theme().colors.text);
+        let color = crate::ui::rgb_of(crate::palette::theme_without_gpui().colors.text);
         let mut paint = Paint::default();
         paint.set_color_rgba8((color.r * 255.) as u8, (color.g * 255.) as u8, (color.b * 255.) as u8, 255);
         paint.anti_alias = true;

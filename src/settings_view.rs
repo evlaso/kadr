@@ -10,7 +10,7 @@ use gpui::{
 use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit;
-use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side};
+use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side, ThemeMode};
 use crate::studio::{PADDINGS, ZOOMS};
 use crate::{hotkeys, ocr, palette, storage, tray, util};
 
@@ -182,6 +182,28 @@ impl SettingsView {
         let s = self.settings.clone();
         let rows: Vec<AnyElement> = match self.tab {
             Tab::General => vec![
+                row("Оформление",
+                    "Как в системе, или всегда тёмное или светлое",
+                    {
+                        let modes = [ThemeMode::System, ThemeMode::Dark, ThemeMode::Light];
+                        h_flex()
+                            .gap_0p5()
+                            .children(modes.into_iter().zip(["Как в системе", "Тёмное", "Светлое"]).map(|(mode, label)| {
+                                let on = s.theme == mode;
+                                ButtonLike::new(SharedString::from(format!("theme-{label}")))
+                                    .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                                    .toggle_state(on)
+                                    .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.settings.theme = mode;
+                                        this.settings.save();
+                                        palette::refresh(cx);
+                                        cx.notify();
+                                    }))
+                            }))
+                            .into_any_element()
+                    },
+                ),
                 row("Показывать карточку", "Миниатюра в углу экрана после снимка или записи", switch("show_card", s.show_card, cx, |s, on| s.show_card = on)),
                 row("Копировать скриншот", "Сразу класть снимок в буфер обмена", switch("copy", s.copy_screenshot, cx, |s, on| s.copy_screenshot = on)),
                 row("Иконка в трее",
