@@ -110,6 +110,9 @@ pub fn init(cx: &mut App) {
 
 /// Corner radius of thumbnails and pinned pictures.
 pub const RADIUS: f32 = 16.;
+/// Corners of kadr's windows (also set in the Hyprland rule): a large button
+/// (radius 9) inset by 4 in a corner sits concentric with it.
+pub const WINDOW_RADIUS: f32 = 13.;
 
 /// Soft two-layer drop shadow for floating pictures: a wide ambient blur
 /// plus a tighter contact shadow.

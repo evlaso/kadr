@@ -1001,13 +1001,13 @@ impl StudioEditor {
             .w_full()
             .justify_between()
             .gap_2()
-            // Clear of the window's rounded corners.
-            .px_3()
-            .py_1p5()
+            // An even inset keeps corner buttons concentric with the window.
+            .p_1()
             .bg(cx.theme().colors().title_bar_background)
             .child(
                 h_flex()
                     .min_w_0()
+                    .pl_2()
                     .gap_2()
                     .child(div().min_w_0().child(Label::new(name).truncate()))
                     .child(Label::new(clock(self.project.kept_duration())).size(LabelSize::Small).color(Color::Muted)),

@@ -1392,10 +1392,10 @@ impl Editor {
             .w(px(width))
             .justify_between()
             .gap_2()
-            .px_2p5()
-            .py_1()
+            // An even inset keeps corner buttons concentric with the window.
+            .p_1()
             .bg(cx.theme().colors().title_bar_background)
-            .when(!self.windowed, |d| d.rounded_t(px(kit::RADIUS - 1.)))
+            .when(!self.windowed, |d| d.rounded_t(px(kit::WINDOW_RADIUS - 1.)))
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
             .rounded_smoothing(crate::ui::SMOOTHING)
@@ -1475,11 +1475,9 @@ impl Editor {
         h_flex()
             .w(px(width))
             .gap_2()
-            // Clear of the window's rounded corners.
-            .px_3()
-            .py_1p5()
+            .p_1()
             .bg(cx.theme().colors().status_bar_background)
-            .when(!self.windowed, |d| d.rounded_b(px(kit::RADIUS - 1.)))
+            .when(!self.windowed, |d| d.rounded_b(px(kit::WINDOW_RADIUS - 1.)))
             .rounded_smoothing(crate::ui::SMOOTHING)
             .child(
                 h_flex()
@@ -2047,7 +2045,7 @@ impl Render for Editor {
                 v_flex()
                     .w(px(width))
                     .h(px(self.size.1))
-                    .rounded(px(kit::RADIUS))
+                    .rounded(px(kit::WINDOW_RADIUS))
                     .rounded_smoothing(crate::ui::SMOOTHING)
                     .overflow_hidden()
                     .border_1()
