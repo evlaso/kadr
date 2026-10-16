@@ -59,6 +59,11 @@ pub const MAX_RADIUS: f64 = 60.;
 pub const QUALITIES: [(&str, f64); 4] = [("Максимум", 0.12), ("Высокое", 0.06), ("Среднее", 0.03), ("Маленький", 0.012)];
 pub const AUDIO_BITRATE: f64 = 160_000.;
 pub const CURSOR_STYLES: [&str; 2] = ["Стрелка", "Точка"];
+/// Motion blur, like a camera shutter: the moving picture is rendered at
+/// `SUBFRAMES` times the frame rate while the camera or the cursor moves
+/// fast, and this many sub-frames are averaged into each frame (0 is off).
+pub const MOTION_BLUR: [(&str, usize); 3] = [("Выкл", 0), ("Слабое", 2), ("Сильное", 4)];
+const SUBFRAMES: usize = 4;
 pub const MAX_CURSOR: f64 = 3.;
 /// Drawn cursor height at size 1, in logical screen pixels.
 const CURSOR_BASE: f64 = 22.;
@@ -106,6 +111,8 @@ pub struct Project {
     pub cursor_size: f64,
     /// 0 follows the pointer exactly, 1 glides.
     pub cursor_smooth: f64,
+    /// Index into `MOTION_BLUR`.
+    pub motion_blur: usize,
 }
 
 impl Project {
@@ -161,6 +168,7 @@ impl Project {
             cursor_style: index("cursor_style", 0, CURSOR_STYLES.len()),
             cursor_size: v["cursor_size"].as_f64().unwrap_or(d.cursor_size).clamp(0.5, MAX_CURSOR),
             cursor_smooth: v["cursor_smooth"].as_f64().unwrap_or(d.cursor_smooth).clamp(0., 1.),
+            motion_blur: index("motion_blur", d.motion_blur, MOTION_BLUR.len()),
         }
     }
 
@@ -193,6 +201,7 @@ impl Project {
             "cursor_style": self.cursor_style,
             "cursor_size": self.cursor_size,
             "cursor_smooth": self.cursor_smooth,
+            "motion_blur": self.motion_blur,
         });
         let path = Self::path(video);
         if let Some(dir) = path.parent() {
@@ -255,6 +264,7 @@ impl Project {
             cursor_style: 0,
             cursor_size: 1.5,
             cursor_smooth: 0.5,
+            motion_blur: 1,
         }
     }
 
@@ -712,6 +722,37 @@ pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
     .detach();
 }
 
+/// When the picture moves fast enough to blur: the camera zooming or panning,
+/// or the drawn cursor flying across. Source-time ranges, slightly padded.
+fn motion_ranges(camera: &Camera, cursor: Option<&[(f64, f64, f64)]>, p: &Probe) -> Vec<(f64, f64)> {
+    let mut moving: Vec<f64> = Vec::new();
+    for i in 1..camera.zoom.len().min(camera.x.len()).min(camera.y.len()) {
+        let dt = (camera.zoom[i].0 - camera.zoom[i - 1].0).max(1e-6);
+        let zoom = camera.zoom[i].1;
+        let zoom_speed = (camera.zoom[i].1 - camera.zoom[i - 1].1).abs() / dt;
+        // Panning as seen on screen: in frame widths per second.
+        let pan = (camera.x[i].1 - camera.x[i - 1].1).hypot(camera.y[i].1 - camera.y[i - 1].1) / dt / p.w * zoom;
+        if zoom > 1.01 && (zoom_speed > 0.25 || pan > 0.25) || zoom_speed > 0.25 {
+            moving.push(camera.zoom[i].0);
+        }
+    }
+    for w in cursor.unwrap_or(&[]).windows(2) {
+        let dt = (w[1].0 - w[0].0).max(1e-6);
+        if (w[1].1 - w[0].1).hypot(w[1].2 - w[0].2) / dt / p.w > 1.2 {
+            moving.push(w[1].0);
+        }
+    }
+    moving.sort_by(f64::total_cmp);
+    let mut ranges: Vec<(f64, f64)> = Vec::new();
+    for t in moving {
+        match ranges.last_mut() {
+            Some(last) if t - last.1 < 0.12 => last.1 = t,
+            _ => ranges.push((t, t)),
+        }
+    }
+    ranges.into_iter().map(|(a, b)| ((a - 0.05).max(0.), b + 0.05)).collect()
+}
+
 /// `select` expression keeping the given stretches.
 fn keep_expr(kept: &[(f64, f64)]) -> String {
     kept.iter().map(|(a, b)| format!("between(t,{a:.3},{b:.3})")).collect::<Vec<_>>().join("+")
@@ -752,12 +793,31 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     } else {
         None
     };
+    // Motion blur: the moving picture (not the still backdrop) is rendered
+    // at several times the frame rate, so the camera and the cursor take
+    // in-between positions; while they move fast those sub-frames are
+    // averaged, then the rate comes back down.
+    let shutter = MOTION_BLUR[project.motion_blur.min(MOTION_BLUR.len() - 1)].1;
+    let ranges = if shutter > 1 { motion_ranges(&camera, cursor.as_ref().map(|c| c.2.as_slice()), &p) } else { Vec::new() };
+    let supersample = (!ranges.is_empty()).then(|| format!("{}", p.fps_value() * SUBFRAMES as f64));
+    let blur = supersample.as_ref().map(|_| {
+        let weights = vec!["1"; shutter].join(" ");
+        // tmix can't be switched on and off in time (it would mix in frames
+        // from before the pause), so it always runs and its result is laid
+        // over the sharp picture only while things move.
+        format!(
+            "[fg0]split[sub][mix];[sub]fps={rate}[sharp];[mix]tmix=frames={shutter}:weights='{weights}',fps={rate}[blurred];[sharp][blurred]overlay=0:0:enable='{}'[fg];",
+            keep_expr(&ranges),
+            rate = p.fps
+        )
+    });
     let style = overlays::Style {
         clicks: project.clicks,
         keys: project.keys,
         keys_top: project.keys_top,
         keys_size: KEY_SIZES[project.keys_size.min(KEY_SIZES.len() - 1)].1,
         cursor,
+        supersample,
     };
     let overlays = overlays::build(&track, &p, &l, &tmp, &style).map_err(|e| e.to_string())?;
 
@@ -782,12 +842,15 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         "{pre}[{src}]libplacebo=w={ow}:h={oh}:pos_x={px}:pos_y={py}:pos_w={pw}:pos_h={ph}\
          :crop_w='2*floor(iw/({zexpr})/2)':crop_h='2*floor(ih/({zexpr})/2)'\
          :crop_x='floor(clip({xe}-cw/2,0,iw-cw))':crop_y='floor(clip({ye}-ch/2,0,ih-ch))'\
-         :corner_rounding={rounding:.4}:fillcolor=black@0:format=rgba[fg];\
+         :corner_rounding={rounding:.4}:fillcolor=black@0:format=rgba[{fg}];{blur}\
          [1:v][fg]overlay=0:0:shortest=1[framed];{post}[{last}]format=yuv420p{tail}[out]{audio_graph}",
         pre = overlays.pre, src = overlays.src, post = overlays.post, last = overlays.last,
+        fg = if blur.is_some() { "fg0" } else { "fg" }, blur = blur.clone().unwrap_or_default(),
         ow = l.ow, oh = l.oh, px = l.x, py = l.y, pw = l.w, ph = l.h,
         xe = expr(&x, 1), ye = expr(&y, 1),
     );
+    // A copy next to the log, to see what was rendered when something's off.
+    let _ = std::fs::write(util::cache_dir().join("studio-filter.txt"), &graph);
     std::fs::write(&script, graph).map_err(|e| e.to_string())?;
 
     // A GIF is made from an intermediate MP4.
@@ -890,11 +953,17 @@ mod overlays {
         pub keys_size: f64,
         /// The drawn cursor: its picture, hotspot and path in video pixels.
         pub cursor: Option<(std::path::PathBuf, (f64, f64), Vec<(f64, f64, f64)>)>,
+        /// Frame rate to render the moving picture at, for motion blur.
+        pub supersample: Option<String>,
     }
 
     pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path, style: &Style) -> std::io::Result<Overlays> {
         let (clicks, keys) = (style.clicks, style.keys);
         let mut o = Overlays { inputs: Vec::new(), pre: String::new(), src: "0:v".into(), post: String::new(), last: "framed".into() };
+        if let Some(rate) = &style.supersample {
+            let _ = write!(o.pre, "[0:v]fps={rate}[ss];");
+            o.src = "ss".into();
+        }
         let mut next_input = 2;
 
         let (rx, ry, rw, rh) = track.rect;

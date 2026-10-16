@@ -23,7 +23,7 @@ use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelu
 use crate::kit::{self, LayerSpec};
 use crate::ui::fill;
 use crate::studio::{
-    self, ASPECTS, CURSOR_RATE, CURSOR_STYLES, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_CURSOR, MAX_PADDING, MAX_RADIUS, Probe, Project, QUALITIES,
+    self, ASPECTS, CURSOR_RATE, CURSOR_STYLES, MOTION_BLUR, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_CURSOR, MAX_PADDING, MAX_RADIUS, Probe, Project, QUALITIES,
     RESOLUTIONS, Seg, ZOOMS,
 };
 use crate::track::Track;
@@ -1203,6 +1203,16 @@ impl StudioEditor {
         })
         .collect::<Vec<_>>();
         let out = studio::layout(&self.probe, &self.project, false);
+        let blurs = MOTION_BLUR
+            .iter()
+            .enumerate()
+            .map(|(i, (label, _))| {
+                chip(SharedString::from(format!("blur-{i}")), (*label).into(), self.project.motion_blur == i).on_click(cx.listener(move |this, _, _, cx| {
+                    this.project.motion_blur = i;
+                    this.changed(cx);
+                }))
+            })
+            .collect::<Vec<_>>();
         let qualities = QUALITIES
             .iter()
             .enumerate()
@@ -1284,7 +1294,10 @@ impl StudioEditor {
                     .child(caption("Скругление углов"))
                     .child(self.slider(Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), cx))
                     .child(caption("Тень"))
-                    .child(self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx)),
+                    .child(self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx))
+                    .child(caption("Размытие в движении"))
+                    .child(h_flex().gap_1().children(blurs))
+                    .child(Label::new("При зумах, сдвигах камеры и быстром курсоре. Видно в предпросмотре и экспорте").size(LabelSize::XSmall).color(Color::Muted)),
             )
             .child(cursor)
             .child(
