@@ -30,10 +30,18 @@ use crate::{cards, ocr, palette, studio_editor, util};
 /// A point in image pixels.
 type P = (f32, f32);
 
-/// Stroke widths, font sizes and counter sizes, in screen pixels.
-const WIDTHS: [f32; 3] = [3., 5., 9.];
-const FONT_SIZES: [f32; 3] = [16., 22., 32.];
-const COUNTER_SIZES: [f32; 3] = [22., 28., 36.];
+/// Stroke widths, font sizes and counter sizes in screen pixels, from the
+/// size slider's start to its end.
+const WIDTHS: (f32, f32) = (2., 16.);
+const FONT_SIZES: (f32, f32) = (12., 56.);
+const COUNTER_SIZES: (f32, f32) = (18., 52.);
+/// Where the size slider starts.
+const WEIGHT: f32 = 0.22;
+
+/// A size from a range at the slider's position (0..1).
+fn sized((lo, hi): (f32, f32), weight: f32) -> f32 {
+    lo + (hi - lo) * weight
+}
 /// Opacity of the highlighter.
 const MARKER_ALPHA: f32 = 0.4;
 /// Backdrop margin, as a fraction of the picture's longer side.
@@ -142,6 +150,8 @@ enum Knob {
     Padding,
     Radius,
     Shadow,
+    /// The toolbar's size slider.
+    Weight,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -413,13 +423,13 @@ impl Shape {
     }
 
     /// Apply the toolbar's weight to an existing shape.
-    fn set_weight(&mut self, weight: usize, s: f32) {
+    fn set_weight(&mut self, weight: f32, s: f32) {
         self.size = match self.kind {
-            Kind::Text(_) => FONT_SIZES[weight],
-            Kind::Counter(_) => COUNTER_SIZES[weight],
-            Kind::Marker(_) => WIDTHS[weight] * 3.,
+            Kind::Text(_) => sized(FONT_SIZES, weight),
+            Kind::Counter(_) => sized(COUNTER_SIZES, weight),
+            Kind::Marker(_) => sized(WIDTHS, weight) * 3.,
             Kind::Blur(_) | Kind::Spotlight => return,
-            _ => WIDTHS[weight],
+            _ => sized(WIDTHS, weight),
         } / s;
     }
 }
@@ -464,7 +474,8 @@ pub struct Editor {
     tool: Tool,
     colors: Vec<Hsla>,
     color: usize,
-    weight: usize,
+    /// The size slider, 0..1.
+    weight: f32,
     /// Boxes and ellipses are drawn solid.
     fill: bool,
     /// Pointer shape over a handle or a shape, while no button is held.
@@ -555,7 +566,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 tool: Tool::Arrow,
                 colors: palette::annotation_colors(),
                 color: 0,
-                weight: 1,
+                weight: WEIGHT,
                 fill: false,
                 hover: None,
                 text_style: TextStyle::Plain,
@@ -714,7 +725,7 @@ impl Editor {
             Tool::Select | Tool::Crop => return cx.notify(),
             Tool::Text => {
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: FONT_SIZES[self.weight] / s, filled: false, text: self.text_style });
+                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: sized(FONT_SIZES, self.weight) / s, filled: false, text: self.text_style });
                 self.editing = Some(self.doc.shapes.len() - 1);
                 self.selected = self.editing;
                 return cx.notify();
@@ -722,7 +733,7 @@ impl Editor {
             Tool::Counter => {
                 let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: COUNTER_SIZES[self.weight] / s, filled: false, text: TextStyle::Plain });
+                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: sized(COUNTER_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain });
                 self.selected = Some(self.doc.shapes.len() - 1);
                 return cx.notify();
             }
@@ -735,7 +746,7 @@ impl Editor {
             Tool::Blur => Kind::Blur(None),
             Tool::Spotlight => Kind::Spotlight,
         };
-        let width = if self.tool == Tool::Marker { WIDTHS[self.weight] * 3. } else { WIDTHS[self.weight] };
+        let width = if self.tool == Tool::Marker { sized(WIDTHS, self.weight) * 3. } else { sized(WIDTHS, self.weight) };
         let filled = self.fill && matches!(kind, Kind::Rect | Kind::Ellipse);
         self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s, filled, text: TextStyle::Plain });
         self.drag = Some(Drag::Draw);
@@ -916,12 +927,12 @@ impl Editor {
         }
     }
 
-    fn pick_weight(&mut self, i: usize) {
-        self.weight = i;
+    /// Undo restores the size from before the whole slide, not each step.
+    fn pick_weight(&mut self, weight: f32) {
+        self.weight = weight;
         if let Some(index) = self.selected {
-            self.checkpoint();
             let s = self.scale();
-            self.doc.shapes[index].set_weight(i, s);
+            self.doc.shapes[index].set_weight(weight, s);
         }
     }
 
@@ -980,6 +991,10 @@ impl Editor {
             Knob::Padding => self.frame.padding = v * MAX_PAD,
             Knob::Radius => self.frame.radius = v * MAX_ROUND,
             Knob::Shadow => self.frame.shadow = v,
+            Knob::Weight => {
+                self.pick_weight(v);
+                return cx.notify();
+            }
         }
         if !self.frame.on() {
             self.frame.backdrop = Backdrop::Gradient(0);
@@ -1095,18 +1110,15 @@ impl Editor {
                 }))
         });
         let dot = cx.theme().colors().text;
-        let weights = WIDTHS.iter().enumerate().map(|(i, w)| {
-            ButtonLike::new(("weight", i))
-                .style(if i == self.weight { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                .size(ButtonSize::Large)
-                .toggle_state(i == self.weight)
-                .child(div().w(px(18.)).flex().justify_center().child(div().size(px(w + 1.)).rounded_full().bg(dot)))
-                .tooltip(Tooltip::text(["Тонко", "Средне", "Толсто"][i]))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.pick_weight(i);
-                    cx.notify();
-                }))
-        });
+        // A dot as thick as the stroke, then the slider.
+        let dot_size = sized(WIDTHS, self.weight).min(16.) + 1.;
+        let weights = h_flex()
+            .id("weight")
+            .w(px(132.))
+            .h(px(32.))
+            .child(div().w(px(18.)).flex().justify_center().child(div().size(px(dot_size)).rounded_full().bg(dot)))
+            .child(self.slider(Knob::Weight, self.weight, String::new(), cx))
+            .tooltip(Tooltip::text("Размер"));
 
         let history = h_flex()
             .gap_0p5()
@@ -1191,7 +1203,7 @@ impl Editor {
                 .child(option("text-outline", TextStyle::Outline, "С обводкой"))
                 .child(Divider::vertical().h_5().mx_1())
         });
-        let style = h_flex().gap_0p5().children(text_options).children(fill_toggle).child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).children(weights);
+        let style = h_flex().gap_0p5().children(text_options).children(fill_toggle).child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).child(weights);
 
         h_flex()
             .w(px(width))
@@ -1385,11 +1397,14 @@ impl Editor {
                 MouseButton::Left,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
+                    if knob == Knob::Weight && this.selected.is_some() {
+                        this.checkpoint();
+                    }
                     this.drag = Some(Drag::Slider(knob));
                     this.slide(knob, f32::from(e.position.x), cx);
                 }),
             ))
-            .child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted)))
+            .when(!label.is_empty(), |row| row.child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted))))
             .into_any_element()
     }
 
