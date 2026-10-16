@@ -6,7 +6,7 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
     layer_shell::*, point, popup::*, px, size,
 };
-use ui::{Divider, TintColor, Tooltip, prelude::*};
+use ui::{Divider, Tooltip, prelude::*};
 
 use crate::record::{self, Opts};
 use crate::kit::{self, InputRegion, LayerSpec};
@@ -149,11 +149,11 @@ impl Render for Panel {
             })))
             .child(Divider::vertical().h_5().mx_1())
             .child(
-                Button::new("region", "Область")
-                    .style(ButtonStyle::Tinted(TintColor::Error))
+                Button::new("region", "Записать область")
+                    .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
-                    .start_icon(Icon::new(IconName::Crosshair).size(IconSize::Small))
-                    .tooltip(Tooltip::text("Выбрать область (Enter)"))
+                    .start_icon(Icon::new(IconName::Crosshair).size(IconSize::Small).color(Color::Error))
+                    .key_binding(kit::keys("enter"))
                     .on_click(cx.listener(|this, _, window, cx| this.choose(Some("region"), window, cx))),
             )
             .child(
@@ -164,9 +164,11 @@ impl Render for Panel {
                     .on_click(cx.listener(|this, _, window, cx| this.choose(Some("fullscreen"), window, cx))),
             )
             .child(
-                IconButton::new("cancel", IconName::Close)
+                Button::new("cancel", "Отмена")
+                    .style(ButtonStyle::Subtle)
                     .size(ButtonSize::Large)
-                    .tooltip(Tooltip::text("Отмена (Esc)"))
+                    .color(Color::Muted)
+                    .key_binding(kit::keys("escape"))
                     .on_click(cx.listener(|this, _, window, cx| this.choose(None, window, cx))),
             )
             .child(self.region.mark());

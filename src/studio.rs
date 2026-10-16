@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use futures::{AsyncBufReadExt, StreamExt, io::BufReader};
 use gpui::{App, Context, Window, layer_shell::*};
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use ui::{IconButtonShape, ProgressBar, Tooltip, prelude::*};
 
 use crate::track::Track;
 use crate::kit::{self, InputRegion, LayerSpec};
@@ -285,7 +285,7 @@ pub fn render(video: PathBuf, cx: &mut App) {
         namespace: "kadr-progress",
         anchor: Anchor::BOTTOM,
         margin: (0., 0., 24., 0.),
-        size: (320., 64.),
+        size: (340., 90.),
         keyboard: KeyboardInteractivity::None,
         ignore_zones: false,
         monitor: util::focused_monitor(),
@@ -424,30 +424,38 @@ impl ProgressView {
 impl Render for ProgressView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.region.reset();
-        let pct = (self.state.fraction.get() * 100.0).clamp(0.0, 99.0) as u32;
+        let fraction = self.state.fraction.get().clamp(0.0, 0.99) as f32;
         let state = self.state.clone();
         kit::root(cx).flex().items_center().justify_center().child(
-            h_flex()
+            v_flex()
                 .relative()
-                .gap_2()
-                .pl_3()
+                .w(px(300.))
+                .gap_1p5()
+                .pl_2p5()
                 .pr_1()
-                .py_1()
+                .pt_1()
+                .pb_2p5()
                 .elevation_3(cx)
-                .rounded_full()
-                .child(Icon::new(IconName::Sparkle).color(Color::Accent))
-                .child(Label::new(format!("Улучшаю видео… {pct}%")))
                 .child(
-                    IconButton::new("cancel", IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Отменить"))
-                        .on_click(move |_, _, _| {
-                            state.cancelled.set(true);
-                            if let Some(pid) = state.pid.get() {
-                                util::signal(pid, libc::SIGTERM);
-                            }
-                        }),
+                    h_flex()
+                        .gap_1p5()
+                        .child(Icon::new(IconName::Sparkle).size(IconSize::Small).color(Color::Accent))
+                        .child(div().flex_1().child(Label::new("Улучшаю видео").size(LabelSize::Small)))
+                        .child(Label::new(format!("{}%", (fraction * 100.) as u32)).size(LabelSize::Small).color(Color::Muted))
+                        .child(
+                            IconButton::new("cancel", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .tooltip(Tooltip::text("Отменить"))
+                                .on_click(move |_, _, _| {
+                                    state.cancelled.set(true);
+                                    if let Some(pid) = state.pid.get() {
+                                        util::signal(pid, libc::SIGTERM);
+                                    }
+                                }),
+                        ),
                 )
+                .child(div().pr_1p5().child(ProgressBar::new("progress", fraction, 1., cx)))
                 .child(self.region.mark()),
         )
     }

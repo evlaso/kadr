@@ -17,7 +17,7 @@ use gpui::{
 use crate::panel::{self, Panel};
 use crate::track::Tracker;
 use crate::kit::{self, Hold, InputRegion, LayerSpec};
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use ui::{Divider, IconButtonShape, Tooltip, prelude::*};
 use crate::util::{self, Mon};
 use crate::cards;
 
@@ -573,7 +573,7 @@ impl Render for RecBar {
             }
         };
         let button = |id: &'static str, icon: IconName, tip: &'static str| {
-            IconButton::new(id, icon).shape(IconButtonShape::Square).size(ButtonSize::Large).tooltip(Tooltip::text(tip))
+            IconButton::new(id, icon).shape(IconButtonShape::Square).icon_size(IconSize::Small).tooltip(Tooltip::text(tip))
         };
 
         let colors = cx.theme().status();
@@ -592,14 +592,20 @@ impl Render for RecBar {
         kit::root(cx).flex().items_center().justify_center().child(
             h_flex()
                 .relative()
-                .gap_0p5()
-                .pl_3()
+                .gap_1()
+                .pl_2p5()
                 .pr_1()
                 .py_1()
                 .elevation_3(cx)
-                .rounded_full()
                 .child(dot)
-                .child(div().min_w(px(48.)).ml_2p5().mr_1p5().child(Label::new(util::format_duration(elapsed)).weight(gpui::FontWeight::SEMIBOLD)))
+                .child(
+                    div()
+                        .min_w(px(44.))
+                        .font_family(kit::MONO_FONT)
+                        .text_sm()
+                        .child(util::format_duration(elapsed)),
+                )
+                .child(Divider::vertical().h_4())
                 .child(
                     button("pause", if paused { IconName::PlayFilled } else { IconName::DebugPause }, if paused { "Продолжить" } else { "Пауза" })
                         .on_click(with_rec(false, |rec, cx| {

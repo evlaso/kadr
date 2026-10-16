@@ -6,7 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Font, Global, Pixels, Render, SharedString, Window,
+    AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Font, KeybindingKeystroke, Keystroke, Global, Pixels, Render, SharedString, Window,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
     font, hsla, layer_shell::*, point, prelude::*, px, size,
 };
@@ -17,6 +17,8 @@ use crate::util::Mon;
 
 /// Zed's UI font, bundled so kadr looks the same without Zed installed.
 const UI_FONT: &str = "IBM Plex Sans";
+/// Zed's monospace font, for timers and numbers.
+pub const MONO_FONT: &str = "Lilex";
 
 macro_rules! assets {
     ($($path:literal => $file:literal),* $(,)?) => {
@@ -26,6 +28,7 @@ macro_rules! assets {
 assets![
     // Zed's icon set, under the paths `ui::IconName` resolves to.
     "icons/close.svg" => "../data/zed/icons/close.svg",
+    "icons/image.svg" => "../data/zed/icons/image.svg",
     "icons/copy.svg" => "../data/zed/icons/copy.svg",
     "icons/pencil.svg" => "../data/zed/icons/pencil.svg",
     "icons/folder.svg" => "../data/zed/icons/folder.svg",
@@ -89,6 +92,7 @@ pub fn init(cx: &mut App) {
     let fonts = vec![
         Cow::Borrowed(include_bytes!("../data/zed/fonts/IBMPlexSans-Regular.ttf").as_slice()),
         Cow::Borrowed(include_bytes!("../data/zed/fonts/IBMPlexSans-SemiBold.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../data/zed/fonts/Lilex-Regular.ttf").as_slice()),
     ];
     if let Err(e) = cx.text_system().add_fonts(fonts) {
         eprintln!("kadr: fonts: {e}");
@@ -109,6 +113,16 @@ pub fn shadow() -> Vec<BoxShadow> {
         BoxShadow { color: hsla(0., 0., 0., 0.38), offset: point(px(0.), px(8.)), blur_radius: px(22.), spread_radius: px(0.), inset: false },
         BoxShadow { color: hsla(0., 0., 0., 0.22), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
     ]
+}
+
+/// A key hint drawn the way Zed shows shortcuts, e.g. `keys("enter")`.
+pub fn keys(source: &str) -> ui::KeyBinding {
+    let strokes: Vec<KeybindingKeystroke> = source
+        .split_whitespace()
+        .filter_map(|k| Keystroke::parse(k).ok())
+        .map(KeybindingKeystroke::from_keystroke)
+        .collect();
+    ui::KeyBinding::from_keystrokes(strokes.into(), false)
 }
 
 /// Root of every overlay: Zed's UI font and text color.

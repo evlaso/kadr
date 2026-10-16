@@ -9,14 +9,20 @@ use std::time::{Duration, Instant};
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
     MouseButton, MouseDownEvent, ObjectFit, SharedString, Window, WindowHandle, div, ease_out_quint,
-    img, layer_shell::*, px, rgba,
+    img, layer_shell::*, px,
 };
 use ui::{IconButtonShape, TintColor, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::{pin, studio, track, util};
 
-const CARD_WIDTH: f32 = 300.;
+const CARD_WIDTH: f32 = 320.;
+/// Inner padding of the card panel.
+const INSET: f32 = 6.;
+const THUMB_WIDTH: f32 = CARD_WIDTH - 2. * INSET;
+const THUMB_MAX: f32 = 200.;
+/// Header, footer and gaps around the thumbnail.
+const CHROME: f32 = 74.;
 const MAX_CARDS: usize = 4;
 const GAP: f32 = 14.;
 /// Room above and to the right of the stack so card shadows aren't cut off by
@@ -35,9 +41,12 @@ struct Card {
     id: usize,
     path: PathBuf,
     image: Arc<Image>,
+    /// Thumbnail height.
     height: f32,
     /// Clip duration in seconds for recordings.
     video: Option<f64>,
+    /// Pixel size or duration, shown in the header.
+    meta: SharedString,
     deadline: Instant,
     hovered: bool,
 }
@@ -61,11 +70,11 @@ pub fn show(path: PathBuf, cx: &mut App) {
             cx.background_executor()
                 .spawn(async move { card_thumbnail(&std::fs::read(&file).ok()?) })
                 .await
-                .map(|(image, height)| (image, height, None))
+                .map(|(image, height, (w, h))| (image, height, None, format!("{w}×{h}")))
         };
         match loaded {
-            Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(path, image, height, video, cx));
+            Some((image, height, video, meta)) => {
+                let _ = cx.update(|cx| add(path, image, height, video, meta.into(), cx));
             }
             None => util::notify("Не удалось открыть файл", &path.display().to_string()),
         }
@@ -86,8 +95,8 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
         .unwrap_or(false)
 }
 
-fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
-    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: Instant::now() + AUTO_DISMISS, hovered: false });
+fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, meta: SharedString, cx: &mut App) {
+    let mut slot = Some(Card { id: 0, path, image, height, video, meta, deadline: Instant::now() + AUTO_DISMISS, hovered: false });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
@@ -110,7 +119,7 @@ fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &m
         namespace: "kadr",
         anchor: Anchor::BOTTOM | Anchor::LEFT,
         margin: (0., 0., 0., 0.),
-        size: (CARD_WIDTH + EDGE + PAD, MAX_CARDS as f32 * (240. + GAP) + EDGE + PAD),
+        size: (CARD_WIDTH + EDGE + PAD, MAX_CARDS as f32 * (THUMB_MAX + CHROME + GAP) + EDGE + PAD),
         keyboard: KeyboardInteractivity::None,
         ignore_zones: false,
         monitor: util::focused_monitor(),
@@ -169,12 +178,14 @@ impl CardStack {
         }
     }
 
+    /// A Zed-style popover: file name header, the thumbnail (drag it out as a
+    /// file) and a toolbar of icon buttons.
     fn render_card(&self, card: &Card, cx: &mut Context<Self>) -> AnyElement {
         let id = card.id;
-        let group: SharedString = format!("card-{id}").into();
         let path = card.path.clone();
         let video = card.video.is_some();
         let has_track = video && track::path_for(&path).exists();
+        let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
 
         let act = |action: fn(&mut CardStack, &Path, usize, &mut Window, &mut Context<CardStack>)| {
             let path = path.clone();
@@ -183,97 +194,24 @@ impl CardStack {
                 action(this, &path, id, window, cx)
             })
         };
-        let big = |id: (&'static str, usize), label: &'static str, icon: IconName| {
-            Button::new(id, label)
-                .style(ButtonStyle::Filled)
-                .size(ButtonSize::Large)
-                .start_icon(Icon::new(icon).size(IconSize::Small))
-                .width(px(170.))
-        };
-        let corner = |id: (&'static str, usize), icon: IconName, tip: &'static str| {
-            IconButton::new(id, icon).style(ButtonStyle::Filled).shape(IconButtonShape::Square).tooltip(Tooltip::text(tip))
+        let tool = |key: &'static str, icon: IconName, tip: &'static str| {
+            IconButton::new((key, id), icon).shape(IconButtonShape::Square).icon_size(IconSize::Small).tooltip(Tooltip::text(tip))
         };
 
-        let mut center = v_flex().items_center().gap_1p5();
-        center = center.child(big(("copy", id), "Копировать", IconName::Copy).on_click(act(|this, path, id, window, cx| {
-            if is_video(path) {
-                util::copy_file(path)
-            } else {
-                util::copy_image(path)
-            }
-            this.remove(id, window, cx);
-        })));
-        center = center.child(
-            big(("edit", id), if video { "Открыть" } else { "Редактировать" }, if video { IconName::PlayFilled } else { IconName::Pencil })
-                .on_click(act(|this, path, id, window, cx| {
-                    this.remove(id, window, cx);
-                    edit(path.to_owned(), cx);
-                })),
-        );
-        if has_track {
-            // Recordings made by kadr carry a cursor track and can get the studio treatment.
-            center = center.child(
-                big(("studio", id), "Улучшить", IconName::Sparkle).style(ButtonStyle::Tinted(TintColor::Accent)).on_click(act(
-                    |this, path, id, window, cx| {
-                        this.remove(id, window, cx);
-                        studio::render(path.to_owned(), cx);
-                    },
-                )),
-            );
-        }
-
-        let at = |el: IconButton| div().absolute().m_1p5().child(el);
-        let mut hover = div()
-            .absolute()
-            .inset_0()
-            .rounded(px(kit::RADIUS))
-            .bg(rgba(0x00000099))
-            .opacity(0.)
-            .group_hover(group.clone(), |s| s.opacity(1.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(center)
-            .child(at(corner(("close", id), IconName::Close, "Закрыть").on_click(act(|this, _, id, window, cx| this.remove(id, window, cx)))).top_0().left_0())
+        let header = h_flex()
+            .h(px(22.))
+            .pl_1()
+            .gap_1p5()
+            .child(Icon::new(if video { IconName::PlayFilled } else { IconName::Image }).size(IconSize::XSmall).color(Color::Muted))
+            .child(div().flex_1().min_w_0().child(Label::new(name).size(LabelSize::Small).truncate()))
+            .child(Label::new(card.meta.clone()).size(LabelSize::XSmall).color(Color::Muted))
             .child(
-                at(corner(("trash", id), IconName::Trash, "Удалить файл").on_click(act(|this, path, id, window, cx| {
-                    util::trash(path);
-                    this.remove(id, window, cx);
-                })))
-                .bottom_0()
-                .left_0(),
-            )
-            .child(at(corner(("folder", id), IconName::Folder, "Открыть папку").on_click(act(|_, path, _, _, _| util::open_folder(path)))).bottom_0().right_0());
-        if !video {
-            hover = hover.child(
-                at(corner(("pin", id), IconName::Pin, "Закрепить поверх окон").on_click(act(|this, path, id, window, cx| {
-                    pin::open(path.to_owned(), cx);
-                    this.remove(id, window, cx);
-                })))
-                .top_0()
-                .right_0(),
+                IconButton::new(("close", id), IconName::Close)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Закрыть"))
+                    .on_click(act(|this, _, id, window, cx| this.remove(id, window, cx))),
             );
-        }
-
-        let badge = card.video.map(|secs| {
-            h_flex()
-                .absolute()
-                .bottom_2()
-                .left_0()
-                .right_0()
-                .justify_center()
-                .group_hover(group.clone(), |s| s.opacity(0.))
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .px_2()
-                        .py_0p5()
-                        .rounded_full()
-                        .bg(rgba(0x000000b3))
-                        .child(Icon::new(IconName::PlayFilled).size(IconSize::XSmall).color(Color::Custom(gpui::white())))
-                        .child(Label::new(util::format_duration(secs)).size(LabelSize::Small).color(Color::Custom(gpui::white()))),
-                )
-        });
 
         // Double-click opens the editor (or the player).
         let double_click = {
@@ -285,32 +223,83 @@ impl CardStack {
                 }
             })
         };
+        let thumb = div()
+            .id(("thumb", id))
+            .w_full()
+            .h(px(card.height))
+            .cursor_grab()
+            // GPUI clips children to a rectangle, so the image rounds its own
+            // corners; it is pre-cropped to the card so those are the visible ones.
+            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(8.)))
+            .on_mouse_down(MouseButton::Left, double_click)
+            // Drag the file out to a chat, browser or file manager.
+            .on_drag(path.clone(), |_: &PathBuf, _, _, cx| cx.new(|_| DragPreview))
+            .external_drag_payload(|path: &PathBuf, _, _| {
+                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
+            });
+
+        let mut tools = h_flex()
+            .gap_0p5()
+            .child(tool("copy", IconName::Copy, if video { "Копировать файл" } else { "Копировать" }).on_click(act(|this, path, id, window, cx| {
+                if is_video(path) {
+                    util::copy_file(path)
+                } else {
+                    util::copy_image(path)
+                }
+                this.remove(id, window, cx);
+            })))
+            .child(
+                tool("edit", if video { IconName::PlayFilled } else { IconName::Pencil }, if video { "Открыть" } else { "Редактировать" })
+                    .on_click(act(|this, path, id, window, cx| {
+                        this.remove(id, window, cx);
+                        edit(path.to_owned(), cx);
+                    })),
+            );
+        if !video {
+            tools = tools.child(tool("pin", IconName::Pin, "Закрепить поверх окон").on_click(act(|this, path, id, window, cx| {
+                pin::open(path.to_owned(), cx);
+                this.remove(id, window, cx);
+            })));
+        }
+        tools = tools
+            .child(tool("folder", IconName::Folder, "Показать в папке").on_click(act(|_, path, _, _, _| util::open_folder(path))))
+            .child(tool("trash", IconName::Trash, "Удалить файл").on_click(act(|this, path, id, window, cx| {
+                util::trash(path);
+                this.remove(id, window, cx);
+            })));
+
+        let footer = h_flex().justify_between().child(tools).when(has_track, |footer| {
+            // Recordings made by kadr carry a cursor track and can get the studio treatment.
+            footer.child(
+                Button::new(("studio", id), "Улучшить")
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
+                    .tooltip(Tooltip::text("Автозум к кликам, фон и тень"))
+                    .on_click(act(|this, path, id, window, cx| {
+                        this.remove(id, window, cx);
+                        studio::render(path.to_owned(), cx);
+                    })),
+            )
+        });
 
         let colors = cx.theme().colors();
-        div()
+        v_flex()
             .id(("card", id))
-            .group(group)
             .relative()
             .flex_none()
             .w(px(CARD_WIDTH))
-            .h(px(card.height))
-            .rounded(px(kit::RADIUS))
-            .overflow_hidden()
+            .p(px(INSET))
+            .gap_1p5()
+            .rounded(px(12.))
             .bg(colors.elevated_surface_background)
+            .border_1()
+            .border_color(colors.border_variant)
             .shadow(kit::shadow())
-            // GPUI clips children to a rectangle, so the image rounds its own
-            // corners; it is pre-cropped to the card so those are the visible ones.
-            .child(img(card.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
-            .children(badge)
-            .child(hover)
+            .child(header)
+            .child(thumb)
+            .child(footer)
             .child(self.region.mark())
             .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
-            .on_mouse_down(MouseButton::Left, double_click)
-            // Drag the file out to a chat, browser or file manager.
-            .on_drag(path, |_: &PathBuf, _, _, cx| cx.new(|_| DragPreview))
-            .external_drag_payload(|path: &PathBuf, _, _| {
-                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
-            })
             .with_animation(("appear", id), Animation::new(Duration::from_millis(240)).with_easing(ease_out_quint()), |el, d| {
                 el.opacity(d).mb(px((1. - d) * -24.))
             })
@@ -393,25 +382,25 @@ pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
 /// Card-sized thumbnail: center-cropped to the card's aspect and scaled to
 /// twice its width, so corners round correctly and a 4K screenshot isn't kept
 /// in memory. Returns the image and the card height.
-fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32)> {
+fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
     let src = image::load_from_memory(bytes).ok()?;
     let (w, h) = (src.width().max(1), src.height().max(1));
-    let height = (CARD_WIDTH * h as f32 / w as f32).clamp(90., 240.);
-    let aspect = CARD_WIDTH / height;
+    let height = (THUMB_WIDTH * h as f32 / w as f32).clamp(80., THUMB_MAX);
+    let aspect = THUMB_WIDTH / height;
     let (cw, ch) = if (w as f32 / h as f32) > aspect {
         ((h as f32 * aspect).round() as u32, h)
     } else {
         (w, (w as f32 / aspect).round() as u32)
     };
     let cropped = src.crop_imm((w - cw.min(w)) / 2, (h - ch.min(h)) / 2, cw.min(w), ch.min(h));
-    let thumb = cropped.resize_exact((CARD_WIDTH * 2.) as u32, (height * 2.) as u32, image::imageops::FilterType::Triangle);
+    let thumb = cropped.resize_exact((THUMB_WIDTH * 2.) as u32, (height * 2.) as u32, image::imageops::FilterType::Triangle);
     let mut png = Vec::new();
     thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-    Some((Arc::new(Image::from_bytes(ImageFormat::Png, png)), height))
+    Some((Arc::new(Image::from_bytes(ImageFormat::Png, png)), height, (w, h)))
 }
 
 /// First frame (scaled down) and duration in seconds.
-async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>)> {
+async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>, String)> {
     use std::ffi::OsStr;
     let thumb = util::runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
     let (ok, _) = util::output::<&OsStr>(&[
@@ -426,6 +415,7 @@ async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Imag
         "-of".as_ref(), "csv=p=0".as_ref(), path.as_os_str(),
     ])
     .await?;
-    let (image, height) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
-    Some((image, height, Some(duration.trim().parse().unwrap_or(0.0))))
+    let (image, height, _) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
+    let seconds: f64 = duration.trim().parse().unwrap_or(0.0);
+    Some((image, height, Some(seconds), util::format_duration(seconds)))
 }
