@@ -51,6 +51,8 @@ assets![
     "icons/chevron_down.svg" => "../data/zed/icons/chevron_down.svg",
     "icons/chevron_left.svg" => "../data/zed/icons/chevron_left.svg",
     "icons/chevron_right.svg" => "../data/zed/icons/chevron_right.svg",
+    "icons/dash.svg" => "../data/zed/icons/dash.svg",
+    "icons/plus.svg" => "../data/zed/icons/plus.svg",
     "icons/sparkle.svg" => "../data/zed/icons/sparkle.svg",
     "icons/arrow_up_right.svg" => "../data/zed/icons/arrow_up_right.svg",
     "icons/slash.svg" => "../data/zed/icons/slash.svg",

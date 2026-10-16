@@ -15,7 +15,7 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use gpui::{
     FillOptions, PathStyle,
     App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
+    KeyDownEvent, MouseButton, ScrollWheelEvent, relative, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
     Window, canvas, div, fill, img, layer_shell::*, linear_color_stop, linear_gradient, outline,
     point, px, rgba, size,
 };
@@ -215,6 +215,29 @@ struct Shape {
     size: f32,
     /// Boxes and ellipses: solid instead of an outline.
     filled: bool,
+    text: TextStyle,
+}
+
+/// How text stands out from the picture.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextStyle {
+    Plain,
+    /// On a rounded plate of its colour, lettered in white or black.
+    Plate,
+    /// Outlined in a contrasting colour.
+    Outline,
+}
+
+impl TextStyle {
+    /// Plate margins and corner radius for a font size.
+    fn plate(size: f32) -> (f32, f32, f32) {
+        (size * 0.4, size * 0.18, size * 0.3)
+    }
+
+    /// Outline thickness for a font size.
+    fn outline(size: f32) -> f32 {
+        (size * 0.07).max(1.)
+    }
 }
 
 impl Shape {
@@ -232,7 +255,15 @@ impl Shape {
                 let m = metrics(self.size);
                 let width = text.split('\n').map(|l| text_width(l, self.size)).fold(self.size * 0.5, f32::max);
                 let lines = text.split('\n').count().max(1) as f32;
-                (self.a.0, self.a.1, self.a.0 + width, self.a.1 + lines * m.line)
+                let (px, py) = match self.text {
+                    TextStyle::Plain => (0., 0.),
+                    TextStyle::Plate => {
+                        let (px, py, _) = TextStyle::plate(self.size);
+                        (px, py)
+                    }
+                    TextStyle::Outline => (TextStyle::outline(self.size), TextStyle::outline(self.size)),
+                };
+                (self.a.0 - px, self.a.1 - py, self.a.0 + width + px, self.a.1 + lines * m.line + py)
             }
             Kind::Counter(_) => {
                 let r = self.size / 2.;
@@ -356,6 +387,11 @@ pub struct Editor {
     weight: usize,
     /// Boxes and ellipses are drawn solid.
     fill: bool,
+    text_style: TextStyle,
+    /// Canvas zoom on top of fitting the window; 1 fits.
+    zoom: f32,
+    /// The picture's real size on screen (100%).
+    real: (f32, f32),
     frame: Frame,
     /// The background panel is open.
     panel: bool,
@@ -435,6 +471,9 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 color: 0,
                 weight: 1,
                 fill: false,
+                text_style: TextStyle::Plain,
+                zoom: 1.,
+                real: natural,
                 frame: Frame::default(),
                 panel: false,
                 walls: Vec::new(),
@@ -585,7 +624,7 @@ impl Editor {
             Tool::Select | Tool::Crop => return cx.notify(),
             Tool::Text => {
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: FONT_SIZES[self.weight] / s, filled: false });
+                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: FONT_SIZES[self.weight] / s, filled: false, text: self.text_style });
                 self.editing = Some(self.doc.shapes.len() - 1);
                 self.selected = self.editing;
                 return cx.notify();
@@ -593,7 +632,7 @@ impl Editor {
             Tool::Counter => {
                 let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: COUNTER_SIZES[self.weight] / s, filled: false });
+                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: COUNTER_SIZES[self.weight] / s, filled: false, text: TextStyle::Plain });
                 self.selected = Some(self.doc.shapes.len() - 1);
                 return cx.notify();
             }
@@ -608,7 +647,7 @@ impl Editor {
         };
         let width = if self.tool == Tool::Marker { WIDTHS[self.weight] * 3. } else { WIDTHS[self.weight] };
         let filled = self.fill && matches!(kind, Kind::Rect | Kind::Ellipse);
-        self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s, filled });
+        self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s, filled, text: TextStyle::Plain });
         self.drag = Some(Drag::Draw);
         cx.notify();
     }
@@ -717,6 +756,9 @@ impl Editor {
             ("z", true, false) => self.undo(),
             ("z", true, true) | ("y", true, _) => self.redo(),
             ("c", true, _) => self.export(Export::Copy, window, cx),
+            ("=" | "+", true, _) => self.zoom_by(1.25),
+            ("-", true, _) => self.zoom_by(0.8),
+            ("0", true, _) => self.zoom = 1.,
             ("s", true, _) => self.export(Export::Save, window, cx),
             (key, false, false) => {
                 if let Some(tool) = Tool::ALL.into_iter().find(|t| t.key() == key) {
@@ -761,6 +803,22 @@ impl Editor {
             self.checkpoint();
             self.doc.shapes[index].filled = fill;
         }
+    }
+
+    /// Text look; restyles the selected text too.
+    fn pick_text_style(&mut self, style: TextStyle) {
+        self.text_style = style;
+        if let Some(index) = self.selected
+            && matches!(self.doc.shapes[index].kind, Kind::Text(_))
+        {
+            self.checkpoint();
+            self.doc.shapes[index].text = style;
+        }
+    }
+
+    /// Zoom the canvas by `factor`, between fitting and 4×.
+    fn zoom_by(&mut self, factor: f32) {
+        self.zoom = (self.zoom * factor).clamp(1., 8.);
     }
 
     fn slide(&mut self, knob: Knob, x: f32, cx: &mut Context<Self>) {
@@ -952,7 +1010,36 @@ impl Editor {
                 .child(option("solid", true, "icons/kadr/fill.svg", "Заливка"))
                 .child(Divider::vertical().h_5().mx_1())
         });
-        let style = h_flex().gap_0p5().children(fill_toggle).child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).children(weights);
+        // Plain, on a plate or outlined, for text.
+        let texts = matches!(self.tool, Tool::Text) || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
+        let text_options = texts.then(|| {
+            let fg = cx.theme().colors().text;
+            let option = |id: &'static str, style: TextStyle, tip: &'static str| {
+                let sample = div().px_1().text_size(px(14.)).font_weight(gpui::FontWeight::SEMIBOLD).child("Aa");
+                let sample = match style {
+                    TextStyle::Plain => sample,
+                    TextStyle::Plate => sample.rounded(px(4.)).bg(fg).text_color(cx.theme().colors().editor_background),
+                    TextStyle::Outline => sample.rounded(px(4.)).border_1().border_color(fg),
+                };
+                ButtonLike::new(id)
+                    .style(if self.text_style == style { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(self.text_style == style)
+                    .child(div().px_0p5().child(sample))
+                    .tooltip(Tooltip::text(tip))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.pick_text_style(style);
+                        cx.notify();
+                    }))
+            };
+            h_flex()
+                .gap_0p5()
+                .child(option("text-plain", TextStyle::Plain, "Обычный текст"))
+                .child(option("text-plate", TextStyle::Plate, "На плашке"))
+                .child(option("text-outline", TextStyle::Outline, "С обводкой"))
+                .child(Divider::vertical().h_5().mx_1())
+        });
+        let style = h_flex().gap_0p5().children(text_options).children(fill_toggle).child(h_flex().gap_0p5().children(swatches)).child(Divider::vertical().h_5().mx_1()).children(weights);
 
         h_flex()
             .w(px(width))
@@ -1047,7 +1134,40 @@ impl Editor {
                     .max_w(px(width * 0.3))
                     .gap_2()
                     .child(div().min_w_0().child(Label::new(name).size(LabelSize::Small).color(Color::Muted).truncate()))
-                    .child(Label::new(self.size_label()).size(LabelSize::Small).color(Color::Muted)),
+                    .child(Label::new(self.size_label()).size(LabelSize::Small).color(Color::Muted))
+                    .child(
+                        h_flex()
+                            .child(
+                                IconButton::new("zoom-out", IconName::Dash)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .tooltip(Tooltip::text("Отдалить (Ctrl+−)"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.zoom_by(0.8);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("zoom-fit", format!("{}%", (self.disp.0 / self.real.0 * 100.).round()))
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::Small)
+                                    .tooltip(Tooltip::text("По размеру окна (Ctrl+0)"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.zoom = 1.;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("zoom-in", IconName::Plus)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .tooltip(Tooltip::text("Приблизить (Ctrl+= или Ctrl+колесо)"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.zoom_by(1.25);
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
             )
             .child(
                 h_flex()
@@ -1304,21 +1424,38 @@ impl Editor {
                 let editing = self.editing == Some(i);
                 let lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
                 let count = lines.len();
-                Some(
-                    div()
-                        .absolute()
-                        .left(x)
-                        .top(y)
-                        .text_size(px(shape.size * s))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(shape.color)
-                        .whitespace_nowrap()
-                        .children(lines.into_iter().enumerate().map(move |(li, line)| {
-                            let caret = editing && li + 1 == count;
-                            div().h(px(m.line * s)).line_height(px(m.line * s)).child(if caret { format!("{line}▏") } else { line })
-                        }))
-                        .into_any_element(),
-                )
+                let block = |color: Hsla| {
+                    div().text_color(color).children(lines.iter().enumerate().map(|(li, line)| {
+                        let caret = editing && li + 1 == count;
+                        div().h(px(m.line * s)).line_height(px(m.line * s)).child(if caret { format!("{line}▏") } else { line.clone() })
+                    }))
+                };
+                let base = div().absolute().text_size(px(shape.size * s)).font_weight(gpui::FontWeight::SEMIBOLD).whitespace_nowrap();
+                Some(match shape.text {
+                    TextStyle::Plain => base.left(x).top(y).child(block(shape.color)).into_any_element(),
+                    TextStyle::Plate => {
+                        let (padx, pady, radius) = TextStyle::plate(shape.size);
+                        base.left(x - px(padx * s))
+                            .top(y - px(pady * s))
+                            .px(px(padx * s))
+                            .py(px(pady * s))
+                            .rounded(px(radius * s))
+                            .bg(shape.color)
+                            .child(block(on_color(shape.color)))
+                            .into_any_element()
+                    }
+                    // GPUI has no text stroke: the outline is the text drawn
+                    // around itself in the contrasting colour.
+                    TextStyle::Outline => {
+                        let o = TextStyle::outline(shape.size) * s;
+                        let ring = on_color(shape.color);
+                        let copies = (0..12).map(|k| {
+                            let th = k as f32 / 12. * std::f32::consts::TAU;
+                            div().absolute().left(px(o * th.cos())).top(px(o * th.sin())).child(block(ring))
+                        });
+                        base.left(x).top(y).child(div().relative().children(copies).child(block(shape.color))).into_any_element()
+                    }
+                })
             }
             Kind::Counter(n) => {
                 let d = shape.size * s;
@@ -1465,15 +1602,39 @@ impl Render for Editor {
         let full = box_of(&self.frame, self.natural);
         let room = (vw - 32. - 48. - panel, vh - 230. * kit::SCALE);
         let k = (room.0 / full.0).min(room.1 / full.1).min(1.);
-        self.disp = (self.natural.0 * k, self.natural.1 * k);
-        let frame = box_of(&self.frame, self.disp);
+        let fit = (self.natural.0 * k, self.natural.1 * k);
+        self.disp = (fit.0 * self.zoom, fit.1 * self.zoom);
+        // The window keeps its fitted size; a zoomed canvas scrolls inside it.
+        let frame = box_of(&self.frame, fit);
         let stage_w = (frame.0 + 48.).max(1180. * kit::SCALE - panel);
         let width = (stage_w + panel).min(vw - 32.);
         let stage_h = frame.1 + 48.;
         let stage = h_flex()
             .w_full()
             .h(px(stage_h))
-            .child(div().flex_1().h_full().flex().items_center().justify_center().bg(cx.theme().colors().editor_background).child(self.render_canvas(cx)))
+            .child(
+                div()
+                    .id("stage")
+                    .flex()
+                    .items_start()
+                    .flex_1()
+                    .h_full()
+                    .overflow_scroll()
+                    .bg(cx.theme().colors().editor_background)
+                    .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
+                        if e.modifiers.control {
+                            cx.stop_propagation();
+                            let dy = f32::from(e.delta.pixel_delta(px(20.)).y);
+                            if dy != 0. {
+                                this.zoom_by(if dy > 0. { 1.1 } else { 1. / 1.1 });
+                                cx.notify();
+                            }
+                        }
+                    }))
+                    // Centered with auto margins, which stop at the edge when the
+                    // zoomed canvas is bigger, so all of it can be scrolled to.
+                    .child(div().flex_none().min_w(relative(1.)).min_h(relative(1.)).flex().p(px(24.)).child(div().m_auto().child(self.render_canvas(cx)))),
+            )
             .when(self.panel, |row| row.child(self.render_panel(stage_h, cx)));
         kit::root(cx)
             .bg(rgba(0x00000040))
@@ -1967,10 +2128,25 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
             }
             Kind::Text(text) => {
                 let m = metrics(size);
+                if shape.text == TextStyle::Plate {
+                    let (l, t, r, bt) = shape.bounds();
+                    let (_, _, radius) = TextStyle::plate(size);
+                    if let Some(path) = rounded_rect(l, t, r, bt, radius) {
+                        pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
+                    }
+                }
+                let ink = if shape.text == TextStyle::Plate { on_color(c) } else { c };
                 for (i, line) in text.split('\n').enumerate() {
                     let top = a.1 + i as f32 * m.line;
                     let baseline = top + (m.line - (m.ascent - m.descent)) / 2. + m.ascent;
-                    draw_line(&mut pm, line, (a.0, baseline), size, c);
+                    if shape.text == TextStyle::Outline {
+                        let o = TextStyle::outline(size);
+                        for k in 0..16 {
+                            let th = k as f32 / 16. * std::f32::consts::TAU;
+                            draw_line(&mut pm, line, (a.0 + o * th.cos(), baseline + o * th.sin()), size, on_color(c));
+                        }
+                    }
+                    draw_line(&mut pm, line, (a.0, baseline), size, ink);
                 }
             }
             Kind::Blur(_) | Kind::Spotlight => {}
@@ -1986,6 +2162,22 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
         }
     }
     RgbaImage::from_raw(w, h, data)
+}
+
+fn rounded_rect(l: f32, t: f32, r: f32, b: f32, radius: f32) -> Option<tiny_skia::Path> {
+    let radius = radius.min((r - l) / 2.).min((b - t) / 2.);
+    let mut p = tiny_skia::PathBuilder::new();
+    p.move_to(l + radius, t);
+    p.line_to(r - radius, t);
+    p.quad_to(r, t, r, t + radius);
+    p.line_to(r, b - radius);
+    p.quad_to(r, b, r - radius, b);
+    p.line_to(l + radius, b);
+    p.quad_to(l, b, l, b - radius);
+    p.line_to(l, t + radius);
+    p.quad_to(l, t, l + radius, t);
+    p.close();
+    p.finish()
 }
 
 pub(crate) fn text_width(text: &str, size: f32) -> f32 {
@@ -2063,9 +2255,9 @@ mod tests {
         // Raw polyline (old behaviour) via a chain of lines, then the smoothed pen.
         let raw = trace(60.);
         for w in raw.windows(2) {
-            shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6., filled: false });
+            shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6., filled: false, text: TextStyle::Plain });
         }
-        shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6., filled: false });
+        shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6., filled: false, text: TextStyle::Plain });
         let png = compose(&src, &Doc { shapes, crop: None }, &Frame::default()).unwrap();
         assert!(!png.is_empty());
         // KADR_TEST_OUT=/path/out.png to look at the result.
@@ -2080,7 +2272,7 @@ mod tests {
 
     #[test]
     fn hit_handles_and_move() {
-        let mut line = Shape { kind: Kind::Arrow, a: (10., 10.), b: (110., 10.), color: red(), size: 4., filled: false };
+        let mut line = Shape { kind: Kind::Arrow, a: (10., 10.), b: (110., 10.), color: red(), size: 4., filled: false, text: TextStyle::Plain };
         assert!(line.hit((60., 13.), 2.));
         assert!(!line.hit((60., 30.), 2.));
         assert_eq!(line.handles(), vec![(10., 10.), (110., 10.)]);
@@ -2089,12 +2281,12 @@ mod tests {
         line.translate((5., 5.));
         assert_eq!((line.a, line.b), ((15., 15.), (115., 65.)));
 
-        let mut boxy = Shape { kind: Kind::Rect, a: (0., 0.), b: (50., 40.), color: red(), size: 3., filled: false };
+        let mut boxy = Shape { kind: Kind::Rect, a: (0., 0.), b: (50., 40.), color: red(), size: 3., filled: false, text: TextStyle::Plain };
         assert!(boxy.hit((25., 20.), 1.), "inside a box selects it");
         boxy.set_handle(1, (80., -10.)); // top-right corner
         assert_eq!((boxy.a, boxy.b), ((0., -10.), (80., 40.)));
 
-        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 10.), (20., 0.)]), a: (0., 0.), b: (20., 0.), color: red(), size: 2., filled: false };
+        let pen = Shape { kind: Kind::Pen(vec![(0., 0.), (10., 10.), (20., 0.)]), a: (0., 0.), b: (20., 0.), color: red(), size: 2., filled: false, text: TextStyle::Plain };
         assert!(pen.hit((15., 5.), 1.));
         assert!(pen.handles().is_empty(), "freehand only moves");
     }
@@ -2103,8 +2295,8 @@ mod tests {
     fn spotlight_dims_around_and_fill_is_solid() {
         let src = RgbaImage::from_pixel(200, 100, image::Rgba([200, 200, 200, 255]));
         let shapes = vec![
-            Shape { kind: Kind::Spotlight, a: (10., 10.), b: (60., 60.), color: red(), size: 3., filled: false },
-            Shape { kind: Kind::Rect, a: (120., 20.), b: (180., 80.), color: red(), size: 3., filled: true },
+            Shape { kind: Kind::Spotlight, a: (10., 10.), b: (60., 60.), color: red(), size: 3., filled: false, text: TextStyle::Plain },
+            Shape { kind: Kind::Rect, a: (120., 20.), b: (180., 80.), color: red(), size: 3., filled: true, text: TextStyle::Plain },
         ];
         let out = image::load_from_memory(&compose(&src, &Doc { shapes, crop: None }, &Frame::default()).unwrap()).unwrap().to_rgba8();
         assert_eq!(out.get_pixel(30, 30).0[0], 200, "inside the spotlight stays");
@@ -2114,9 +2306,25 @@ mod tests {
     }
 
     #[test]
+    fn text_on_a_plate_and_outlined() {
+        let src = RgbaImage::from_pixel(300, 120, image::Rgba([240, 240, 240, 255]));
+        let text = |a: P, style| Shape { kind: Kind::Text("Hi".into()), a, b: a, color: red(), size: 30., filled: false, text: style };
+        let plate = text((20., 20.), TextStyle::Plate);
+        let (l, t, _, _) = plate.bounds();
+        assert!(l < 20. && t < 20., "the plate reaches around the text");
+        let shapes = vec![plate, text((160., 20.), TextStyle::Outline)];
+        let out = image::load_from_memory(&compose(&src, &Doc { shapes, crop: None }, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        let corner = out.get_pixel((l + 3.) as u32, 28).0;
+        assert!(corner[0] > corner[1] + 40, "plate is the text colour: {corner:?}");
+        if let Ok(path) = std::env::var("KADR_TEST_TEXT") {
+            out.save(path).unwrap();
+        }
+    }
+
+    #[test]
     fn crop_and_backdrop_sizes() {
         let src = RgbaImage::from_pixel(400, 300, image::Rgba([200, 200, 200, 255]));
-        let shapes = vec![Shape { kind: Kind::Rect, a: (60., 60.), b: (220., 180.), color: red(), size: 6., filled: false }];
+        let shapes = vec![Shape { kind: Kind::Rect, a: (60., 60.), b: (220., 180.), color: red(), size: 6., filled: false, text: TextStyle::Plain }];
         let doc = Doc { shapes, crop: Some(((50., 40.), (250., 200.))) };
         let plain = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap();
         assert_eq!((plain.width(), plain.height()), (200, 160));
