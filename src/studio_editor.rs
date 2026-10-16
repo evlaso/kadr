@@ -1,43 +1,59 @@
-//! The studio's video editor, like Screen Studio's: a live preview of the
-//! framed, zoomed picture at the playhead, a timeline with the zoom segments
-//! (placed on clicks to start with) to move, stretch, add and delete, per
-//! segment zoom and focus, the backdrop and overlays, then a quick preview or
-//! the export. Edits are saved to the recording's project as they happen.
+//! The studio's video editor, like CleanShot's Studio Mode: a live preview
+//! of the framed, zoomed picture that plays in place, a timeline to trim the
+//! ends, cut pieces out and place zoom segments (on clicks to start with),
+//! and a sidebar for the look (format, backdrop, padding, corners, shadow,
+//! overlays) and the export. Edits are saved to the recording's project as
+//! they happen.
 
-use std::cell::Cell;
-use std::path::PathBuf;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, BorderStyle, ImageSource, RenderImage, Bounds, Context, CursorStyle, FocusHandle, Image, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ObjectFit, Window, canvas, div, fill, img, layer_shell::*,
-    linear_color_stop, linear_gradient, point, px, relative, rgba, size,
+    App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, RenderImage,
+    Window, canvas, div, fill, img, layer_shell::*, linear_color_stop, linear_gradient, point, px, relative,
+    rgba, size,
 };
 use ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
-use crate::studio::{self, Camera, PADDINGS, Probe, Project, Seg, ZOOMS};
+use crate::studio::{self, ASPECTS, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_PADDING, MAX_RADIUS, Probe, Project, RESOLUTIONS, Seg, ZOOMS};
 use crate::track::Track;
 use crate::{palette, trim, util};
 
 const FILMSTRIP: f32 = 44.;
 const RULER: f32 = 18.;
-const SIDEBAR: f32 = 300. * kit::SCALE;
+const LANE: f32 = 30.;
+const SIDEBAR: f32 = 320. * kit::SCALE;
 /// Air around the preview inside the window.
 const STAGE_PAD: f32 = 24.;
-const LANE: f32 = 30.;
 /// Edge grab width on segments, in pixels.
 const EDGE: f32 = 7.;
 const MIN_SEG: f64 = 0.3;
-const PLAY_FPS: u32 = 30;
 const NEW_SEG: f64 = 2.0;
+const NEW_CUT: f64 = 1.0;
+const PLAY_FPS: u32 = 30;
+const WALLPAPERS: usize = 12;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Knob {
+    Padding,
+    Radius,
+    Shadow,
+}
 
 enum Drag {
     Playhead,
     Move { index: usize, grab: f64 },
     Edge { index: usize, start: bool },
+    Trim { start: bool },
+    CutMove { index: usize, grab: f64 },
+    CutEdge { index: usize, start: bool },
+    Slider(Knob),
 }
 
 pub struct StudioEditor {
@@ -47,23 +63,28 @@ pub struct StudioEditor {
     project: Project,
     camera: Camera,
     thumbs: Vec<Arc<Image>>,
+    walls: Vec<(PathBuf, Arc<Image>)>,
     frame: Option<ImageSource>,
     /// Playing inside the editor; any seek stops it.
     playing: bool,
     /// Played frames no longer on screen, freed from the atlas on render.
     stale: Vec<Arc<RenderImage>>,
     playhead: f64,
+    /// The selected zoom segment, or the selected cut; never both.
     selected: Option<usize>,
+    cut: Option<usize>,
     drag: Option<Drag>,
     /// Waiting for a click on the preview to set the selected segment's focus.
     placing: bool,
-    /// Preview stage size (16:9, like the output).
+    /// Room for the preview (it fits the output's shape inside).
     stage: (f32, f32),
     /// Timeline x origin and width, and the segment lane's top, in window
     /// coordinates.
     timeline: Rc<Cell<(f32, f32, f32)>>,
-    /// The video box inside the stage, in window coordinates.
+    /// The video box inside the preview, in window coordinates.
     video_box: Rc<Cell<(f32, f32, f32, f32)>>,
+    /// Slider tracks (x, width) in window coordinates.
+    sliders: Rc<RefCell<HashMap<Knob, (f32, f32)>>>,
     request: Rc<Cell<u64>>,
     focus: FocusHandle,
 }
@@ -83,7 +104,8 @@ pub fn open(video: PathBuf, cx: &mut App) {
         let stage_w = (mon.w as f32 - 80. - 2. * STAGE_PAD - SIDEBAR).min((mon.h as f32 - chrome_h) * 16. / 9.).min(mon.w as f32 * 0.62);
         let stage = (stage_w, stage_w * 9. / 16.);
         let thumbs = trim::filmstrip(&video, probe.duration).await;
-        let frame = trim::frame(&video, 0., (stage.0 * 2.) as u32, 0).await;
+        let frame = trim::frame(&video, project.trim.0, (stage.0 * 2.) as u32, 0).await;
+        let walls = wallpaper_thumbs().await;
         let _ = cx.update(|cx| {
             let spec = LayerSpec {
                 namespace: "kadr-studio",
@@ -99,6 +121,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                     let focus = cx.focus_handle();
                     window.focus(&focus, cx);
                     let camera = Camera::new(&track, &probe, &project.segments);
+                    let playhead = project.trim.0;
                     StudioEditor {
                         video,
                         probe,
@@ -106,16 +129,19 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         project,
                         camera,
                         thumbs,
+                        walls,
                         frame: frame.map(ImageSource::from),
                         playing: false,
                         stale: Vec::new(),
-                        playhead: 0.,
+                        playhead,
                         selected: None,
+                        cut: None,
                         drag: None,
                         placing: false,
                         stage,
                         timeline: Rc::new(Cell::new((0., 1., 0.))),
                         video_box: Rc::new(Cell::new((0., 0., 1., 1.))),
+                        sliders: Rc::new(RefCell::new(HashMap::new())),
                         request: Rc::new(Cell::new(0)),
                         focus,
                     }
@@ -124,6 +150,56 @@ pub fn open(video: PathBuf, cx: &mut App) {
         });
     })
     .detach();
+}
+
+/// Omarchy's wallpapers, current theme first, as small previews.
+async fn wallpaper_thumbs() -> Vec<(PathBuf, Arc<Image>)> {
+    let (tx, rx) = futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        let mut dirs = vec![home.join(".local/state/omarchy/current/theme/backgrounds")];
+        let mut add = |dir: &Path| {
+            let mut found: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+            found.sort();
+            dirs.extend(found);
+        };
+        add(&home.join(".config/omarchy/backgrounds"));
+        let mut themes: Vec<PathBuf> = std::fs::read_dir("/usr/share/omarchy/themes").into_iter().flatten().flatten().map(|e| e.path().join("backgrounds")).collect();
+        themes.sort();
+        dirs.extend(themes);
+        let mut images = Vec::new();
+        for dir in dirs {
+            let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+            files.sort();
+            images.extend(files.into_iter().filter(|f| {
+                let ext = f.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp")
+            }));
+            if images.len() >= WALLPAPERS * 2 {
+                break;
+            }
+        }
+        let cache = util::cache_dir().join("thumbs");
+        let _ = std::fs::create_dir_all(&cache);
+        // Several themes ship the same plain black picture; show it once.
+        let mut seen = std::collections::HashSet::new();
+        let thumbs = images
+            .into_iter()
+            .filter_map(|path| {
+                let key = path.display().to_string().bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+                let thumb = cache.join(format!("wall-{key:016x}.png"));
+                if !thumb.exists() {
+                    let small = image::open(&path).ok()?.resize_to_fill(160, 100, image::imageops::FilterType::Triangle);
+                    small.save(&thumb).ok()?;
+                }
+                let bytes = std::fs::read(&thumb).ok()?;
+                seen.insert(bytes.clone()).then(|| (path, Arc::new(Image::from_bytes(ImageFormat::Png, bytes))))
+            })
+            .take(WALLPAPERS)
+            .collect();
+        let _ = tx.send(thumbs);
+    });
+    rx.await.unwrap_or_default()
 }
 
 impl StudioEditor {
@@ -170,16 +246,22 @@ impl StudioEditor {
     }
 
     /// Play from the playhead inside the editor, zooms and all: ffmpeg decodes
-    /// raw frames at preview size, paced to the clock. Space again pauses.
+    /// raw frames at preview size, paced to the clock. Cut pieces are jumped
+    /// over and it stops at the trimmed end. Space again pauses.
     fn toggle_play(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.playing {
             // Pausing fetches a sharp frame at full preview size.
             return self.seek(self.playhead, cx);
         }
-        let start = if self.playhead >= self.probe.duration - 0.05 { 0. } else { self.playhead };
+        let start = self.project.next_kept(self.playhead).or_else(|| self.project.kept().first().map(|k| k.0)).unwrap_or(0.);
+        self.play_from(start, window, cx);
+    }
+
+    fn play_from(&mut self, start: f64, window: &mut Window, cx: &mut Context<Self>) {
         let id = self.request.get() + 1;
         self.request.set(id);
         self.playing = true;
+        self.playhead = start;
 
         let even = |v: f64| ((v / 2.).round() * 2.).max(2.) as usize;
         let w = even((self.stage.0 as f64 * 1.5).min(self.probe.w));
@@ -224,26 +306,42 @@ impl StudioEditor {
                 let Some(frame) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else { return };
                 let shown = Arc::new(RenderImage::new([image::Frame::new(frame)]));
                 let t = start + n as f64 / PLAY_FPS as f64;
-                let alive = this.update(cx, |editor, cx| {
+                let keep_going = this.update_in(cx, |editor, window, cx| {
                     if request.get() != id {
-                        return;
+                        return false;
                     }
-                    if let Some(ImageSource::Render(old)) = editor.frame.replace(ImageSource::Render(shown)) {
-                        editor.stale.push(old);
+                    match editor.project.next_kept(t) {
+                        // Into a cut: start again after it.
+                        Some(next) if next > t + 0.05 => {
+                            editor.play_from(next, window, cx);
+                            false
+                        }
+                        Some(_) => {
+                            if let Some(ImageSource::Render(old)) = editor.frame.replace(ImageSource::Render(shown)) {
+                                editor.stale.push(old);
+                            }
+                            editor.playhead = t.min(editor.probe.duration);
+                            cx.notify();
+                            true
+                        }
+                        // Past the trimmed end.
+                        None => {
+                            let end = editor.project.trim.1;
+                            editor.seek(end, cx);
+                            false
+                        }
                     }
-                    editor.playhead = t.min(editor.probe.duration);
-                    cx.notify();
                 });
-                if alive.is_err() {
+                if !matches!(keep_going, Ok(true)) {
                     return;
                 }
                 n += 1;
             }
-            // The end: stop on the last frame, sharpened.
+            // The end of the file: stop on the last frame, sharpened.
             let _ = this.update(cx, |editor, cx| {
                 if request.get() == id {
-                    let at = editor.probe.duration;
-                    editor.seek(at, cx);
+                    let end = editor.project.trim.1;
+                    editor.seek(end, cx);
                 }
             });
         })
@@ -251,17 +349,75 @@ impl StudioEditor {
         cx.notify();
     }
 
+    fn select_zoom(&mut self, index: Option<usize>) {
+        self.selected = index;
+        self.cut = None;
+        self.placing = false;
+    }
+
+    fn select_cut(&mut self, index: Option<usize>) {
+        self.cut = index;
+        self.selected = None;
+        self.placing = false;
+    }
+
+    /// Cut a second out at the playhead; its edges then set the length.
+    fn add_cut(&mut self, cx: &mut Context<Self>) {
+        let (lo, hi) = self.project.trim;
+        let start = self.playhead.clamp(lo, (hi - MIN_SEG).max(lo));
+        let end = (start + NEW_CUT).min(hi);
+        if end - start < 0.05 {
+            return;
+        }
+        self.project.cuts.push((start, end));
+        self.select_cut(Some(self.project.cuts.len() - 1));
+        self.changed(cx);
+    }
+
     fn timeline_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
         let (ox, _, lane_top) = self.timeline.get();
+        let strip_top = lane_top - 6. - FILMSTRIP;
         let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
         let t = self.time_at(x);
+        let local = x - ox;
         self.placing = false;
+
+        if y >= strip_top && y < lane_top {
+            // The filmstrip: trim handles, then cuts, else the playhead.
+            let (a, b) = (self.x_of(self.project.trim.0), self.x_of(self.project.trim.1));
+            if (local - a).abs() <= EDGE + 3. {
+                self.drag = Some(Drag::Trim { start: true });
+                return cx.notify();
+            }
+            if (local - b).abs() <= EDGE + 3. {
+                self.drag = Some(Drag::Trim { start: false });
+                return cx.notify();
+            }
+            let hit = self.project.cuts.iter().enumerate().rev().find_map(|(i, &(s, e))| {
+                let (a, b) = (self.x_of(s), self.x_of(e));
+                if (local - a).abs() <= EDGE {
+                    Some(Drag::CutEdge { index: i, start: true })
+                } else if (local - b).abs() <= EDGE {
+                    Some(Drag::CutEdge { index: i, start: false })
+                } else if local > a && local < b {
+                    Some(Drag::CutMove { index: i, grab: t - s })
+                } else {
+                    None
+                }
+            });
+            if let Some(drag) = hit {
+                if let Drag::CutEdge { index, .. } | Drag::CutMove { index, .. } = drag {
+                    self.select_cut(Some(index));
+                }
+                self.drag = Some(drag);
+                return cx.notify();
+            }
+        }
         if y < lane_top {
             self.drag = Some(Drag::Playhead);
             return self.seek(t, cx);
         }
         // The segment lane: edges resize, bodies move, empty space adds.
-        let local = x - ox;
         let hit = self.project.segments.iter().enumerate().rev().find_map(|(i, s)| {
             let (a, b) = (self.x_of(s.start), self.x_of(s.end));
             if (local - a).abs() <= EDGE {
@@ -276,17 +432,16 @@ impl StudioEditor {
         });
         match hit {
             Some(drag) => {
-                self.selected = Some(match drag {
-                    Drag::Edge { index, .. } | Drag::Move { index, .. } => index,
-                    Drag::Playhead => unreachable!(),
-                });
+                if let Drag::Edge { index, .. } | Drag::Move { index, .. } = drag {
+                    self.select_zoom(Some(index));
+                }
                 self.drag = Some(drag);
             }
             None => {
                 let start = t.min(self.probe.duration - MIN_SEG).max(0.);
                 let end = (start + NEW_SEG).min(self.probe.duration);
                 self.project.segments.push(Seg { start, end, zoom: studio::DEFAULT_ZOOM, focus: None });
-                self.selected = Some(self.project.segments.len() - 1);
+                self.select_zoom(Some(self.project.segments.len() - 1));
                 self.drag = Some(Drag::Edge { index: self.project.segments.len() - 1, start: false });
                 self.seek(start + 0.01, cx);
                 self.changed(cx);
@@ -299,7 +454,8 @@ impl StudioEditor {
         if e.pressed_button != Some(MouseButton::Left) {
             return;
         }
-        let t = self.time_at(f32::from(e.position.x));
+        let x = f32::from(e.position.x);
+        let t = self.time_at(x);
         let d = self.probe.duration;
         match self.drag {
             Some(Drag::Playhead) => self.seek(t, cx),
@@ -321,8 +477,49 @@ impl StudioEditor {
                 self.changed(cx);
                 self.seek(at, cx);
             }
+            Some(Drag::Trim { start }) => {
+                let trim = &mut self.project.trim;
+                if start {
+                    trim.0 = t.clamp(0., trim.1 - MIN_SEG);
+                } else {
+                    trim.1 = t.clamp(trim.0 + MIN_SEG, d);
+                }
+                let at = if start { trim.0 } else { trim.1 };
+                self.changed(cx);
+                self.seek(at, cx);
+            }
+            Some(Drag::CutMove { index, grab }) => {
+                let cut = &mut self.project.cuts[index];
+                let len = cut.1 - cut.0;
+                cut.0 = (t - grab).clamp(0., d - len);
+                cut.1 = cut.0 + len;
+                self.changed(cx);
+            }
+            Some(Drag::CutEdge { index, start }) => {
+                let cut = &mut self.project.cuts[index];
+                if start {
+                    cut.0 = t.clamp(0., cut.1 - 0.05);
+                } else {
+                    cut.1 = t.clamp(cut.0 + 0.05, d);
+                }
+                let at = if start { cut.0 } else { cut.1 };
+                self.changed(cx);
+                self.seek(at, cx);
+            }
+            Some(Drag::Slider(knob)) => self.slide(knob, x, cx),
             None => {}
         }
+    }
+
+    fn slide(&mut self, knob: Knob, x: f32, cx: &mut Context<Self>) {
+        let Some(&(x0, w)) = self.sliders.borrow().get(&knob) else { return };
+        let v = ((x - x0) / w.max(1.)).clamp(0., 1.) as f64;
+        match knob {
+            Knob::Padding => self.project.padding = v * MAX_PADDING,
+            Knob::Radius => self.project.radius = v * MAX_RADIUS,
+            Knob::Shadow => self.project.shadow = v,
+        }
+        self.changed(cx);
     }
 
     /// Clicking the preview while placing sets the segment's focus point.
@@ -342,10 +539,31 @@ impl StudioEditor {
     }
 
     fn delete_selected(&mut self, cx: &mut Context<Self>) {
-        if let Some(i) = self.selected.take() {
+        if let Some(i) = self.cut.take() {
+            self.project.cuts.remove(i);
+            self.changed(cx);
+        } else if let Some(i) = self.selected.take() {
             self.project.segments.remove(i);
             self.changed(cx);
         }
+    }
+
+    fn pick_wallpaper(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some("Выбрать картинку для фона".into()) });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(path) = paths.into_iter().next() else { return };
+            let _ = this.update(cx, |editor, cx| {
+                editor.project.wallpaper = Some(path);
+                editor.changed(cx);
+            });
+        })
+        .detach();
+    }
+
+    fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.remove_window();
+        studio::export(self.video.clone(), self.project.clone(), false, cx);
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -353,30 +571,32 @@ impl StudioEditor {
         let ctrl = k.modifiers.control || k.modifiers.platform;
         match (k.key.as_str(), ctrl) {
             ("escape", _) if self.placing => self.placing = false,
-            ("escape", _) if self.selected.is_some() => self.selected = None,
+            ("escape", _) if self.selected.is_some() || self.cut.is_some() => self.select_zoom(None),
             ("escape", _) => return window.remove_window(),
             ("delete" | "backspace", false) => self.delete_selected(cx),
             ("space", false) => self.toggle_play(window, cx),
-            ("s", true) => {
-                window.remove_window();
-                return studio::export(self.video.clone(), self.project.clone(), false, cx);
-            }
+            ("x", false) => self.add_cut(cx),
+            ("s", true) => return self.export(window, cx),
             ("left", _) => self.seek(self.playhead - 0.5, cx),
             ("right", _) => self.seek(self.playhead + 0.5, cx),
+            ("home", _) => self.seek(self.project.trim.0, cx),
+            ("end", _) => self.seek(self.project.trim.1, cx),
             _ => {}
         }
         cx.notify();
     }
 
-    /// The output frame as it will look at the playhead.
+    /// The output frame as it will look at the playhead, laid out exactly as
+    /// the render does, scaled into the stage.
     fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let l = studio::layout(&self.probe, &self.project, true);
         let (sw, sh) = self.stage;
+        let k = (sw / l.ow as f32).min(sh / l.oh as f32);
+        let (fw, fh) = (l.ow as f32 * k, l.oh as f32 * k);
+        let (bx, by, bw, bh) = (l.x as f32 * k, l.y as f32 * k, l.w as f32 * k, l.h as f32 * k);
+        let radius = l.radius as f32 * k;
+        let short = fw.min(fh);
         let (vw, vh) = (self.probe.w as f32, self.probe.h as f32);
-        let pad = PADDINGS[self.project.padding.min(PADDINGS.len() - 1)] as f32 * sh;
-        let k = ((sw - 2. * pad) / vw).min((sh - 2. * pad) / vh);
-        let (bw, bh) = (vw * k, vh * k);
-        let (bx, by) = ((sw - bw) / 2., (sh - bh) / 2.);
-        let radius = if pad > 0. { 22. * sh / 1440. } else { 0. };
 
         let (z, cxv, cyv) = self.camera.at(self.playhead);
         let z = z as f32;
@@ -396,7 +616,7 @@ impl StudioEditor {
         .inset_0()
         .size_full();
 
-        let (c0, c1) = self.project.colors();
+        let shadow = self.project.shadow as f32;
         let picture = div()
             .id("video")
             .absolute()
@@ -406,7 +626,15 @@ impl StudioEditor {
             .h(px(bh))
             .rounded(px(radius))
             .overflow_hidden()
-            .when(pad > 0., |d| d.shadow(kit::shadow()))
+            .when(shadow > 0. && (bw < fw || bh < fh), |d| {
+                d.shadow(vec![BoxShadow {
+                    color: gpui::hsla(0., 0., 0., 0.55 * shadow),
+                    offset: point(px(0.), px(0.012 * short)),
+                    blur_radius: px(0.035 * short),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+            })
             .bg(gpui::black())
             .when(self.placing, |d| d.cursor(CursorStyle::Crosshair))
             .children(self.frame.clone().map(|f| {
@@ -421,13 +649,18 @@ impl StudioEditor {
             .child(tracker)
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.preview_down(e, cx)));
 
+        let (c0, c1) = self.project.colors();
+        let backdrop = match &self.project.wallpaper {
+            Some(path) => div().size_full().child(img(path.clone()).size_full().object_fit(ObjectFit::Cover)),
+            None => div().size_full().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))),
+        };
         div()
             .relative()
-            .w(px(sw))
-            .h(px(sh))
-            .rounded_lg()
+            .w(px(fw))
+            .h(px(fh))
+            .rounded_md()
             .overflow_hidden()
-            .bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.)))
+            .child(backdrop)
             .child(picture)
             .when(self.placing, |d| {
                 d.child(
@@ -443,14 +676,17 @@ impl StudioEditor {
             })
     }
 
-    /// Ruler, filmstrip and the zoom lane, full width under the preview.
+    /// Ruler, filmstrip (trim and cuts) and the zoom lane, under the preview.
     fn render_timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
+        let status = cx.theme().status();
         let (accent, lane_bg, text, tick) = (colors.text_accent, colors.element_background, colors.text, colors.border);
+        let (handle_color, cut_color) = (status.warning, status.error);
         let thumbs = self.thumbs.iter().map(|t| img(t.clone()).flex_1().h_full().object_fit(ObjectFit::Cover));
         let d = self.probe.duration.max(0.001);
-        let segments: Vec<(f64, f64, f64, bool, bool)> =
-            self.project.segments.iter().enumerate().map(|(i, s)| (s.start, s.end, s.zoom, s.focus.is_some(), self.selected == Some(i))).collect();
+        let segments: Vec<(f64, f64, bool)> = self.project.segments.iter().enumerate().map(|(i, s)| (s.start, s.end, self.selected == Some(i))).collect();
+        let cuts: Vec<(f64, f64, bool)> = self.project.cuts.iter().enumerate().map(|(i, &(a, b))| (a, b, self.cut == Some(i))).collect();
+        let trim = self.project.trim;
         let playhead = self.playhead;
         let timeline = self.timeline.clone();
         // About ten labelled ticks, on round seconds.
@@ -460,18 +696,42 @@ impl StudioEditor {
         let top = RULER;
         let lane_y = RULER + FILMSTRIP + 6.;
 
-        // Ticks, segments and the playhead are painted; text goes on top.
+        // Ticks, trim, cuts, segments and the playhead are painted; text goes on top.
         let painter = canvas(
             move |bounds, _, _| bounds,
             move |_, bounds, window, _| {
                 let (x0, w) = (bounds.origin.x, bounds.size.width);
                 let at = |t: f64| x0 + w * (t / d) as f32;
+                let strip_top = bounds.origin.y + px(top);
                 let lane_top = bounds.origin.y + px(lane_y);
                 timeline.set((f32::from(x0), f32::from(w), f32::from(lane_top)));
                 for &t in &ticks {
                     window.paint_quad(fill(Bounds::new(point(at(t), bounds.origin.y + px(top - 6.)), size(px(1.), px(5.))), tick));
                 }
-                for &(s, e, _, _, selected) in &segments {
+                // Cut pieces: red wash with a frame.
+                for &(a, b, selected) in &cuts {
+                    let mut wash = cut_color;
+                    wash.a = if selected { 0.6 } else { 0.42 };
+                    let block = Bounds::new(point(at(a), strip_top), size(at(b) - at(a), px(FILMSTRIP)));
+                    window.paint_quad(gpui::quad(block, px(4.), wash, px(if selected { 2. } else { 1. }), cut_color, BorderStyle::Solid));
+                }
+                // Trimmed-off ends are dimmed, with handles on the kept part.
+                let shade = gpui::hsla(0., 0., 0., 0.62);
+                if trim.0 > 0. {
+                    window.paint_quad(fill(Bounds::new(point(x0, strip_top), size(at(trim.0) - x0, px(FILMSTRIP))), shade));
+                }
+                if trim.1 < d {
+                    window.paint_quad(fill(Bounds::new(point(at(trim.1), strip_top), size(x0 + w - at(trim.1), px(FILMSTRIP))), shade));
+                }
+                let kept = Bounds::new(point(at(trim.0), strip_top), size(at(trim.1) - at(trim.0), px(FILMSTRIP)));
+                window.paint_quad(gpui::quad(kept, px(6.), gpui::transparent_black(), px(2.), handle_color, BorderStyle::Solid));
+                for (x, left) in [(at(trim.0), true), (at(trim.1), false)] {
+                    let hx = if left { x } else { x - px(8.) };
+                    window.paint_quad(gpui::quad(Bounds::new(point(hx, strip_top), size(px(8.), px(FILMSTRIP))), px(4.), handle_color, px(0.), handle_color, BorderStyle::Solid));
+                    let grip = gpui::hsla(0., 0., 0., 0.5);
+                    window.paint_quad(fill(Bounds::new(point(hx + px(3.5), strip_top + px(FILMSTRIP / 2. - 7.)), size(px(1.), px(14.))), grip));
+                }
+                for &(s, e, selected) in &segments {
                     let block = Bounds::new(point(at(s), lane_top + px(2.)), size(at(e) - at(s), px(LANE - 4.)));
                     let mut fill_color = accent;
                     fill_color.a = if selected { 0.55 } else { 0.3 };
@@ -512,6 +772,20 @@ impl StudioEditor {
                 .child(Label::new(format!("×{:.2}", s.zoom).trim_end_matches('0').trim_end_matches('.').to_string()).size(LabelSize::XSmall))
                 .when(s.focus.is_some(), |d| d.child(Icon::new(IconName::Crosshair).size(IconSize::XSmall).color(Color::Muted)))
         });
+        let cut_marks = self.project.cuts.iter().map(|&(a, b)| {
+            let (a, b) = ((a.min(b) / d) as f32, (a.max(b) / d) as f32);
+            div()
+                .absolute()
+                .left(relative(a))
+                .top(px(top))
+                .w(relative(b - a))
+                .h(px(FILMSTRIP))
+                .flex()
+                .items_center()
+                .justify_center()
+                .overflow_hidden()
+                .child(Icon::new(IconName::Scissors).size(IconSize::Small).color(Color::Custom(gpui::white())))
+        });
         let ruler = marks.into_iter().map(|t| {
             div().absolute().top_0().left(relative((t / d) as f32)).ml_1().child(Label::new(ruler_label(t, step)).size(LabelSize::XSmall).color(Color::Muted))
         });
@@ -543,12 +817,14 @@ impl StudioEditor {
                 )
                 .children(labels)
                 .child(painter)
+                .children(cut_marks)
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.timeline_down(e, cx))),
         )
     }
 
     fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let name = self.video.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let gif = self.project.format == Format::Gif;
         h_flex()
             .w_full()
             .justify_between()
@@ -570,7 +846,7 @@ impl StudioEditor {
                             .on_click(|_, window, _| window.remove_window()),
                     )
                     .child(div().min_w_0().child(Label::new(name).size(LabelSize::Small).truncate()))
-                    .child(Label::new(clock(self.probe.duration)).size(LabelSize::Small).color(Color::Muted)),
+                    .child(Label::new(clock(self.project.kept_duration())).size(LabelSize::Small).color(Color::Muted)),
             )
             .child(
                 h_flex()
@@ -583,19 +859,16 @@ impl StudioEditor {
                             .on_click(cx.listener(|this, _, _, cx| studio::export(this.video.clone(), this.project.clone(), true, cx))),
                     )
                     .child(
-                        Button::new("export", "Экспорт")
+                        Button::new("export", if gif { "Экспорт GIF" } else { "Экспорт" })
                             .style(ButtonStyle::Filled)
                             .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
                             .key_binding(kit::keys("ctrl-s"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                window.remove_window();
-                                studio::export(this.video.clone(), this.project.clone(), false, cx);
-                            })),
+                            .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
                     ),
             )
     }
 
-    /// Time, stepping and the current zoom, under the preview.
+    /// Time, stepping, cutting and the current zoom, under the preview.
     fn render_transport(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (z, _, _) = self.camera.at(self.playhead);
         let mono = |text: String| div().font_family(kit::MONO_FONT).text_sm().text_color(cx.theme().colors().text_muted).child(text);
@@ -604,7 +877,7 @@ impl StudioEditor {
             .justify_between()
             .px_3()
             .py_1()
-            .child(div().w(px(160.)).child(mono(format!("{} / {}", clock(self.playhead), clock(self.probe.duration)))))
+            .child(div().w(px(180.)).child(mono(format!("{} / {}", clock(self.playhead), clock(self.probe.duration)))))
             .child(
                 h_flex()
                     .gap_1()
@@ -628,11 +901,58 @@ impl StudioEditor {
                             .on_click(cx.listener(|this, _, _, cx| this.seek(this.playhead + 0.5, cx))),
                     ),
             )
-            .child(div().w(px(160.)).flex().justify_end().child(mono(format!("×{z:.2}"))))
+            .child(
+                h_flex()
+                    .w(px(180.))
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("cut", "Вырезать")
+                            .style(ButtonStyle::Subtle)
+                            .size(ButtonSize::Compact)
+                            .start_icon(Icon::new(IconName::Scissors).size(IconSize::Small))
+                            .tooltip(|_, cx| cx.new(|_| Tooltip::new("Вырезать кусок с этого места").meta("Потом тяни его края на раскадровке").key_binding(kit::keys("x"))).into())
+                            .on_click(cx.listener(|this, _, _, cx| this.add_cut(cx))),
+                    )
+                    .child(mono(format!("×{z:.2}"))),
+            )
     }
 
-    /// Settings on the right, like CleanShot's studio: the selected zoom
-    /// first, then the look of the whole video.
+    fn slider(&self, knob: Knob, value: f64, label: String, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors();
+        let (track, filled, knob_color) = (colors.element_background, colors.text_accent, colors.text);
+        let sliders = self.sliders.clone();
+        let v = value.clamp(0., 1.) as f32;
+        let bar = canvas(
+            move |bounds, _, _| {
+                sliders.borrow_mut().insert(knob, (f32::from(bounds.origin.x), f32::from(bounds.size.width)));
+                bounds
+            },
+            move |_, bounds, window, _| {
+                let mid = bounds.origin.y + bounds.size.height / 2.;
+                let (x0, w) = (bounds.origin.x, bounds.size.width);
+                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
+                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
+                let cx0 = x0 + w * v;
+                window.paint_quad(gpui::quad(Bounds::new(point(cx0 - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
+            },
+        )
+        .size_full();
+        h_flex()
+            .w_full()
+            .gap_3()
+            .child(div().id(SharedString::from(format!("slider-{}", knob as u8))).flex_1().h(px(22.)).mx_2().cursor(CursorStyle::PointingHand).child(bar).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    this.drag = Some(Drag::Slider(knob));
+                    this.slide(knob, f32::from(e.position.x), cx);
+                }),
+            ))
+            .child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted)))
+    }
+
+    /// Settings on the right, like CleanShot's studio: the selected zoom or
+    /// cut first, then the look of the whole video and the export.
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let chip = |id: SharedString, label: String, on: bool| {
             ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
@@ -641,9 +961,23 @@ impl StudioEditor {
         let section = |title: &'static str| v_flex().w_full().gap_2().pb_4().border_b_1().border_color(line).child(Label::new(title).size(LabelSize::Small).color(Color::Muted));
         let caption = |text: &'static str| Label::new(text).size(LabelSize::Small);
 
-        let segment = self.selected.and_then(|i| self.project.segments.get(i).map(|s| (i, s.clone())));
-        let zoom = match segment {
-            Some((index, seg)) => section("Зум")
+        let context = if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
+            section("Вырезка")
+                .child(Label::new(format!("Убираем {} ({} → {})", seconds((b - a).abs()), clock(a.min(b)), clock(a.max(b)))).size(LabelSize::Small))
+                .child(Label::new("Тяни края на раскадровке, чтобы поменять").size(LabelSize::XSmall).color(Color::Muted))
+                .child(
+                    Button::new("delete-cut", "Вернуть кусок")
+                        .style(ButtonStyle::Subtle)
+                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
+                        .key_binding(kit::keys("delete"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.project.cuts.remove(index);
+                            this.cut = None;
+                            this.changed(cx);
+                        })),
+                )
+        } else if let Some((index, seg)) = self.selected.and_then(|i| self.project.segments.get(i).map(|s| (i, s.clone()))) {
+            section("Зум")
                 .child(caption("Увеличение"))
                 .child(h_flex().flex_wrap().gap_1().children(ZOOMS.iter().map(|&z| {
                     chip(SharedString::from(format!("zoom-{z}")), format!("×{z}"), (seg.zoom - z).abs() < 0.01).on_click(cx.listener(move |this, _, _, cx| {
@@ -673,54 +1007,93 @@ impl StudioEditor {
                         .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Error))
                         .key_binding(kit::keys("delete"))
                         .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
-                ),
-            None => section("Зум")
+                )
+        } else {
+            let edited = self.project.trim != (0., self.probe.duration) || !self.project.cuts.is_empty();
+            section("Монтаж")
                 .child(
                     Label::new(match self.project.segments.len() {
-                        0 => "Зумов нет. Кликни по нижней дорожке таймлайна, чтобы добавить".to_string(),
+                        0 => "Зумов нет: кликни по нижней дорожке, чтобы добавить".to_string(),
                         n => format!("Зумов: {n}. Выбери любой на таймлайне, чтобы настроить"),
                     })
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 )
+                .child(Label::new("Жёлтые края раскадровки обрезают начало и конец, «Вырезать» (X) убирает кусок из середины").size(LabelSize::XSmall).color(Color::Muted))
                 .child(
-                    Button::new("auto", "Расставить по кликам")
-                        .style(ButtonStyle::Outlined)
-                        .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                        .disabled(self.track.clicks.is_empty())
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let auto = Project::auto(&this.track, &this.probe);
-                            this.project.segments = auto.segments;
-                            this.selected = None;
-                            this.changed(cx);
-                        })),
-                ),
+                    h_flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .child(
+                            Button::new("auto", "Зумы по кликам")
+                                .style(ButtonStyle::Outlined)
+                                .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
+                                .disabled(self.track.clicks.is_empty())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let auto = Project::auto(&this.track, &this.probe);
+                                    this.project.segments = auto.segments;
+                                    this.select_zoom(None);
+                                    this.changed(cx);
+                                })),
+                        )
+                        .when(edited, |row| {
+                            row.child(Button::new("uncut", "Вернуть всё видео").style(ButtonStyle::Subtle).on_click(cx.listener(|this, _, _, cx| {
+                                this.project.trim = (0., this.probe.duration);
+                                this.project.cuts.clear();
+                                this.select_cut(None);
+                                this.changed(cx);
+                            })))
+                        }),
+                )
         };
 
+        let aspects = ASPECTS.iter().enumerate().map(|(i, (label, _))| {
+            chip(SharedString::from(format!("aspect-{i}")), (*label).into(), self.project.aspect == i).on_click(cx.listener(move |this, _, _, cx| {
+                this.project.aspect = i;
+                this.changed(cx);
+            }))
+        })
+        .collect::<Vec<_>>();
+
         let ring = cx.theme().colors().text;
-        let backdrops = palette::backdrops().into_iter().enumerate().map(|(i, (c0, c1))| {
+        let swatch = |id: SharedString, selected: bool| {
             div()
-                .id(("backdrop", i))
-                .size(px(40.))
+                .id(id)
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded(px(10.))
                 .border_2()
-                .border_color(if i == self.project.backdrop { ring } else { gpui::transparent_black() })
+                .border_color(if selected { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
+        };
+        let gradients = palette::backdrops().into_iter().enumerate().map(|(i, (c0, c1))| {
+            swatch(SharedString::from(format!("backdrop-{i}")), self.project.wallpaper.is_none() && i == self.project.backdrop)
+                .size(px(40.))
                 .child(div().size(px(30.)).rounded(px(7.)).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.project.backdrop = i;
+                    this.project.wallpaper = None;
                     this.changed(cx);
                 }))
+        })
+        .collect::<Vec<_>>();
+        let walls = self.walls.iter().enumerate().map(|(i, (path, thumb))| {
+            let path = path.clone();
+            swatch(SharedString::from(format!("wall-{i}")), self.project.wallpaper.as_ref() == Some(&path))
+                .w(px(64.))
+                .h(px(44.))
+                .child(img(thumb.clone()).w(px(56.)).h(px(36.)).rounded(px(6.)).object_fit(ObjectFit::Cover))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.project.wallpaper = Some(path.clone());
+                    this.changed(cx);
+                }))
+        })
+        .collect::<Vec<_>>();
+        let custom = self.project.wallpaper.as_ref().filter(|w| !self.walls.iter().any(|(p, _)| p == *w)).map(|w| {
+            Label::new(format!("Своя: {}", w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).size(LabelSize::XSmall).color(Color::Muted).truncate()
         });
-        let paddings = ["Нет", "S", "M", "L"].into_iter().enumerate().map(|(i, label)| {
-            chip(SharedString::from(format!("pad-{i}")), label.into(), self.project.padding == i).on_click(cx.listener(move |this, _, _, cx| {
-                this.project.padding = i;
-                this.changed(cx);
-            }))
-        });
+
         let has_clicks = !self.track.clicks.is_empty();
         let has_keys = !self.track.keystrokes.is_empty();
         let toggle_row = |title: &'static str, hint: &'static str, switch: Switch| {
@@ -731,6 +1104,47 @@ impl StudioEditor {
                 .child(v_flex().min_w_0().child(caption(title)).child(Label::new(hint).size(LabelSize::XSmall).color(Color::Muted)))
                 .child(div().flex_none().child(switch))
         };
+        let keys_on = self.project.keys && has_keys;
+        let key_style = h_flex()
+            .gap_1()
+            .child(chip("keys-bottom".into(), "Снизу".into(), !self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
+                this.project.keys_top = false;
+                this.changed(cx);
+            })))
+            .child(chip("keys-top".into(), "Сверху".into(), self.project.keys_top).on_click(cx.listener(|this, _, _, cx| {
+                this.project.keys_top = true;
+                this.changed(cx);
+            })))
+            .child(div().w_2())
+            .children(KEY_SIZES.iter().enumerate().map(|(i, (label, _))| {
+                chip(SharedString::from(format!("keys-size-{i}")), (*label).into(), self.project.keys_size == i).on_click(cx.listener(move |this, _, _, cx| {
+                    this.project.keys_size = i;
+                    this.changed(cx);
+                }))
+            }));
+
+        let gif = self.project.format == Format::Gif;
+        let formats = [(Format::Mp4, "MP4"), (Format::Gif, "GIF")].map(|(format, label)| {
+            chip(SharedString::from(format!("format-{label}")), label.into(), self.project.format == format).on_click(cx.listener(move |this, _, _, cx| {
+                this.project.format = format;
+                this.changed(cx);
+            }))
+        });
+        let resolutions = RESOLUTIONS.iter().enumerate().map(|(i, (label, _))| {
+            chip(SharedString::from(format!("res-{i}")), (*label).into(), self.project.resolution == i).on_click(cx.listener(move |this, _, _, cx| {
+                this.project.resolution = i;
+                this.changed(cx);
+            }))
+        })
+        .collect::<Vec<_>>();
+        let rates = FRAME_RATES.iter().enumerate().map(|(i, (label, _))| {
+            chip(SharedString::from(format!("fps-{i}")), (*label).into(), self.project.frame_rate == i).on_click(cx.listener(move |this, _, _, cx| {
+                this.project.frame_rate = i;
+                this.changed(cx);
+            }))
+        })
+        .collect::<Vec<_>>();
+        let out = studio::layout(&self.probe, &self.project, false);
 
         v_flex()
             .id("sidebar")
@@ -742,13 +1156,31 @@ impl StudioEditor {
             .p_4()
             .border_l_1()
             .border_color(line)
-            .child(zoom)
-            .child(section("Фон").child(h_flex().flex_wrap().gap_1().children(backdrops)))
-            .child(section("Отступ").child(h_flex().gap_1().children(paddings)))
+            .child(context)
+            .child(section("Формат").child(h_flex().flex_wrap().gap_1().children(aspects)))
             .child(
-                v_flex()
-                    .gap_3()
-                    .child(Label::new("Поверх видео").size(LabelSize::Small).color(Color::Muted))
+                section("Фон")
+                    .child(h_flex().flex_wrap().gap_1().children(gradients))
+                    .child(h_flex().flex_wrap().gap_1().children(walls))
+                    .children(custom)
+                    .child(
+                        Button::new("own-wallpaper", "Своя картинка…")
+                            .style(ButtonStyle::Subtle)
+                            .start_icon(Icon::new(IconName::Image).size(IconSize::Small))
+                            .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx))),
+                    ),
+            )
+            .child(
+                section("Оформление")
+                    .child(caption("Отступ"))
+                    .child(self.slider(Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), cx))
+                    .child(caption("Скругление углов"))
+                    .child(self.slider(Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), cx))
+                    .child(caption("Тень"))
+                    .child(self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx)),
+            )
+            .child(
+                section("Поверх видео")
                     .child(toggle_row(
                         "Клики",
                         if has_clicks { "Кольца там, где кликал" } else { "В записи нет кликов" },
@@ -759,12 +1191,44 @@ impl StudioEditor {
                     ))
                     .child(toggle_row(
                         "Сочетания клавиш",
-                        if has_keys { "Плашка внизу видео" } else { "Запиши с включёнными «Клавишами»" },
-                        Switch::new("keys", ToggleState::from(self.project.keys && has_keys)).disabled(!has_keys).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                        if has_keys { "Плашка с нажатыми сочетаниями" } else { "Запиши с включёнными «Клавишами»" },
+                        Switch::new("keys", ToggleState::from(keys_on)).disabled(!has_keys).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
                             this.project.keys = *state == ToggleState::Selected;
                             this.changed(cx);
                         })),
+                    ))
+                    .when(keys_on, |s| s.child(key_style)),
+            )
+            .child(
+                section("Звук").child(toggle_row(
+                    "Звук записи",
+                    if !self.probe.audio {
+                        "В записи нет звука"
+                    } else if gif {
+                        "В GIF звука не бывает"
+                    } else {
+                        "Микрофон и система, как записались"
+                    },
+                    Switch::new("audio", ToggleState::from(self.project.audio && self.probe.audio && !gif)).disabled(!self.probe.audio || gif).on_click(cx.listener(
+                        |this, state: &ToggleState, _, cx| {
+                            this.project.audio = *state == ToggleState::Selected;
+                            this.changed(cx);
+                        },
                     )),
+                )),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(Label::new("Экспорт").size(LabelSize::Small).color(Color::Muted))
+                    .child(caption("Файл"))
+                    .child(h_flex().gap_1().children(formats))
+                    .child(caption("Размер"))
+                    .child(h_flex().flex_wrap().gap_1().children(resolutions))
+                    .child(caption("Кадров в секунду"))
+                    .child(h_flex().flex_wrap().gap_1().children(rates))
+                    .child(Label::new(format!("{}×{}, {}", out.ow, out.oh, clock(self.project.kept_duration()))).size(LabelSize::XSmall).color(Color::Muted)),
             )
     }
 }
@@ -826,4 +1290,9 @@ fn ruler_label(t: f64, step: f64) -> String {
 fn clock(t: f64) -> String {
     let t = t.max(0.);
     format!("{}:{:04.1}", (t / 60.) as u64, t % 60.)
+}
+
+/// "1,2 с"
+fn seconds(t: f64) -> String {
+    format!("{t:.1} с").replace('.', ",")
 }

@@ -42,15 +42,50 @@ pub struct Seg {
     pub focus: Option<(f64, f64)>,
 }
 
+/// Output shapes: the recording's own, then landscape, square and vertical.
+pub const ASPECTS: [(&str, Option<f64>); 5] = [("Как видео", None), ("16:9", Some(16. / 9.)), ("1:1", Some(1.)), ("4:5", Some(0.8)), ("9:16", Some(9. / 16.))];
+/// Export size by the output's short side.
+pub const RESOLUTIONS: [(&str, u32); 4] = [("720p", 720), ("1080p", 1080), ("1440p", 1440), ("4K", 2160)];
+pub const FRAME_RATES: [(&str, Option<u32>); 3] = [("Как в записи", None), ("30", Some(30)), ("60", Some(60))];
+/// Shortcut pill text height as a share of the output's short side.
+pub const KEY_SIZES: [(&str, f64); 3] = [("S", 0.02), ("M", 0.026), ("L", 0.034)];
+/// Slider ranges: padding (share of the short side), corner radius (pixels
+/// at 1080p) and shadow strength.
+pub const MAX_PADDING: f64 = 0.15;
+pub const MAX_RADIUS: f64 = 60.;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Mp4,
+    Gif,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Project {
     pub segments: Vec<Seg>,
-    /// Index into `palette::backdrops()`.
+    /// Index into `palette::backdrops()`, unless a wallpaper is set.
     pub backdrop: usize,
-    /// Index into `PADDINGS`.
-    pub padding: usize,
+    pub wallpaper: Option<PathBuf>,
+    /// Share of the output's short side.
+    pub padding: f64,
+    /// Corner radius in pixels at 1080p.
+    pub radius: f64,
+    /// 0..1.
+    pub shadow: f64,
     pub clicks: bool,
     pub keys: bool,
+    pub keys_top: bool,
+    /// Index into `KEY_SIZES`.
+    pub keys_size: usize,
+    /// Kept part of the recording, then pieces cut out of it.
+    pub trim: (f64, f64),
+    pub cuts: Vec<(f64, f64)>,
+    pub audio: bool,
+    /// Indexes into `ASPECTS`, `RESOLUTIONS` and `FRAME_RATES`.
+    pub aspect: usize,
+    pub resolution: usize,
+    pub frame_rate: usize,
+    pub format: Format,
 }
 
 impl Project {
@@ -63,7 +98,8 @@ impl Project {
     /// The saved edit, or segments placed on the recording's clicks.
     pub fn load(video: &Path, track: &Track, p: &Probe) -> Project {
         let saved = std::fs::read_to_string(Self::path(video)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-        let Some(v) = saved else { return Project::auto(track, p) };
+        let d = Project::auto(track, p);
+        let Some(v) = saved else { return d };
         let segments = v["segments"]
             .as_array()
             .into_iter()
@@ -77,12 +113,29 @@ impl Project {
                 })
             })
             .collect();
+        let pair = |x: &serde_json::Value| Some((x.get(0)?.as_f64()?, x.get(1)?.as_f64()?));
+        let index = |key: &str, default: usize, len: usize| (v[key].as_u64().map_or(default, |i| i as usize)).min(len - 1);
+        // Older projects kept padding as an index into PADDINGS.
+        let padding = v["pad"].as_f64().or_else(|| v["padding"].as_u64().map(|i| PADDINGS[(i as usize).min(PADDINGS.len() - 1)])).unwrap_or(d.padding);
+        let trim = pair(&v["trim"]).map(|(a, b)| (a.clamp(0., p.duration), b.clamp(0., p.duration))).filter(|(a, b)| b - a > 0.1).unwrap_or(d.trim);
         Project {
             segments,
             backdrop: v["backdrop"].as_u64().unwrap_or(0) as usize,
-            padding: v["padding"].as_u64().unwrap_or(2) as usize,
+            wallpaper: v["wallpaper"].as_str().map(PathBuf::from).filter(|w| w.exists()),
+            padding: padding.clamp(0., MAX_PADDING),
+            radius: v["radius"].as_f64().unwrap_or(d.radius).clamp(0., MAX_RADIUS),
+            shadow: v["shadow"].as_f64().unwrap_or(d.shadow).clamp(0., 1.),
             clicks: v["clicks"].as_bool().unwrap_or(true),
             keys: v["keys"].as_bool().unwrap_or(true),
+            keys_top: v["keys_top"].as_bool().unwrap_or(false),
+            keys_size: index("keys_size", 1, KEY_SIZES.len()),
+            trim,
+            cuts: v["cuts"].as_array().into_iter().flatten().filter_map(pair).collect(),
+            audio: v["audio"].as_bool().unwrap_or(true),
+            aspect: index("aspect", 0, ASPECTS.len()),
+            resolution: index("resolution", d.resolution, RESOLUTIONS.len()),
+            frame_rate: index("frame_rate", 0, FRAME_RATES.len()),
+            format: if v["format"].as_str() == Some("gif") { Format::Gif } else { Format::Mp4 },
         }
     }
 
@@ -92,7 +145,25 @@ impl Project {
             .iter()
             .map(|s| json!({ "start": s.start, "end": s.end, "zoom": s.zoom, "focus": s.focus.map(|(x, y)| [x, y]) }))
             .collect();
-        let v = json!({ "segments": segments, "backdrop": self.backdrop, "padding": self.padding, "clicks": self.clicks, "keys": self.keys });
+        let v = json!({
+            "segments": segments,
+            "backdrop": self.backdrop,
+            "wallpaper": self.wallpaper.as_ref().map(|w| w.display().to_string()),
+            "pad": self.padding,
+            "radius": self.radius,
+            "shadow": self.shadow,
+            "clicks": self.clicks,
+            "keys": self.keys,
+            "keys_top": self.keys_top,
+            "keys_size": self.keys_size,
+            "trim": [self.trim.0, self.trim.1],
+            "cuts": self.cuts.iter().map(|c| [c.0, c.1]).collect::<Vec<_>>(),
+            "audio": self.audio,
+            "aspect": self.aspect,
+            "resolution": self.resolution,
+            "frame_rate": self.frame_rate,
+            "format": if self.format == Format::Gif { "gif" } else { "mp4" },
+        });
         let path = Self::path(video);
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -133,15 +204,64 @@ impl Project {
                 .map(|(s, e)| Seg { start: s.max(0.), end: (e + HOLD).min(p.duration), zoom: settings.studio_zoom, focus: None })
                 .collect(),
             backdrop: settings.studio_backdrop,
-            padding: settings.studio_padding,
+            wallpaper: None,
+            padding: PADDINGS[settings.studio_padding.min(PADDINGS.len() - 1)],
+            radius: 22.,
+            shadow: 0.5,
             clicks: !track.clicks.is_empty(),
             keys: !track.keystrokes.is_empty(),
+            keys_top: false,
+            keys_size: 1,
+            trim: (0., p.duration),
+            cuts: Vec::new(),
+            audio: true,
+            aspect: 0,
+            // 1440p for big recordings, like before.
+            resolution: if p.h >= 1400.0 || p.w >= 2500.0 { 2 } else { 1 },
+            frame_rate: 0,
+            format: Format::Mp4,
         }
     }
 
     pub fn colors(&self) -> (Hsla, Hsla) {
         let all = palette::backdrops();
         all[self.backdrop.min(all.len() - 1)]
+    }
+
+    /// Width over height of the output.
+    pub fn aspect_ratio(&self, p: &Probe) -> f64 {
+        ASPECTS[self.aspect.min(ASPECTS.len() - 1)].1.unwrap_or(p.w / p.h.max(1.))
+    }
+
+    /// What's left after the trim and the cuts, in source time.
+    pub fn kept(&self) -> Vec<(f64, f64)> {
+        let mut cuts: Vec<(f64, f64)> = self.cuts.iter().map(|&(a, b)| (a.min(b), a.max(b))).collect();
+        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut out = Vec::new();
+        let mut from = self.trim.0;
+        for (a, b) in cuts {
+            if b <= from || a >= self.trim.1 {
+                continue;
+            }
+            if a > from {
+                out.push((from, a));
+            }
+            from = from.max(b);
+        }
+        if self.trim.1 > from {
+            out.push((from, self.trim.1));
+        }
+        out
+    }
+
+    pub fn kept_duration(&self) -> f64 {
+        self.kept().iter().map(|(a, b)| b - a).sum()
+    }
+
+    /// Where playback goes from `t`: itself when kept, the end of the cut it
+    /// falls into, or None past the end.
+    pub fn next_kept(&self, t: f64) -> Option<f64> {
+        self.kept().into_iter().find(|&(_, b)| t < b - 0.02).map(|(a, _)| t.max(a))
     }
 }
 
@@ -151,22 +271,24 @@ pub struct Probe {
     pub h: f64,
     pub fps: String,
     pub duration: f64,
+    pub audio: bool,
 }
 
 pub async fn probe(video: &Path) -> Option<Probe> {
     let (ok, out) = util::output(&[
-        OsStr::new("ffprobe"), "-v".as_ref(), "error".as_ref(), "-select_streams".as_ref(), "v:0".as_ref(),
-        "-show_entries".as_ref(), "stream=width,height,r_frame_rate:format=duration".as_ref(),
+        OsStr::new("ffprobe"), "-v".as_ref(), "error".as_ref(), "-show_entries".as_ref(), "stream=codec_type,width,height,r_frame_rate:format=duration".as_ref(),
         "-of".as_ref(), "json".as_ref(), video.as_os_str(),
     ])
     .await?;
     let v: serde_json::Value = serde_json::from_str(&out).ok().filter(|_| ok)?;
-    let s = &v["streams"][0];
+    let streams = v["streams"].as_array()?;
+    let s = streams.iter().find(|s| s["codec_type"] == "video")?;
     Some(Probe {
         w: s["width"].as_f64()?,
         h: s["height"].as_f64()?,
         fps: s["r_frame_rate"].as_str().unwrap_or("60").to_owned(),
         duration: v["format"]["duration"].as_str()?.parse().ok()?,
+        audio: streams.iter().any(|s| s["codec_type"] == "audio"),
     })
 }
 
@@ -294,60 +416,72 @@ fn expr(curve: &[(f64, f64)], precision: usize) -> String {
     out
 }
 
+#[derive(Clone)]
 pub(crate) struct Layout {
-    ow: u32,
-    oh: u32,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-    radius: f64,
+    pub(crate) ow: u32,
+    pub(crate) oh: u32,
+    pub(crate) x: u32,
+    pub(crate) y: u32,
+    pub(crate) w: u32,
+    pub(crate) h: u32,
+    pub(crate) radius: f64,
 }
 
 /// Output frame and where the video sits in it. `preview` renders small.
-fn layout(p: &Probe, project: &Project, preview: bool) -> Layout {
-    let (ow, oh) = match (preview, p.h >= 1400.0 || p.w >= 2500.0) {
-        (true, _) => (1280u32, 720u32),
-        (false, true) => (2560, 1440),
-        (false, false) => (1920, 1080),
-    };
-    let pad = PADDINGS[project.padding.min(PADDINGS.len() - 1)] * oh as f64;
+pub(crate) fn layout(p: &Probe, project: &Project, preview: bool) -> Layout {
+    let even = |v: f64| (((v / 2.0).round() * 2.0) as u32).max(2);
+    let short = if preview { 720. } else { RESOLUTIONS[project.resolution.min(RESOLUTIONS.len() - 1)].1 as f64 };
+    let ar = project.aspect_ratio(p);
+    let (ow, oh) = if ar >= 1. { (even(short * ar), even(short)) } else { (even(short), even(short / ar)) };
+    let pad = project.padding * ow.min(oh) as f64;
     let k = ((ow as f64 - 2.0 * pad) / p.w).min((oh as f64 - 2.0 * pad) / p.h);
-    let even = |v: f64| ((v / 2.0).round() * 2.0) as u32;
-    let (w, h) = (even(p.w * k), even(p.h * k));
-    // No rounding or shadow room needed when the video fills the frame.
-    let radius = if pad > 0. { 22.0 * oh as f64 / 1440.0 } else { 0. };
-    Layout { ow, oh, x: even((ow - w) as f64 / 2.0), y: even((oh - h) as f64 / 2.0), w, h, radius }
+    let (w, h) = (even(p.w * k).min(ow), even(p.h * k).min(oh));
+    // No rounding needed when the video fills the frame.
+    let fills = w == ow && h == oh;
+    let radius = if fills { 0. } else { project.radius * ow.min(oh) as f64 / 1080.0 };
+    Layout { ow, oh, x: even((ow - w) as f64 / 2.0).min(ow - w), y: even((oh - h) as f64 / 2.0).min(oh - h), w, h, radius }
 }
 
-/// Gradient backdrop with the video's drop shadow baked in, as a binary PPM.
-fn write_background(path: &Path, l: &Layout, colors: (Hsla, Hsla)) -> std::io::Result<()> {
+/// The backdrop picture: the wallpaper cropped to fill, or the gradient.
+fn backdrop_pixels(l: &Layout, project: &Project) -> image::RgbImage {
+    if let Some(img) = project.wallpaper.as_ref().and_then(|w| image::open(w).ok()) {
+        return img.resize_to_fill(l.ow, l.oh, image::imageops::FilterType::Triangle).to_rgb8();
+    }
     let rgb = |c: Hsla| {
         let c = c.to_rgb();
         [c.r as f64 * 255., c.g as f64 * 255., c.b as f64 * 255.]
     };
-    let (c0, c1) = (rgb(colors.0), rgb(colors.1));
-    let blur = 0.035 * l.oh as f64;
-    let (cx, cy) = (l.x as f64 + l.w as f64 / 2.0, l.y as f64 + l.h as f64 / 2.0 + 0.012 * l.oh as f64);
+    let (c0, c1) = project.colors();
+    let (c0, c1) = (rgb(c0), rgb(c1));
+    image::RgbImage::from_fn(l.ow, l.oh, |x, y| {
+        let g = ((x as f64 / l.ow as f64) * 0.6 + (y as f64 / l.oh as f64) * 0.4).clamp(0.0, 1.0);
+        image::Rgb(std::array::from_fn(|ch| (c0[ch] + (c1[ch] - c0[ch]) * g).round().clamp(0., 255.) as u8))
+    })
+}
+
+/// Backdrop with the video's drop shadow baked in, as a binary PPM.
+fn write_background(path: &Path, l: &Layout, project: &Project) -> std::io::Result<()> {
+    let mut img = backdrop_pixels(l, project);
+    let blur = 0.035 * l.ow.min(l.oh) as f64;
+    let (cx, cy) = (l.x as f64 + l.w as f64 / 2.0, l.y as f64 + l.h as f64 / 2.0 + 0.012 * l.ow.min(l.oh) as f64);
     let (hw, hh) = (l.w as f64 / 2.0, l.h as f64 / 2.0);
     let r = l.radius;
-    let mut buf = Vec::with_capacity((l.ow * l.oh * 3) as usize + 32);
-    write!(buf, "P6\n{} {}\n255\n", l.ow, l.oh)?;
-    for y in 0..l.oh {
-        for x in 0..l.ow {
-            let (fx, fy) = (x as f64, y as f64);
-            let g = ((fx / l.ow as f64) * 0.6 + (fy / l.oh as f64) * 0.4).clamp(0.0, 1.0);
+    let strength = project.shadow.clamp(0., 1.);
+    if strength > 0. {
+        for (x, y, px) in img.enumerate_pixels_mut() {
             // Signed distance to the shadow's rounded rectangle.
-            let qx = (fx - cx).abs() - (hw - r);
-            let qy = (fy - cy).abs() - (hh - r);
+            let qx = (x as f64 - cx).abs() - (hw - r);
+            let qy = (y as f64 - cy).abs() - (hh - r);
             let d = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
-            let shade = 1.0 - 0.5 * (1.0 - smoothstep(-blur * 0.4, blur, d));
-            for ch in 0..3 {
-                let v = (c0[ch] + (c1[ch] - c0[ch]) * g) * shade;
-                buf.push(v.round().clamp(0.0, 255.0) as u8);
+            let shade = 1.0 - 0.7 * strength * (1.0 - smoothstep(-blur * 0.4, blur, d));
+            for v in px.0.iter_mut() {
+                *v = (*v as f64 * shade).round() as u8;
             }
         }
     }
+    let mut buf = Vec::with_capacity((l.ow * l.oh * 3) as usize + 32);
+    write!(buf, "P6\n{} {}\n255\n", l.ow, l.oh)?;
+    buf.extend_from_slice(img.as_raw());
     std::fs::write(path, buf)
 }
 
@@ -356,9 +490,9 @@ fn smoothstep(a: f64, b: f64, x: f64) -> f64 {
     k * k * (3.0 - 2.0 * k)
 }
 
-pub fn output_path(video: &Path) -> PathBuf {
+pub fn output_path(video: &Path, format: Format) -> PathBuf {
     let stem = video.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    video.with_file_name(format!("{stem}-studio.mp4"))
+    video.with_file_name(format!("{stem}-studio.{}", if format == Format::Gif { "gif" } else { "mp4" }))
 }
 
 fn preview_path(video: &Path) -> PathBuf {
@@ -384,7 +518,7 @@ pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
     let title = if preview { "Готовлю предпросмотр" } else { "Экспортирую видео" };
     let running = job::start(title, if preview { IconName::PlayFilled } else { IconName::Sparkle }, cx);
     cx.spawn(async move |cx| {
-        let out = if preview { preview_path(&video) } else { output_path(&video) };
+        let out = if preview { preview_path(&video) } else { output_path(&video, project.format) };
         let result = run(&video, &project, &out, preview, &running.job).await;
         running.finish(cx);
         match result {
@@ -401,6 +535,11 @@ pub fn export(video: PathBuf, project: Project, preview: bool, cx: &mut App) {
     .detach();
 }
 
+/// `select` expression keeping the given stretches.
+fn keep_expr(kept: &[(f64, f64)]) -> String {
+    kept.iter().map(|(a, b)| format!("between(t,{a:.3},{b:.3})")).collect::<Vec<_>>().join("+")
+}
+
 /// Ok(false) when cancelled.
 async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progress: &Job) -> Result<bool, String> {
     let p = probe(video).await.ok_or("ffprobe не смог прочитать видео")?;
@@ -408,17 +547,40 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     let l = layout(&p, project, preview);
     let camera = Camera::new(&track, &p, &project.segments);
     let (z, x, y) = (simplify(&camera.zoom, 0.004), simplify(&camera.x, 2.0), simplify(&camera.y, 2.0));
+    let kept = project.kept();
+    if kept.is_empty() {
+        return Err("После обрезки ничего не осталось".into());
+    }
+    let whole = kept.len() == 1 && kept[0].0 <= 0.01 && kept[0].1 >= p.duration - 0.01;
+    let length = project.kept_duration();
 
     let tmp = util::runtime_dir().join(format!("kadr-studio-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let bg = tmp.join("bg.ppm");
     let script = tmp.join("filter.txt");
-    write_background(&bg, &l, project.colors()).map_err(|e| e.to_string())?;
+    {
+        let (bg, l, project) = (bg.clone(), l.clone(), project.clone());
+        // Big wallpapers take a moment to scale.
+        smol_unblock(move || write_background(&bg, &l, &project)).await.map_err(|e| e.to_string())?;
+    }
 
     // Click rings go on the recording itself (so they zoom with the camera),
     // shortcut pills on the finished frame. Inputs 0 and 1 are the video and
     // the backdrop; the overlays follow.
-    let overlays = overlays::build(&track, &p, &l, &tmp, project.clicks, project.keys).map_err(|e| e.to_string())?;
+    let style = overlays::Style { clicks: project.clicks, keys: project.keys, keys_top: project.keys_top, keys_size: KEY_SIZES[project.keys_size.min(KEY_SIZES.len() - 1)].1 };
+    let overlays = overlays::build(&track, &p, &l, &tmp, &style).map_err(|e| e.to_string())?;
+
+    // Trim and cuts drop frames at the end and close the gaps; a fixed
+    // export rate goes last.
+    let mut tail = String::new();
+    if !whole {
+        tail += &format!(",select='{}',setpts=N/({})/TB", keep_expr(&kept), p.fps);
+    }
+    if let Some(fps) = FRAME_RATES[project.frame_rate.min(FRAME_RATES.len() - 1)].1 {
+        tail += &format!(",fps={fps}");
+    }
+    let audio = p.audio && project.audio && project.format == Format::Mp4;
+    let audio_graph = if audio && !whole { format!(";[0:a]aselect='{}',asetpts=N/SR/TB[aout]", keep_expr(&kept)) } else { String::new() };
 
     // libplacebo asserts on some fractional crop sizes, so the crop is kept to
     // whole, even pixels.
@@ -430,13 +592,16 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
          :crop_w='2*floor(iw/({zexpr})/2)':crop_h='2*floor(ih/({zexpr})/2)'\
          :crop_x='floor(clip({xe}-cw/2,0,iw-cw))':crop_y='floor(clip({ye}-ch/2,0,ih-ch))'\
          :corner_rounding={rounding:.4}:fillcolor=black@0:format=rgba[fg];\
-         [1:v][fg]overlay=0:0:shortest=1[framed];{post}[{last}]format=yuv420p[out]",
+         [1:v][fg]overlay=0:0:shortest=1[framed];{post}[{last}]format=yuv420p{tail}[out]{audio_graph}",
         pre = overlays.pre, src = overlays.src, post = overlays.post, last = overlays.last,
         ow = l.ow, oh = l.oh, px = l.x, py = l.y, pw = l.w, ph = l.h,
         xe = expr(&x, 1), ye = expr(&y, 1),
     );
     std::fs::write(&script, graph).map_err(|e| e.to_string())?;
 
+    // A GIF is made from an intermediate MP4.
+    let gif = project.format == Format::Gif && !preview;
+    let mp4 = if gif { tmp.join("studio.mp4") } else { out.to_path_buf() };
     let mut result = Err(String::new());
     let encoders: [&[&str]; 2] = if preview {
         [&["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "30", "-b:v", "0"], &["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]]
@@ -450,17 +615,32 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
             "-loop".as_ref(), "1".as_ref(), "-framerate".as_ref(), p.fps.as_ref(), "-i".as_ref(), bg.as_os_str(),
         ];
         argv.extend(overlays.inputs.iter().map(OsString::as_os_str));
-        argv.extend::<[&OsStr; 2]>([
-            "-/filter_complex".as_ref(), script.as_os_str(),
-        ]);
-        argv.extend::<[&OsStr; 4]>(["-map".as_ref(), "[out]".as_ref(), "-map".as_ref(), "0:a?".as_ref()]);
+        argv.extend::<[&OsStr; 2]>(["-/filter_complex".as_ref(), script.as_os_str()]);
+        argv.extend::<[&OsStr; 2]>(["-map".as_ref(), "[out]".as_ref()]);
+        match (audio, whole) {
+            (false, _) => argv.push("-an".as_ref()),
+            (true, true) => argv.extend(["-map", "0:a?", "-c:a", "copy"].map(OsStr::new)),
+            (true, false) => argv.extend(["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"].map(OsStr::new)),
+        }
         argv.extend(encoder.iter().map(OsStr::new));
-        argv.extend(["-c:a", "copy", "-movflags", "+faststart"].map(OsStr::new));
-        argv.push(out.as_os_str());
-        result = job::ffmpeg(progress, &argv, p.duration, "studio.log").await;
+        argv.extend(["-movflags", "+faststart"].map(OsStr::new));
+        argv.push(mp4.as_os_str());
+        result = job::ffmpeg(progress, &argv, length, "studio.log").await;
         if progress.cancelled() || result.is_ok() {
             break;
         }
+    }
+    if gif && result.is_ok() && !progress.cancelled() {
+        let fps = FRAME_RATES[project.frame_rate].1.unwrap_or(15).min(30);
+        let width = l.ow.min(1080);
+        let filter = format!(
+            "fps={fps},scale={width}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
+        );
+        let mut argv: Vec<&OsStr> = ["ffmpeg", "-hide_banner", "-y", "-loglevel", "error", "-i"].map(OsStr::new).to_vec();
+        argv.push(mp4.as_os_str());
+        argv.extend(["-vf", &filter, "-loop", "0"].map(OsStr::new));
+        argv.push(out.as_os_str());
+        result = job::ffmpeg(progress, &argv, length, "studio-gif.log").await;
     }
     let _ = std::fs::remove_dir_all(&tmp);
     if progress.cancelled() {
@@ -470,6 +650,14 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     result.map(|()| true)
 }
 
+/// Run blocking work off the UI thread.
+async fn smol_unblock<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.await.expect("worker thread")
+}
 
 /// Click rings and shortcut pills, as extra ffmpeg inputs and filter chains.
 mod overlays {
@@ -496,7 +684,16 @@ mod overlays {
         pub last: String,
     }
 
-    pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path, clicks: bool, keys: bool) -> std::io::Result<Overlays> {
+    pub struct Style {
+        pub clicks: bool,
+        pub keys: bool,
+        pub keys_top: bool,
+        /// Pill text height as a share of the output's short side.
+        pub keys_size: f64,
+    }
+
+    pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path, style: &Style) -> std::io::Result<Overlays> {
+        let (clicks, keys) = (style.clicks, style.keys);
         let mut o = Overlays { inputs: Vec::new(), pre: String::new(), src: "0:v".into(), post: String::new(), last: "framed".into() };
         let mut next_input = 2;
 
@@ -533,10 +730,11 @@ mod overlays {
             let next = strokes.get(i + 1).map_or(p.duration, |n| n.0);
             let show = (next - t).clamp(0.35, 1.4);
             let png = tmp.join(format!("key-{i}.png"));
-            let (w, h) = write_pill(&png, label, l.oh as f32 * 0.026)?;
+            let (w, h) = write_pill(&png, label, l.ow.min(l.oh) as f32 * style.keys_size as f32)?;
             o.inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), "30".into(), "-t".into(), format!("{show:.3}").into(), "-itsoffset".into(), format!("{t:.3}").into(), "-i".into(), png.into()]);
             let x = (l.ow as i64 - w as i64) / 2;
-            let y = (l.y + l.h) as i64 - h as i64 - (l.h as f64 * 0.05) as i64;
+            let margin = (l.h as f64 * 0.05) as i64;
+            let y = if style.keys_top { l.y as i64 + margin } else { (l.y + l.h) as i64 - h as i64 - margin };
             let (from, faded, to) = (o.last.clone(), format!("kf{i}"), format!("k{i}"));
             let _ = write!(
                 o.post,
@@ -613,7 +811,7 @@ mod tests {
     use super::*;
 
     fn probe() -> Probe {
-        Probe { w: 1920., h: 1080., fps: "30".into(), duration: 10. }
+        Probe { w: 1920., h: 1080., fps: "30".into(), duration: 10., audio: false }
     }
 
     #[test]
@@ -623,6 +821,19 @@ mod tests {
         assert_eq!(project.segments.len(), 2);
         assert_eq!((project.segments[0].start, project.segments[0].end), (1.0, 2.0 + HOLD));
         assert!(project.clicks && !project.keys);
+    }
+
+    #[test]
+    fn trim_and_cuts_leave_the_rest() {
+        let mut project = Project::auto(&Track::default(), &probe());
+        project.trim = (1., 9.);
+        project.cuts = vec![(3., 4.), (0., 1.5), (8.5, 12.)];
+        assert_eq!(project.kept(), vec![(1.5, 3.), (4., 8.5)]);
+        assert!((project.kept_duration() - 6.).abs() < 1e-9);
+        assert_eq!(project.next_kept(3.5), Some(4.));
+        assert_eq!(project.next_kept(9.), None);
+        let l = layout(&probe(), &Project { aspect: 4, padding: 0., ..project }, false);
+        assert_eq!((l.ow, l.oh, l.w), (1080, 1920, 1080));
     }
 
     #[test]
