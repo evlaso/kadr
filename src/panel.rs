@@ -214,6 +214,14 @@ impl Render for Panel {
                         cx.notify();
                     })),
             )
+            .child(
+                toggle("studio", Icon::new(IconName::Sparkle), self.opts.studio)
+                    .tooltip(tip("Режим студии", Some("Курсор нарисует kadr: крупный и плавный, с настройкой в студии. После записи сразу откроется студия".into()), None))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.opts.studio = !this.opts.studio;
+                        cx.notify();
+                    })),
+            )
             .child(Divider::vertical().h_5().mx_1())
             .child(
                 action("repick", Icon::new(IconName::Crosshair))

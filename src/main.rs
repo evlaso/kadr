@@ -35,7 +35,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr pin <файл>                                закрепить картинку поверх окон
 
   kadr record                                    панель записи экрана (или стоп, если идёт запись)
-  kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys]
+  kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
                                                  начать запись сразу (повторный вызов — стоп)
   kadr record area \"X,Y WxH\"                   панель записи для заданной области
   kadr record stop                               остановить запись
@@ -122,6 +122,7 @@ impl Command {
                             "--audio" => opts.audio = true,
                             "--webcam" => opts.webcam = true,
                             "--keys" => opts.keys = true,
+                            "--studio" => opts.studio = true,
                             other => return Err(format!("неизвестный флаг: {other}")),
                         }
                     }

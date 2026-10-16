@@ -53,6 +53,17 @@ pub const KEY_SIZES: [(&str, f64); 3] = [("S", 0.02), ("M", 0.026), ("L", 0.034)
 /// at 1080p) and shadow strength.
 pub const MAX_PADDING: f64 = 0.15;
 pub const MAX_RADIUS: f64 = 60.;
+/// Export compression as a bitrate cap in bits per pixel per frame, so the
+/// file size has a known ceiling before rendering: bpp × width × height × fps
+/// × seconds. Screen recordings often come out well under it.
+pub const QUALITIES: [(&str, f64); 4] = [("Максимум", 0.12), ("Высокое", 0.06), ("Среднее", 0.03), ("Маленький", 0.012)];
+pub const AUDIO_BITRATE: f64 = 160_000.;
+pub const CURSOR_STYLES: [&str; 2] = ["Стрелка", "Точка"];
+pub const MAX_CURSOR: f64 = 3.;
+/// Drawn cursor height at size 1, in logical screen pixels.
+const CURSOR_BASE: f64 = 22.;
+/// Drawn cursor path sampling rate.
+pub const CURSOR_RATE: f64 = 60.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -86,6 +97,15 @@ pub struct Project {
     pub resolution: usize,
     pub frame_rate: usize,
     pub format: Format,
+    /// Index into `QUALITIES`.
+    pub quality: usize,
+    /// The drawn cursor, for recordings made without the system one.
+    pub cursor: bool,
+    pub cursor_style: usize,
+    /// 0.5..MAX_CURSOR times the usual size.
+    pub cursor_size: f64,
+    /// 0 follows the pointer exactly, 1 glides.
+    pub cursor_smooth: f64,
 }
 
 impl Project {
@@ -136,6 +156,11 @@ impl Project {
             resolution: index("resolution", d.resolution, RESOLUTIONS.len()),
             frame_rate: index("frame_rate", 0, FRAME_RATES.len()),
             format: if v["format"].as_str() == Some("gif") { Format::Gif } else { Format::Mp4 },
+            quality: index("quality", d.quality, QUALITIES.len()),
+            cursor: v["cursor"].as_bool().unwrap_or(true),
+            cursor_style: index("cursor_style", 0, CURSOR_STYLES.len()),
+            cursor_size: v["cursor_size"].as_f64().unwrap_or(d.cursor_size).clamp(0.5, MAX_CURSOR),
+            cursor_smooth: v["cursor_smooth"].as_f64().unwrap_or(d.cursor_smooth).clamp(0., 1.),
         }
     }
 
@@ -163,6 +188,11 @@ impl Project {
             "resolution": self.resolution,
             "frame_rate": self.frame_rate,
             "format": if self.format == Format::Gif { "gif" } else { "mp4" },
+            "quality": self.quality,
+            "cursor": self.cursor,
+            "cursor_style": self.cursor_style,
+            "cursor_size": self.cursor_size,
+            "cursor_smooth": self.cursor_smooth,
         });
         let path = Self::path(video);
         if let Some(dir) = path.parent() {
@@ -220,6 +250,11 @@ impl Project {
             resolution: if p.h >= 1400.0 || p.w >= 2500.0 { 2 } else { 1 },
             frame_rate: 0,
             format: Format::Mp4,
+            quality: 1,
+            cursor: true,
+            cursor_style: 0,
+            cursor_size: 1.5,
+            cursor_smooth: 0.5,
         }
     }
 
@@ -252,6 +287,33 @@ impl Project {
             out.push((from, self.trim.1));
         }
         out
+    }
+
+    /// Output frame rate.
+    pub fn fps(&self, p: &Probe) -> f64 {
+        FRAME_RATES[self.frame_rate.min(FRAME_RATES.len() - 1)].1.map_or_else(|| p.fps_value(), f64::from)
+    }
+
+    /// Target video bitrate of the export, bits per second.
+    pub fn bitrate(&self, p: &Probe) -> f64 {
+        let l = layout(p, self, false);
+        QUALITIES[self.quality.min(QUALITIES.len() - 1)].1 * l.ow as f64 * l.oh as f64 * self.fps(p)
+    }
+
+    /// File size in bytes: for MP4 the most it can be (the bitrate is capped),
+    /// for GIF a rough guess, since it depends on the picture.
+    pub fn estimate(&self, p: &Probe) -> f64 {
+        let secs = self.kept_duration();
+        match self.format {
+            Format::Mp4 => {
+                let audio = if p.audio && self.audio { AUDIO_BITRATE } else { 0. };
+                (self.bitrate(p) + audio) * secs / 8. * 1.01
+            }
+            Format::Gif => {
+                let (w, h) = gif_size(&layout(p, self, false));
+                w as f64 * h as f64 * gif_fps(self) as f64 * secs * 0.045
+            }
+        }
     }
 
     pub fn kept_duration(&self) -> f64 {
@@ -290,6 +352,121 @@ pub async fn probe(video: &Path) -> Option<Probe> {
         duration: v["format"]["duration"].as_str()?.parse().ok()?,
         audio: streams.iter().any(|s| s["codec_type"] == "audio"),
     })
+}
+
+impl Probe {
+    /// "60/1" as 60.
+    pub fn fps_value(&self) -> f64 {
+        let mut parts = self.fps.split('/').map(|v| v.parse::<f64>().unwrap_or(0.));
+        let (n, d) = (parts.next().unwrap_or(60.), parts.next().unwrap_or(1.));
+        if n > 0. && d > 0. { n / d } else { 60. }
+    }
+}
+
+fn gif_fps(project: &Project) -> u32 {
+    FRAME_RATES[project.frame_rate.min(FRAME_RATES.len() - 1)].1.unwrap_or(15).min(30)
+}
+
+fn gif_size(l: &Layout) -> (u32, u32) {
+    let w = l.ow.min(1080);
+    (w, (l.oh as f64 * w as f64 / l.ow as f64).round() as u32)
+}
+
+/// "12,4 МБ"
+pub fn human_size(bytes: f64) -> String {
+    let mb = bytes / 1_048_576.;
+    if mb < 1. {
+        format!("{} КБ", (bytes / 1024.).round().max(1.))
+    } else if mb < 10. {
+        format!("{mb:.1} МБ").replace('.', ",")
+    } else {
+        format!("{} МБ", mb.round())
+    }
+}
+
+/// Where the drawn cursor is over time, in video pixels, sampled at
+/// `CURSOR_RATE`: the pointer's track through a critically damped spring,
+/// stiffer when `smooth` is low.
+pub fn cursor_path(track: &Track, p: &Probe, smooth: f64) -> Vec<(f64, f64, f64)> {
+    let (rx, ry, rw, rh) = track.rect;
+    let (sx, sy) = (p.w / rw.max(1.0), p.h / rh.max(1.0));
+    let Some(first) = track.cursor_at(0.) else { return Vec::new() };
+    let to_px = |(x, y): (f64, f64)| ((x - rx) * sx, (y - ry) * sy);
+    let mut pos = to_px(first);
+    let mut vel = (0., 0.);
+    let omega = 34. - 28. * smooth.clamp(0., 1.);
+    let dt = 1. / CURSOR_RATE;
+    let steps = (p.duration * CURSOR_RATE).ceil() as usize;
+    let mut out = Vec::with_capacity(steps + 1);
+    for i in 0..=steps {
+        let t = i as f64 * dt;
+        let target = track.cursor_at(t).map(to_px).unwrap_or(pos);
+        if smooth < 0.02 {
+            pos = target;
+        } else {
+            let h = dt / 4.;
+            for _ in 0..4 {
+                let ax = omega * omega * (target.0 - pos.0) - 2. * omega * vel.0;
+                let ay = omega * omega * (target.1 - pos.1) - 2. * omega * vel.1;
+                vel = (vel.0 + ax * h, vel.1 + ay * h);
+                pos = (pos.0 + vel.0 * h, pos.1 + vel.1 * h);
+            }
+        }
+        out.push((t, pos.0, pos.1));
+    }
+    out
+}
+
+/// The drawn cursor's height in video pixels.
+pub fn cursor_height(track: &Track, p: &Probe, size: f64) -> f64 {
+    CURSOR_BASE * size * p.h / track.rect.3.max(1.)
+}
+
+/// The cursor picture as PNG, with its hotspot and size in pixels.
+pub fn cursor_image(style: usize, height: f64) -> Option<(Vec<u8>, (f64, f64), (u32, u32))> {
+    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
+    let h = height.max(8.) as f32;
+    let pad = (h * 0.2).ceil();
+    let paint = |r: u8, g: u8, b: u8, a: u8| {
+        let mut p = Paint::default();
+        p.set_color_rgba8(r, g, b, a);
+        p.anti_alias = true;
+        p
+    };
+    if style == 1 {
+        // A soft dark dot with a white rim.
+        let r = h * 0.32;
+        let size = (2. * (r + pad)) as u32;
+        let mut pm = Pixmap::new(size, size)?;
+        let c = size as f32 / 2.;
+        let circle = |r: f32| PathBuilder::from_circle(c, c, r);
+        pm.fill_path(&circle(r * 1.35)?, &paint(0, 0, 0, 40), FillRule::Winding, Transform::identity(), None);
+        pm.fill_path(&circle(r)?, &paint(24, 24, 28, 190), FillRule::Winding, Transform::identity(), None);
+        let rim = Stroke { width: (h * 0.06).max(1.5), ..Stroke::default() };
+        pm.stroke_path(&circle(r)?, &paint(255, 255, 255, 235), &rim, Transform::identity(), None);
+        return Some((pm.encode_png().ok()?, (c as f64, c as f64), (size, size)));
+    }
+    // The classic arrow, tip at the hotspot: white with a dark rim and shadow.
+    let shape = [(0., 0.), (0., 0.8), (0.19, 0.62), (0.33, 0.95), (0.46, 0.89), (0.32, 0.57), (0.57, 0.57)];
+    let (w, hh) = ((0.6 * h + 2. * pad).ceil() as u32, (h + 2. * pad).ceil() as u32);
+    let mut pm = Pixmap::new(w, hh)?;
+    let path = |dx: f32, dy: f32| {
+        let mut b = PathBuilder::new();
+        for (i, &(x, y)) in shape.iter().enumerate() {
+            let (x, y) = (pad + dx + x * h, pad + dy + y * h);
+            if i == 0 { b.move_to(x, y) } else { b.line_to(x, y) }
+        }
+        b.close();
+        b.finish()
+    };
+    let rim = Stroke { width: (h * 0.09).max(1.5), line_join: LineJoin::Round, line_cap: LineCap::Round, ..Stroke::default() };
+    let shadow = path(h * 0.03, h * 0.07)?;
+    pm.fill_path(&shadow, &paint(0, 0, 0, 60), FillRule::Winding, Transform::identity(), None);
+    pm.stroke_path(&shadow, &paint(0, 0, 0, 60), &rim, Transform::identity(), None);
+    let arrow = path(0., 0.)?;
+    pm.stroke_path(&arrow, &paint(20, 20, 22, 255), &rim, Transform::identity(), None);
+    pm.fill_path(&arrow, &paint(255, 255, 255, 255), FillRule::Winding, Transform::identity(), None);
+    Some((pm.encode_png().ok()?, (pad as f64, pad as f64), (w, hh)))
 }
 
 fn ease(x: f64) -> f64 {
@@ -567,7 +744,21 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     // Click rings go on the recording itself (so they zoom with the camera),
     // shortcut pills on the finished frame. Inputs 0 and 1 are the video and
     // the backdrop; the overlays follow.
-    let style = overlays::Style { clicks: project.clicks, keys: project.keys, keys_top: project.keys_top, keys_size: KEY_SIZES[project.keys_size.min(KEY_SIZES.len() - 1)].1 };
+    let cursor = if track.cursor_hidden && project.cursor {
+        let (png, hot, _) = cursor_image(project.cursor_style, cursor_height(&track, &p, project.cursor_size)).ok_or("не получилось нарисовать курсор")?;
+        let file = tmp.join("cursor.png");
+        std::fs::write(&file, png).map_err(|e| e.to_string())?;
+        Some((file, hot, cursor_path(&track, &p, project.cursor_smooth)))
+    } else {
+        None
+    };
+    let style = overlays::Style {
+        clicks: project.clicks,
+        keys: project.keys,
+        keys_top: project.keys_top,
+        keys_size: KEY_SIZES[project.keys_size.min(KEY_SIZES.len() - 1)].1,
+        cursor,
+    };
     let overlays = overlays::build(&track, &p, &l, &tmp, &style).map_err(|e| e.to_string())?;
 
     // Trim and cuts drop frames at the end and close the gaps; a fixed
@@ -603,10 +794,17 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     let gif = project.format == Format::Gif && !preview;
     let mp4 = if gif { tmp.join("studio.mp4") } else { out.to_path_buf() };
     let mut result = Err(String::new());
-    let encoders: [&[&str]; 2] = if preview {
-        [&["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "30", "-b:v", "0"], &["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]]
+    // The export is encoded to a bitrate so its size matches the estimate; a
+    // GIF's intermediate MP4 just needs to be clean.
+    let rate = if gif { Project { quality: 0, ..project.clone() }.bitrate(&p) } else { project.bitrate(&p) };
+    let (b, max, buf) = (format!("{}", rate.round()), format!("{}", rate.round()), format!("{}", (rate * 0.5).round()));
+    let encoders: [Vec<&str>; 2] = if preview {
+        [vec!["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "30", "-b:v", "0"], vec!["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]]
     } else {
-        [&["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-b:v", "0"], &["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]]
+        [
+            vec!["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-b:v", &b, "-maxrate", &max, "-bufsize", &buf],
+            vec!["-c:v", "libx264", "-preset", "veryfast", "-b:v", &b, "-maxrate", &max, "-bufsize", &buf],
+        ]
     };
     for encoder in encoders {
         let mut argv: Vec<&OsStr> = vec![
@@ -619,8 +817,8 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         argv.extend::<[&OsStr; 2]>(["-map".as_ref(), "[out]".as_ref()]);
         match (audio, whole) {
             (false, _) => argv.push("-an".as_ref()),
-            (true, true) => argv.extend(["-map", "0:a?", "-c:a", "copy"].map(OsStr::new)),
-            (true, false) => argv.extend(["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"].map(OsStr::new)),
+            (true, true) => argv.extend(["-map", "0:a?", "-c:a", "aac", "-b:a", "160k"].map(OsStr::new)),
+            (true, false) => argv.extend(["-map", "[aout]", "-c:a", "aac", "-b:a", "160k"].map(OsStr::new)),
         }
         argv.extend(encoder.iter().map(OsStr::new));
         argv.extend(["-movflags", "+faststart"].map(OsStr::new));
@@ -631,8 +829,8 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         }
     }
     if gif && result.is_ok() && !progress.cancelled() {
-        let fps = FRAME_RATES[project.frame_rate].1.unwrap_or(15).min(30);
-        let width = l.ow.min(1080);
+        let fps = gif_fps(project);
+        let width = gif_size(&l).0;
         let filter = format!(
             "fps={fps},scale={width}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
         );
@@ -690,6 +888,8 @@ mod overlays {
         pub keys_top: bool,
         /// Pill text height as a share of the output's short side.
         pub keys_size: f64,
+        /// The drawn cursor: its picture, hotspot and path in video pixels.
+        pub cursor: Option<(std::path::PathBuf, (f64, f64), Vec<(f64, f64, f64)>)>,
     }
 
     pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path, style: &Style) -> std::io::Result<Overlays> {
@@ -718,6 +918,20 @@ mod overlays {
                 o.src = to;
                 next_input += 1;
             }
+        }
+
+        // The cursor goes over the click rings and moves with the camera.
+        if let Some((png, (hx, hy), path)) = &style.cursor {
+            let xs: Vec<(f64, f64)> = path.iter().map(|&(t, x, _)| (t, x)).collect();
+            let ys: Vec<(f64, f64)> = path.iter().map(|&(t, _, y)| (t, y)).collect();
+            let (xe, ye) = (super::expr(&super::simplify(&xs, 0.6), 1), super::expr(&super::simplify(&ys, 0.6), 1));
+            o.inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), p.fps.clone().into(), "-i".into(), png.clone().into()]);
+            let from = o.src.clone();
+            let _ = write!(o.pre, "[{from}][{next_input}:v]overlay=x='{xe}-{hx:.1}':y='{ye}-{hy:.1}':eval=frame:shortest=1[cur];");
+            o.src = "cur".into();
+            next_input += 1;
+        }
+        if o.src != "0:v" {
             // Overlay can hand on frames with alpha; libplacebo's crop path
             // asserts on those, so go back to plain YUV first.
             let _ = write!(o.pre, "[{}]format=yuv420p[clicked];", o.src);

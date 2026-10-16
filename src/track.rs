@@ -43,6 +43,8 @@ pub struct Track {
     pub keys: Vec<f64>,
     /// Shortcuts pressed, as shown on screen: (t, "Ctrl + C").
     pub keystrokes: Vec<(f64, String)>,
+    /// Recorded without the system cursor: the studio draws one.
+    pub cursor_hidden: bool,
 }
 
 impl Track {
@@ -67,6 +69,7 @@ impl Track {
                 .flatten()
                 .filter_map(|k| Some((k[0].as_f64()?, k[1].as_str()?.to_owned())))
                 .collect(),
+            cursor_hidden: v["cursor_hidden"].as_bool().unwrap_or(false),
         })
     }
 
@@ -159,7 +162,7 @@ impl Tracker {
         Tracker { data, _task: task }
     }
 
-    pub fn save(self, rect: (i32, i32, i32, i32), video: &Path) {
+    pub fn save(self, rect: (i32, i32, i32, i32), cursor_hidden: bool, video: &Path) {
         let d = self.data.borrow();
         let r = |v: f64| (v * 1000.0).round() / 1000.0;
         let v = json!({
@@ -168,6 +171,7 @@ impl Tracker {
             "clicks": d.clicks.iter().map(|&(t, x, y)| [r(t), r(x), r(y)]).collect::<Vec<_>>(),
             "keys": d.keys.iter().map(|&t| r(t)).collect::<Vec<_>>(),
             "keystrokes": d.keystrokes.iter().map(|(t, k)| json!([r(*t), k])).collect::<Vec<_>>(),
+            "cursor_hidden": cursor_hidden,
         });
         let path = path_for(video);
         if let Some(dir) = path.parent() {

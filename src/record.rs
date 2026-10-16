@@ -58,6 +58,9 @@ pub struct Opts {
     pub webcam: bool,
     /// Show shortcuts in the studio render (logs shortcut key codes).
     pub keys: bool,
+    /// Studio mode: leave the cursor out of the video (the studio draws its
+    /// own from the track) and open the studio editor afterwards.
+    pub studio: bool,
 }
 
 impl Opts {
@@ -73,7 +76,7 @@ impl Opts {
             .unwrap_or_default();
         let get = |k: &str| v[k].as_bool().unwrap_or(false);
         let mic_device = v["mic_device"].as_str().unwrap_or_default().to_owned();
-        Opts { mic: get("mic"), mic_device, audio: get("audio"), webcam: get("webcam"), keys: get("keys") }
+        Opts { mic: get("mic"), mic_device, audio: get("audio"), webcam: get("webcam"), keys: get("keys"), studio: get("studio") }
     }
 
     pub fn save(&self) {
@@ -81,7 +84,7 @@ impl Opts {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam, "keys": self.keys });
+        let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam, "keys": self.keys, "studio": self.studio });
         let _ = std::fs::write(path, v.to_string());
     }
 
@@ -140,6 +143,7 @@ struct Session {
     discard: bool,
     windows: Vec<AnyWindowHandle>,
     tracker: Option<Tracker>,
+    studio: bool,
     _hold: Hold,
 }
 
@@ -183,6 +187,7 @@ impl Clock {
 /// What `begin` hands back once capture is running.
 struct Started {
     keys: bool,
+    studio: bool,
     gsr: async_process::Child,
     file: PathBuf,
     webcam: Option<u32>,
@@ -327,7 +332,7 @@ impl Recorder {
     }
 
     fn on_started(&mut self, started: Started, hold: Hold, cx: &mut Context<Self>) {
-        let Started { keys, mut gsr, file, webcam, target } = started;
+        let Started { keys, studio, mut gsr, file, webcam, target } = started;
         let pid = gsr.id();
         cx.spawn(async move |this, cx| {
             let _ = gsr.status().await;
@@ -353,6 +358,7 @@ impl Recorder {
             discard: false,
             windows,
             tracker: Some(tracker),
+            studio,
             _hold: hold,
         });
         refresh_omarchy_indicator();
@@ -420,10 +426,12 @@ impl Recorder {
                 }
             } else {
                 if let Some(tracker) = s.tracker.take() {
-                    tracker.save(s.target.rect(&util::monitors()), &file);
+                    tracker.save(s.target.rect(&util::monitors()), s.studio, &file);
                 }
                 finalize(&file).await;
-                let _ = cx.update(|cx| cards::show(file, cx));
+                // Studio recordings go straight to the editor, like CleanShot.
+                let studio = s.studio;
+                let _ = cx.update(|cx| if studio { crate::studio_editor::open(file, cx) } else { cards::show(file, cx) });
             }
             let _ = this.update(cx, |rec, _| rec.state = State::Idle);
             drop(s);
@@ -473,6 +481,9 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
     let fps = settings.fps.to_string();
     let quality = crate::settings::QUALITIES[settings.quality].0;
+    if opts.studio {
+        args.extend(["-cursor".into(), "no".into()]);
+    }
     for a in ["-k", "auto", "-f", &fps, "-q", quality, "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
         args.push(a.into());
     }
@@ -520,7 +531,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         let _ = std::fs::remove_file(&file);
         return Err(Some(log_tail()));
     }
-    Ok(Started { keys: opts.keys, gsr, file, webcam, target })
+    Ok(Started { keys: opts.keys, studio: opts.studio, gsr, file, webcam, target })
 }
 
 /// Top-left margins of the control pill, relative to the monitor it goes on.

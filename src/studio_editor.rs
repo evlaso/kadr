@@ -21,7 +21,10 @@ use gpui::{
 use ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
-use crate::studio::{self, ASPECTS, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_PADDING, MAX_RADIUS, Probe, Project, RESOLUTIONS, Seg, ZOOMS};
+use crate::studio::{
+    self, ASPECTS, CURSOR_RATE, CURSOR_STYLES, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_CURSOR, MAX_PADDING, MAX_RADIUS, Probe, Project, QUALITIES,
+    RESOLUTIONS, Seg, ZOOMS,
+};
 use crate::track::Track;
 use crate::{palette, trim, util};
 
@@ -44,6 +47,8 @@ enum Knob {
     Padding,
     Radius,
     Shadow,
+    CursorSize,
+    CursorSmooth,
 }
 
 enum Drag {
@@ -62,6 +67,8 @@ pub struct StudioEditor {
     track: Track,
     project: Project,
     camera: Camera,
+    /// The drawn cursor over time (recordings without the system cursor).
+    cursor: Vec<(f64, f64, f64)>,
     thumbs: Vec<Arc<Image>>,
     walls: Vec<(PathBuf, Arc<Image>)>,
     frame: Option<ImageSource>,
@@ -121,6 +128,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                     let focus = cx.focus_handle();
                     window.focus(&focus, cx);
                     let camera = Camera::new(&track, &probe, &project.segments);
+                    let cursor = if track.cursor_hidden { studio::cursor_path(&track, &probe, project.cursor_smooth) } else { Vec::new() };
                     let playhead = project.trim.0;
                     StudioEditor {
                         video,
@@ -128,6 +136,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         track,
                         project,
                         camera,
+                        cursor,
                         thumbs,
                         walls,
                         frame: frame.map(ImageSource::from),
@@ -206,6 +215,9 @@ impl StudioEditor {
     /// Apply an edit: rebuild the camera and save the project.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.camera = Camera::new(&self.track, &self.probe, &self.project.segments);
+        if self.track.cursor_hidden {
+            self.cursor = studio::cursor_path(&self.track, &self.probe, self.project.cursor_smooth);
+        }
         self.project.save(&self.video);
         cx.notify();
     }
@@ -518,6 +530,8 @@ impl StudioEditor {
             Knob::Padding => self.project.padding = v * MAX_PADDING,
             Knob::Radius => self.project.radius = v * MAX_RADIUS,
             Knob::Shadow => self.project.shadow = v,
+            Knob::CursorSize => self.project.cursor_size = 0.5 + v * (MAX_CURSOR - 0.5),
+            Knob::CursorSmooth => self.project.cursor_smooth = v,
         }
         self.changed(cx);
     }
@@ -646,6 +660,7 @@ impl StudioEditor {
                     .h(px(vh * scale))
                     .object_fit(ObjectFit::Fill)
             }))
+            .children(self.render_cursor(left, top, scale))
             .child(tracker)
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.preview_down(e, cx)));
 
@@ -674,6 +689,27 @@ impl StudioEditor {
                         .child(div().px_2().py_1().rounded_md().bg(rgba(0x000000cc)).text_xs().text_color(gpui::white()).child("Кликни по видео, куда приблизить")),
                 )
             })
+    }
+
+    /// The drawn cursor at the playhead, placed through the camera like the
+    /// render does it.
+    fn render_cursor(&self, left: f32, top: f32, scale: f32) -> Option<impl IntoElement> {
+        if !self.track.cursor_hidden || !self.project.cursor || self.cursor.is_empty() {
+            return None;
+        }
+        let i = ((self.playhead * CURSOR_RATE).round() as usize).min(self.cursor.len() - 1);
+        let (_, x, y) = self.cursor[i];
+        let height = studio::cursor_height(&self.track, &self.probe, self.project.cursor_size);
+        let (png, (hx, hy), (w, h)) = studio::cursor_image(self.project.cursor_style, height)?;
+        let image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
+        Some(
+            img(image)
+                .absolute()
+                .left(px((x as f32 - left - hx as f32) * scale))
+                .top(px((y as f32 - top - hy as f32) * scale))
+                .w(px(w as f32 * scale))
+                .h(px(h as f32 * scale)),
+        )
     }
 
     /// Ruler, filmstrip (trim and cuts) and the zoom lane, under the preview.
@@ -858,6 +894,7 @@ impl StudioEditor {
                             .tooltip(Tooltip::text("Собрать 720p со всеми эффектами и открыть в плеере"))
                             .on_click(cx.listener(|this, _, _, cx| studio::export(this.video.clone(), this.project.clone(), true, cx))),
                     )
+                    .child(div().px_1().child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small).color(Color::Muted)))
                     .child(
                         Button::new("export", if gif { "Экспорт GIF" } else { "Экспорт" })
                             .style(ButtonStyle::Filled)
@@ -1145,6 +1182,57 @@ impl StudioEditor {
         })
         .collect::<Vec<_>>();
         let out = studio::layout(&self.probe, &self.project, false);
+        let qualities = QUALITIES
+            .iter()
+            .enumerate()
+            .map(|(i, (label, _))| {
+                chip(SharedString::from(format!("quality-{i}")), (*label).into(), self.project.quality == i).on_click(cx.listener(move |this, _, _, cx| {
+                    this.project.quality = i;
+                    this.changed(cx);
+                }))
+            })
+            .collect::<Vec<_>>();
+        let estimate = size_label(&self.project, &self.probe);
+
+        let cursor = if self.track.cursor_hidden {
+            let styles = CURSOR_STYLES
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    chip(SharedString::from(format!("cursor-style-{i}")), (*label).into(), self.project.cursor_style == i).on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.cursor_style = i;
+                        this.changed(cx);
+                    }))
+                })
+                .collect::<Vec<_>>();
+            section("Курсор")
+                .child(toggle_row(
+                    "Показывать курсор",
+                    "Записан отдельно, его можно менять",
+                    Switch::new("cursor", ToggleState::from(self.project.cursor)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                        this.project.cursor = *state == ToggleState::Selected;
+                        this.changed(cx);
+                    })),
+                ))
+                .when(self.project.cursor, |s| {
+                    s.child(h_flex().gap_1().children(styles))
+                        .child(caption("Размер"))
+                        .child(self.slider(
+                            Knob::CursorSize,
+                            (self.project.cursor_size - 0.5) / (MAX_CURSOR - 0.5),
+                            format!("×{:.1}", self.project.cursor_size).replace('.', ","),
+                            cx,
+                        ))
+                        .child(caption("Плавность движения"))
+                        .child(self.slider(Knob::CursorSmooth, self.project.cursor_smooth, format!("{}%", (self.project.cursor_smooth * 100.).round()), cx))
+                })
+        } else {
+            section("Курсор").child(
+                Label::new("Чтобы менять размер и плавность курсора, записывай в режиме студии (✦ на панели записи)")
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+        };
 
         v_flex()
             .id("sidebar")
@@ -1179,6 +1267,7 @@ impl StudioEditor {
                     .child(caption("Тень"))
                     .child(self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx)),
             )
+            .child(cursor)
             .child(
                 section("Поверх видео")
                     .child(toggle_row(
@@ -1228,7 +1317,14 @@ impl StudioEditor {
                     .child(h_flex().flex_wrap().gap_1().children(resolutions))
                     .child(caption("Кадров в секунду"))
                     .child(h_flex().flex_wrap().gap_1().children(rates))
-                    .child(Label::new(format!("{}×{}, {}", out.ow, out.oh, clock(self.project.kept_duration()))).size(LabelSize::XSmall).color(Color::Muted)),
+                    .when(!gif, |s| s.child(caption("Сжатие")).child(h_flex().flex_wrap().gap_1().children(qualities)))
+                    .child(
+                        h_flex()
+                            .mt_1()
+                            .justify_between()
+                            .child(Label::new(format!("{}×{}, {}", out.ow, out.oh, clock(self.project.kept_duration()))).size(LabelSize::XSmall).color(Color::Muted))
+                            .child(Label::new(estimate).size(LabelSize::Small).color(Color::Default)),
+                    ),
             )
     }
 }
@@ -1290,6 +1386,12 @@ fn ruler_label(t: f64, step: f64) -> String {
 fn clock(t: f64) -> String {
     let t = t.max(0.);
     format!("{}:{:04.1}", (t / 60.) as u64, t % 60.)
+}
+
+/// "до 12 МБ" for MP4 (a ceiling), "≈ 30 МБ" for GIF (a guess).
+fn size_label(project: &Project, probe: &Probe) -> String {
+    let size = studio::human_size(project.estimate(probe));
+    if project.format == Format::Gif { format!("≈ {size}") } else { format!("до {size}") }
 }
 
 /// "1,2 с"
