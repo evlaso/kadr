@@ -11,11 +11,12 @@ use std::time::Duration;
 
 use gpui::{
     App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Window, canvas, div, fill, img,
-    layer_shell::*, outline, point, px, rgba, size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Window, canvas, div, img,
+    layer_shell::*, point, px, rgba, size,
 };
 use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
+use crate::ui::{fill, outline};
 use crate::kit::{self, LayerSpec};
 use crate::{cards, job, track, util};
 
@@ -279,7 +280,7 @@ impl Trimmer {
                 window.paint_quad(outline(selected, accent, BorderStyle::Solid));
                 for x in [at(start), at(end)] {
                     let grip = Bounds::new(point(x - px(4.), bounds.origin.y), size(px(8.), h));
-                    window.paint_quad(gpui::quad(grip, px(3.), accent, px(0.), accent, BorderStyle::Solid));
+                    window.paint_quad(crate::ui::quad(grip, px(3.), accent, px(0.), accent, BorderStyle::Solid));
                     let notch = Bounds::new(point(x - px(1.), bounds.origin.y + h * 0.35), size(px(2.), h * 0.3));
                     window.paint_quad(fill(notch, gpui::white()));
                 }

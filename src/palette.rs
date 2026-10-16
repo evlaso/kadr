@@ -4,9 +4,9 @@
 
 use std::collections::HashMap;
 
-use gpui::{Hsla, hsla, rgb};
+use gpui::{Hsla, hsla};
 
-use crate::ui::{Colors, Status, Theme};
+use crate::ui::{Colors, Status, Theme, from_hex};
 
 fn colors_file() -> std::path::PathBuf {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
@@ -26,7 +26,7 @@ fn read_palette() -> Option<(bool, HashMap<String, Hsla>)> {
         } else if let Some(hex) = value.strip_prefix('#').filter(|h| h.len() == 6)
             && let Ok(n) = u32::from_str_radix(hex, 16)
         {
-            colors.insert(key.to_owned(), rgb(n).into());
+            colors.insert(key.to_owned(), from_hex(n));
         }
     }
     Some((light, colors))
@@ -120,10 +120,10 @@ pub fn annotation_colors() -> Vec<Hsla> {
     let defaults = [("red", 0xD14D41), ("orange", 0xDA702C), ("yellow", 0xD0A215), ("green", 0x879A39), ("blue", 0x4385BE), ("magenta", 0xCE5D97)];
     let mut colors: Vec<Hsla> = defaults
         .iter()
-        .map(|&(key, fallback)| theme.get(key).copied().filter(|c| c.s > 0.25).unwrap_or_else(|| rgb(fallback).into()))
+        .map(|&(key, fallback)| theme.get(key).copied().filter(|c| c.saturation > 0.25).unwrap_or_else(|| from_hex(fallback)))
         .collect();
     colors.push(gpui::white());
-    colors.push(rgb(0x100F0F).into());
+    colors.push(from_hex(0x100F0F));
     colors
 }
 

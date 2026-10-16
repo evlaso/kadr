@@ -15,12 +15,13 @@ use std::time::Duration;
 use gpui::{
     App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, RenderImage,
-    Window, canvas, div, fill, img, layer_shell::*, linear_color_stop, linear_gradient, point, px, relative,
+    Window, canvas, div, img, layer_shell::*, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
 };
 use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
+use crate::ui::fill;
 use crate::studio::{
     self, ASPECTS, CURSOR_RATE, CURSOR_STYLES, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_CURSOR, MAX_PADDING, MAX_RADIUS, Probe, Project, QUALITIES,
     RESOLUTIONS, Seg, ZOOMS,
@@ -650,7 +651,7 @@ impl StudioEditor {
             .overflow_hidden()
             .when(shadow > 0. && (bw < fw || bh < fh), |d| {
                 d.shadow(vec![BoxShadow {
-                    color: gpui::hsla(0., 0., 0., 0.55 * shadow),
+                    color: gpui::hsla(0., 0., 0., 0.55 * shadow).into(),
                     offset: point(px(0.), px(0.012 * short)),
                     blur_radius: px(0.035 * short),
                     spread_radius: px(0.),
@@ -755,9 +756,9 @@ impl StudioEditor {
                 // Cut pieces: red wash with a frame.
                 for &(a, b, selected) in &cuts {
                     let mut wash = cut_color;
-                    wash.a = if selected { 0.6 } else { 0.42 };
+                    wash.alpha = if selected { 0.6 } else { 0.42 };
                     let block = Bounds::new(point(at(a), strip_top), size(at(b) - at(a), px(FILMSTRIP)));
-                    window.paint_quad(gpui::quad(block, px(4.), wash, px(if selected { 2. } else { 1. }), cut_color, BorderStyle::Solid));
+                    window.paint_quad(crate::ui::quad(block, px(4.), wash, px(if selected { 2. } else { 1. }), cut_color, BorderStyle::Solid));
                 }
                 // Trimmed-off ends are dimmed, with handles on the kept part.
                 let shade = gpui::hsla(0., 0., 0., 0.62);
@@ -768,21 +769,21 @@ impl StudioEditor {
                     window.paint_quad(fill(Bounds::new(point(at(trim.1), strip_top), size(x0 + w - at(trim.1), px(FILMSTRIP))), shade));
                 }
                 let kept = Bounds::new(point(at(trim.0), strip_top), size(at(trim.1) - at(trim.0), px(FILMSTRIP)));
-                window.paint_quad(gpui::quad(kept, px(6.), gpui::transparent_black(), px(2.), handle_color, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(kept, px(6.), gpui::transparent_black(), px(2.), handle_color, BorderStyle::Solid));
                 for (x, left) in [(at(trim.0), true), (at(trim.1), false)] {
                     let hx = if left { x } else { x - px(8.) };
-                    window.paint_quad(gpui::quad(Bounds::new(point(hx, strip_top), size(px(8.), px(FILMSTRIP))), px(4.), handle_color, px(0.), handle_color, BorderStyle::Solid));
+                    window.paint_quad(crate::ui::quad(Bounds::new(point(hx, strip_top), size(px(8.), px(FILMSTRIP))), px(4.), handle_color, px(0.), handle_color, BorderStyle::Solid));
                     let grip = gpui::hsla(0., 0., 0., 0.5);
                     window.paint_quad(fill(Bounds::new(point(hx + px(3.5), strip_top + px(FILMSTRIP / 2. - 7.)), size(px(1.), px(14.))), grip));
                 }
                 for &(s, e, selected) in &segments {
                     let block = Bounds::new(point(at(s), lane_top + px(2.)), size(at(e) - at(s), px(LANE - 4.)));
                     let mut fill_color = accent;
-                    fill_color.a = if selected { 0.55 } else { 0.3 };
-                    window.paint_quad(gpui::quad(block, px(6.), fill_color, px(if selected { 2. } else { 1. }), accent, BorderStyle::Solid));
+                    fill_color.alpha = if selected { 0.55 } else { 0.3 };
+                    window.paint_quad(crate::ui::quad(block, px(6.), fill_color, px(if selected { 2. } else { 1. }), accent, BorderStyle::Solid));
                     // Ease-in/out ramps either side, faint.
                     let mut ramp = accent;
-                    ramp.a = 0.12;
+                    ramp.alpha = 0.12;
                     for (a, b) in [(s - studio::RAMP, s), (e, e + studio::RAMP)] {
                         let (a, b) = (a.max(0.), b.min(d));
                         if b > a {
@@ -793,7 +794,7 @@ impl StudioEditor {
                 let x = at(playhead);
                 let line_top = bounds.origin.y + px(top - 2.);
                 window.paint_quad(fill(Bounds::new(point(x - px(1.), line_top), size(px(2.), bounds.size.height - px(top - 2.))), text));
-                window.paint_quad(gpui::quad(Bounds::new(point(x - px(6.), line_top - px(6.)), size(px(12.), px(10.))), px(3.), text, px(0.), text, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x - px(6.), line_top - px(6.)), size(px(12.), px(10.))), px(3.), text, px(0.), text, BorderStyle::Solid));
             },
         )
         .absolute()
@@ -877,6 +878,7 @@ impl StudioEditor {
             .py_1()
             .bg(cx.theme().colors().title_bar_background)
             .rounded_t(px(kit::RADIUS - 1.))
+            .rounded_smoothing(crate::ui::SMOOTHING)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
@@ -977,10 +979,10 @@ impl StudioEditor {
             move |_, bounds, window, _| {
                 let mid = bounds.origin.y + bounds.size.height / 2.;
                 let (x0, w) = (bounds.origin.x, bounds.size.width);
-                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
-                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
                 let cx0 = x0 + w * v;
-                window.paint_quad(gpui::quad(Bounds::new(point(cx0 - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(cx0 - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
             },
         )
         .size_full();
@@ -1237,7 +1239,7 @@ impl StudioEditor {
                 })
         } else {
             section("Курсор").child(
-                Label::new("Чтобы менять размер и плавность курсора, записывай в режиме студии (✦ на панели записи)")
+                Label::new("Чтобы менять размер и плавность курсора, записывай в режиме студии (кнопка-искра на панели записи)")
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
             )
@@ -1358,6 +1360,7 @@ impl Render for StudioEditor {
                 v_flex()
                     .w(px(width))
                     .rounded(px(kit::RADIUS))
+                    .rounded_smoothing(crate::ui::SMOOTHING)
                     .overflow_hidden()
                     .border_1()
                     .border_color(cx.theme().colors().border)

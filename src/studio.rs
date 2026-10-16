@@ -625,7 +625,7 @@ fn backdrop_pixels(l: &Layout, project: &Project) -> image::RgbImage {
         return img.resize_to_fill(l.ow, l.oh, image::imageops::FilterType::Triangle).to_rgb8();
     }
     let rgb = |c: Hsla| {
-        let c = c.to_rgb();
+        let c = crate::ui::rgb_of(c);
         [c.r as f64 * 255., c.g as f64 * 255., c.b as f64 * 255.]
     };
     let (c0, c1) = project.colors();

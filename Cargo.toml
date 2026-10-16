@@ -4,11 +4,11 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-# GPUI isn't published past 0.2.2; track it from Zed's release tags.
-gpui = { git = "https://github.com/zed-industries/zed", tag = "v1.24.2" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", tag = "v1.24.2", features = ["wayland"] }
+# GPUI Community Edition, pinned; updated on purpose, not automatically.
+gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", default-features = false, features = ["font-kit", "wayland", "image-default-formats"] }
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", features = ["wayland"] }
 smallvec = { version = "1", features = ["union"] }
-# Zed's own component library and theme, for the editor's look.
+palette = "0.7"
 async-process = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 futures = "0.3"
@@ -18,12 +18,6 @@ anyhow = "1.0.104"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 tiny-skia = "0.12.0"
 ab_glyph = "0.2.32"
-
-# Zed builds GPUI against these forks; mirror its [patch.crates-io].
-[patch.crates-io]
-async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 
 [profile.release]
 strip = true

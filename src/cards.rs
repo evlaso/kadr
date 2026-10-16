@@ -43,9 +43,6 @@ struct Card {
     id: usize,
     path: PathBuf,
     image: Arc<Image>,
-    /// The same picture blurred: the hover backdrop for the frosted buttons
-    /// (GPUI has no backdrop blur of its own).
-    blurred: Arc<Image>,
     /// Thumbnail height.
     height: f32,
     /// Clip duration in seconds for recordings.
@@ -77,11 +74,11 @@ pub fn show(path: PathBuf, cx: &mut App) {
             cx.background_executor()
                 .spawn(async move { card_thumbnail(&std::fs::read(&file).ok()?) })
                 .await
-                .map(|(image, blurred, height, _)| (image, blurred, height, None))
+                .map(|(image, height, _)| (image, height, None))
         };
         match loaded {
-            Some((image, blurred, height, video)) => {
-                let _ = cx.update(|cx| add(path, image, blurred, height, video, cx));
+            Some((image, height, video)) => {
+                let _ = cx.update(|cx| add(path, image, height, video, cx));
             }
             None => util::notify("Не удалось открыть файл", &path.display().to_string()),
         }
@@ -102,9 +99,9 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
         .unwrap_or(false)
 }
 
-fn add(path: PathBuf, image: Arc<Image>, blurred: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
+fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
     let settings = Settings::load();
-    let mut slot = Some(Card { id: 0, path, image, blurred, height, video, deadline: dismiss_at(&settings), hovered: false });
+    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: dismiss_at(&settings), hovered: false });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
@@ -205,13 +202,14 @@ impl CardStack {
                 action(this, &path, id, window, cx)
             })
         };
-        // Frosted pills over the blurred picture, like CleanShot's.
+        // Frosted-glass pills, like CleanShot's: they blur the picture behind them.
         let glass = |el: Stateful<Div>| {
             el.flex()
                 .items_center()
                 .justify_center()
                 .rounded_full()
-                .bg(hsla(0., 0., 1., 0.18))
+                .bg(hsla(0., 0., 1., 0.16))
+                .backdrop_blur(px(14.))
                 .border_1()
                 .border_color(hsla(0., 0., 1., 0.22))
                 .text_color(gpui::white())
@@ -291,8 +289,7 @@ impl CardStack {
             .inset_0()
             .rounded(px(kit::RADIUS))
             .opacity(if shown { 1. } else { 0. })
-            .child(img(card.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
-            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000052)))
+            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000040)))
             .flex()
             .items_center()
             .justify_center()
@@ -453,8 +450,8 @@ pub fn image_preview(path: &Path) -> Option<(Arc<Image>, u32, u32)> {
 /// Card-sized thumbnail: center-cropped to the card's aspect and scaled to
 /// twice its width, so corners round correctly and a 4K screenshot isn't kept
 /// in memory. Returns the image and the card height.
-/// Card picture, its blurred twin, the card height and the source size.
-fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, Arc<Image>, f32, (u32, u32))> {
+/// Card picture, the card height and the source size.
+fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, f32, (u32, u32))> {
     let src = image::load_from_memory(bytes).ok()?;
     let (w, h) = (src.width().max(1), src.height().max(1));
     let height = (THUMB_WIDTH * h as f32 / w as f32).clamp(96. * kit::SCALE, THUMB_MAX);
@@ -471,14 +468,11 @@ fn card_thumbnail(bytes: &[u8]) -> Option<(Arc<Image>, Arc<Image>, f32, (u32, u3
         img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
         Some(Arc::new(Image::from_bytes(ImageFormat::Png, png)))
     };
-    // Blurring a quarter-size copy is quick and looks the same once stretched.
-    let small = thumb.resize_exact(thumb.width() / 4, thumb.height() / 4, image::imageops::FilterType::Triangle);
-    let blurred = image::DynamicImage::ImageRgba8(image::imageops::blur(&small.to_rgba8(), 4.));
-    Some((encode(&thumb)?, encode(&blurred)?, height, (w, h)))
+    Some((encode(&thumb)?, height, (w, h)))
 }
 
 /// First frame (scaled down) and duration in seconds.
-async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, Arc<Image>, f32, Option<f64>)> {
+async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Image>, f32, Option<f64>)> {
     use std::ffi::OsStr;
     let thumb = util::runtime_dir().join(format!("kadr-thumb-{}.png", std::process::id()));
     let (ok, _) = util::output::<&OsStr>(&[
@@ -493,7 +487,7 @@ async fn video_preview(path: &Path, cx: &mut gpui::AsyncApp) -> Option<(Arc<Imag
         "-of".as_ref(), "csv=p=0".as_ref(), path.as_os_str(),
     ])
     .await?;
-    let (image, blurred, height, _) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
+    let (image, height, _) = cx.background_executor().spawn(async move { card_thumbnail(&bytes?) }).await?;
     let seconds: f64 = duration.trim().parse().unwrap_or(0.0);
-    Some((image, blurred, height, Some(seconds)))
+    Some((image, height, Some(seconds)))
 }

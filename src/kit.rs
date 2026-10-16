@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Global, Pixels, Render, SharedString, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
+    WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
     hsla, layer_shell::*, point, prelude::*, px, size,
 };
 use crate::ui::{ActiveTheme, KeyBinding, LabelSize};
@@ -113,8 +113,8 @@ pub const RADIUS: f32 = 16.;
 /// plus a tighter contact shadow.
 pub fn shadow() -> Vec<BoxShadow> {
     vec![
-        BoxShadow { color: hsla(0., 0., 0., 0.38), offset: point(px(0.), px(8.)), blur_radius: px(22.), spread_radius: px(0.), inset: false },
-        BoxShadow { color: hsla(0., 0., 0., 0.22), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
+        BoxShadow { color: hsla(0., 0., 0., 0.38).into(), offset: point(px(0.), px(8.)), blur_radius: px(22.), spread_radius: px(0.), inset: false },
+        BoxShadow { color: hsla(0., 0., 0., 0.22).into(), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
     ]
 }
 
@@ -182,7 +182,7 @@ pub fn open_layer<V: Render + 'static>(
             size: size(px(spec.size.0), px(spec.size.1)),
         })),
         app_id: Some("kadr".into()),
-        window_background: WindowBackgroundAppearance::Transparent,
+        linux_window_background: gpui::LinuxWindowBackground::Transparent,
         display_id: spec.monitor.as_ref().and_then(|m| m.display(cx)),
         kind: WindowKind::LayerShell(LayerShellOptions {
             namespace: spec.namespace.into(),

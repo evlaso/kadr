@@ -5,7 +5,7 @@
 
 use gpui::{
     AnyView, App, Bounds, Context, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, WeakEntity, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
+    WindowBounds, WindowHandle, WindowKind, WindowOptions, div,
     layer_shell::*, point, popup::*, px, rgba, size,
 };
 use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
@@ -100,7 +100,7 @@ impl Panel {
         let options = WindowOptions {
             titlebar: None,
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.), px(0.)), size: size(px(380. * kit::SCALE), px(height)) })),
-            window_background: WindowBackgroundAppearance::Transparent,
+            linux_window_background: gpui::LinuxWindowBackground::Transparent,
             kind: WindowKind::AnchoredPopup(PopupOptions {
                 parent: window.window_handle(),
                 anchor_rect: Bounds::new(event.position, size(px(1.), px(1.))),

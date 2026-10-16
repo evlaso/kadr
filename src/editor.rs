@@ -16,13 +16,14 @@ use gpui::{
     FillOptions, PathStyle,
     App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
     KeyDownEvent, MouseButton, ScrollWheelEvent, relative, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
-    Window, canvas, div, fill, img, layer_shell::*, linear_color_stop, linear_gradient, outline,
+    Window, canvas, div, img, layer_shell::*, linear_color_stop, linear_gradient, 
     point, px, rgba, size,
 };
 use image::RgbaImage;
 use crate::ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit::{self, LayerSpec};
+use crate::ui::{fill, outline};
 use crate::{cards, ocr, palette, studio_editor, util};
 
 /// A point in image pixels.
@@ -1155,6 +1156,7 @@ impl Editor {
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
             .rounded_t(px(kit::RADIUS - 1.))
+            .rounded_smoothing(crate::ui::SMOOTHING)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(history)
@@ -1203,6 +1205,7 @@ impl Editor {
             .py_1()
             .bg(cx.theme().colors().status_bar_background)
             .rounded_b(px(kit::RADIUS - 1.))
+            .rounded_smoothing(crate::ui::SMOOTHING)
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
@@ -1325,10 +1328,10 @@ impl Editor {
             move |_, bounds, window, _| {
                 let mid = bounds.origin.y + bounds.size.height / 2.;
                 let (x0, w) = (bounds.origin.x, bounds.size.width);
-                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
-                window.paint_quad(gpui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
                 let c = x0 + w * v;
-                window.paint_quad(gpui::quad(Bounds::new(point(c - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(c - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.), knob_color, BorderStyle::Solid));
             },
         )
         .size_full();
@@ -1618,7 +1621,7 @@ impl Editor {
                         let c = pt(h);
                         let disc = |r: f32| Bounds::new(point(c.x - px(r), c.y - px(r)), size(px(2. * r), px(2. * r)));
                         window.paint_quad(fill(disc(8.), rgba(0x00000033)).corner_radii(px(8.)));
-                        window.paint_quad(gpui::quad(disc(6.), px(6.), gpui::white(), px(1.5), accent, BorderStyle::Solid));
+                        window.paint_quad(crate::ui::quad(disc(6.), px(6.), gpui::white(), px(1.5), accent, BorderStyle::Solid));
                     }
                 }
             },
@@ -1647,7 +1650,7 @@ impl Editor {
             .when(framed && self.frame.shadow > 0., |d| {
                 let big = self.disp.0.max(self.disp.1);
                 d.shadow(vec![BoxShadow {
-                    color: gpui::hsla(0., 0., 0., 0.6 * self.frame.shadow),
+                    color: gpui::hsla(0., 0., 0., 0.6 * self.frame.shadow).into(),
                     offset: point(px(0.), px(big * 0.012)),
                     blur_radius: px(big * 0.035),
                     spread_radius: px(0.),
@@ -1758,6 +1761,7 @@ impl Render for Editor {
                 v_flex()
                     .w(px(width))
                     .rounded(px(kit::RADIUS))
+                    .rounded_smoothing(crate::ui::SMOOTHING)
                     .overflow_hidden()
                     .border_1()
                     .border_color(cx.theme().colors().border)
@@ -1842,7 +1846,7 @@ fn backdrop_pixels(backdrop: &Backdrop, w: u32, h: u32) -> RgbaImage {
         Backdrop::Gradient(i) => all[(*i).min(all.len() - 1)],
         _ => all[0],
     };
-    let (a, b) = (c0.to_rgb(), c1.to_rgb());
+    let (a, b) = (crate::ui::rgb_of(c0), crate::ui::rgb_of(c1));
     RgbaImage::from_fn(w, h, |x, y| {
         let g = ((x as f32 / w as f32) * 0.6 + (y as f32 / h as f32) * 0.4).clamp(0., 1.);
         let mix = |p: f32, q: f32| ((p + (q - p) * g) * 255.).round() as u8;
@@ -2022,7 +2026,7 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
         Kind::Pen(points) => stroke(window, &smooth(points), false, c, w),
         Kind::Marker(points) => {
             let mut faded = c;
-            faded.a = MARKER_ALPHA;
+            faded.alpha = MARKER_ALPHA;
             stroke(window, &smooth(points), false, faded, w)
         }
         Kind::Arrow => {
@@ -2040,7 +2044,7 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
         // While dragging, outline the area to be hidden.
         Kind::Blur(None) => {
             let mut outline = c;
-            outline.a = 0.8;
+            outline.alpha = 0.8;
             stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, outline, 1.5 / s);
         }
         Kind::Blur(Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Spotlight => {}
@@ -2075,7 +2079,7 @@ fn paint_spotlights(window: &mut Window, spots: &[(P, P)], size: P, pt: &impl Fn
 
 /// White or near-black text, whichever reads better on `c`.
 fn on_color(c: Hsla) -> Hsla {
-    if c.l > 0.65 { gpui::hsla(0., 0., 0.08, 1.) } else { gpui::white() }
+    if c.lightness > 0.65 { gpui::hsla(0., 0., 0.08, 1.) } else { gpui::white() }
 }
 
 pub(crate) fn font() -> &'static FontRef<'static> {
@@ -2166,7 +2170,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
     let mut pm = Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(w, h)?)?;
 
     let paint_for = |c: Hsla, alpha: f32| {
-        let rgb = c.to_rgb();
+        let rgb = crate::ui::rgb_of(c);
         let mut p = Paint::default();
         p.set_color_rgba8((rgb.r * 255.) as u8, (rgb.g * 255.) as u8, (rgb.b * 255.) as u8, (alpha * 255.) as u8);
         p.anti_alias = true;
@@ -2317,7 +2321,7 @@ pub(crate) fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size:
     let font = font();
     let scale = em(size);
     let f = font.as_scaled(scale);
-    let rgb = color.to_rgb();
+    let rgb = crate::ui::rgb_of(color);
     let (w, h) = (pm.width() as i32, pm.height() as i32);
     let data = pm.data_mut();
     let mut x = origin.0;

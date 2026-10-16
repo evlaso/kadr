@@ -7,10 +7,11 @@
 //! window's rem size (`kit::REM`) the same way Zed's components did.
 
 use gpui::{
-    AnyElement, AnyView, App, BoxShadow, ClickEvent, Div, ElementId, Global, Hsla, IntoElement,
+    AnyElement, AnyView, App, Background, BorderStyle, Bounds, BoxShadow, ClickEvent, Div, PaintQuad, Pixels, ElementId, Global, Hsla, IntoElement,
     ParentElement, Rems, RenderOnce, SharedString, Stateful, Styled, StyleRefinement, Window, div, hsla, point,
     prelude::*, px, relative, rems, svg,
 };
+use palette::IntoColor;
 use smallvec::SmallVec;
 
 use crate::kit;
@@ -28,6 +29,41 @@ pub mod prelude {
 pub fn rems_from_px(px: f32) -> Rems {
     rems(px / 16.)
 }
+
+/// A colour as plain 0..1 RGBA, for kadr's own rasterising.
+#[derive(Clone, Copy, Debug)]
+pub struct Rgb {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
+pub fn rgb_of(color: Hsla) -> Rgb {
+    let c = gpui::hsla_to_rgba(color);
+    Rgb { r: c.red, g: c.green, b: c.blue, a: c.alpha }
+}
+
+/// `0xRRGGBB` as a colour.
+pub fn from_hex(hex: u32) -> Hsla {
+    gpui::rgb(hex).into_color()
+}
+
+/// GPUI CE paints quads through `PaintQuad`; these keep the familiar calls.
+pub fn fill(bounds: Bounds<Pixels>, color: impl Into<Background>) -> PaintQuad {
+    PaintQuad::new(bounds).background(color)
+}
+
+pub fn outline(bounds: Bounds<Pixels>, color: impl Into<Background>, style: BorderStyle) -> PaintQuad {
+    PaintQuad::new(bounds).border_widths(px(1.)).border_color(color).border_style(style)
+}
+
+pub fn quad(bounds: Bounds<Pixels>, radius: Pixels, background: impl Into<Background>, border: Pixels, border_color: impl Into<Background>, style: BorderStyle) -> PaintQuad {
+    PaintQuad::new(bounds).corner_radii(radius).background(background).border_widths(border).border_color(border_color).border_style(style)
+}
+
+/// Corner smoothing for panels and windows (0 is circular).
+pub const SMOOTHING: f32 = 0.6;
 
 pub fn h_flex() -> Div {
     div().flex().flex_row().items_center()
@@ -134,8 +170,8 @@ pub trait StyledExt: Styled + Sized {
     /// A raised surface: popovers and floating bars.
     fn elevation_2(self, cx: &App) -> Self {
         self.elevated(cx, vec![
-            BoxShadow { color: hsla(0., 0., 0., 0.12), offset: point(px(0.), px(2.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if cx.theme().light { 0.03 } else { 0.06 }), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., 0.12).into(), offset: point(px(0.), px(2.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if cx.theme().light { 0.03 } else { 0.06 }).into(), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false },
         ])
     }
 
@@ -143,16 +179,17 @@ pub trait StyledExt: Styled + Sized {
     fn elevation_3(self, cx: &App) -> Self {
         let light = cx.theme().light;
         self.elevated(cx, vec![
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.12 }), offset: point(px(0.), px(2.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.12 }), offset: point(px(0.), px(3.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., 0.04), offset: point(px(0.), px(6.)), blur_radius: px(12.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.04 } else { 0.12 }), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.12 }).into(), offset: point(px(0.), px(2.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.12 }).into(), offset: point(px(0.), px(3.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., 0.04).into(), offset: point(px(0.), px(6.)), blur_radius: px(12.), spread_radius: px(0.), inset: false },
+            BoxShadow { color: hsla(0., 0., 0., if light { 0.04 } else { 0.12 }).into(), offset: point(px(0.), px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false },
         ])
     }
 
     fn elevated(self, cx: &App, shadow: Vec<BoxShadow>) -> Self {
         let colors = cx.theme().colors();
-        self.bg(colors.elevated_surface_background).rounded_lg().border_1().border_color(colors.border_variant).shadow(shadow)
+        // Squircle corners, iOS-style.
+        self.bg(colors.elevated_surface_background).rounded_lg().rounded_smoothing(SMOOTHING).border_1().border_color(colors.border_variant).shadow(shadow)
     }
 }
 
@@ -610,7 +647,9 @@ impl RenderOnce for ButtonLike {
             .bg(rest)
             .when(self.style == ButtonStyle::Outlined, |b| b.border_1().border_color(colors.border_variant))
             .map(|b| if self.square { b.w(height) } else { b.px(self.size.padding()) })
-            .when(!self.disabled, |b| b.cursor_pointer().hover(|s| s.bg(hover)).active(|s| s.bg(active)))
+            .when(!self.disabled, |b| {
+                b.cursor_pointer().hover(|s| s.bg(hover)).active(|s| s.bg(active))
+            })
             .when(self.disabled, |b| b.cursor_not_allowed())
             .children(self.children);
         button
