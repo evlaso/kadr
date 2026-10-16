@@ -146,6 +146,17 @@ pub fn camera_offset(video: &Path) -> f64 {
         .max(0.)
 }
 
+/// Whether the current look is a saved preset: every setting the preset
+/// keeps is the same now (settings added since don't count against it).
+pub fn look_matches(preset: &serde_json::Value, current: &serde_json::Value) -> bool {
+    let Some(saved) = preset.as_object() else { return false };
+    !saved.is_empty()
+        && saved.iter().all(|(key, value)| match (value.as_f64(), current[key].as_f64()) {
+            (Some(a), Some(b)) => (a - b).abs() < 1e-6,
+            _ => current.get(key) == Some(value),
+        })
+}
+
 /// Where the camera file starts against the screen, and the bubble's look
 /// at the time, which the studio starts from.
 pub fn save_camera(video: &Path, offset: f64, look: crate::webcam::Look) {

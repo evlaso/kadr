@@ -1,22 +1,16 @@
 //! Text recognition, like CleanShot's "Capture Text": pick an area (or use
 //! a screenshot you already have), the text goes to the clipboard and a
-//! Zed-style toast shows what was found. Tesseract does the reading, with
+//! card like a screenshot's shows what was found. Tesseract does the reading, with
 //! every installed language that matters here.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::time::Duration;
 
-use crate::kit::{Anchor, KeyboardInteractivity};
-use gpui::{App, AsyncApp, Context, SharedString, Window, WindowHandle, div, px};
-use crate::ui::{IconButtonShape, Tooltip, prelude::*};
+use gpui::{App, AsyncApp};
 
-use crate::kit::{self, InputRegion, LayerSpec};
+use crate::kit;
 use crate::util;
 use crate::i18n::t;
-
-const TOAST_TIME: Duration = Duration::from_secs(7);
 
 /// `kadr text`: select an area on a frozen screen and read it.
 pub fn region(cx: &mut App) {
@@ -127,101 +121,7 @@ fn done(text: Option<String>, cx: &mut App) {
     if let Some(text) = &text {
         crate::platform::copy_text(text);
     }
-    show_toast(text, cx);
-}
-
-struct Toast {
-    text: Option<String>,
-    region: InputRegion,
-}
-
-fn show_toast(text: Option<String>, cx: &mut App) {
-    let lines = text.as_deref().map_or(1, |t| t.lines().count().min(4)) as f32;
-    let spec = LayerSpec {
-        namespace: "kadr-toast",
-        anchor: Anchor::BOTTOM,
-        margin: (0., 0., 24., 0.),
-        size: (440. * kit::SCALE, (120. + lines * 18.) * kit::SCALE),
-        keyboard: KeyboardInteractivity::None,
-        ignore_zones: false,
-        monitor: util::focused_monitor(),
-    };
-    let handle: Option<WindowHandle<Toast>> = kit::open_layer(cx, spec, |_, cx| cx.new(|_| Toast { text, region: InputRegion::default() }));
-    if let Some(handle) = handle {
-        cx.spawn(async move |cx| {
-            cx.background_executor().timer(TOAST_TIME).await;
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
-        })
-        .detach();
-    }
-}
-
-impl Render for Toast {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.region.reset();
-        let (title, body): (&str, SharedString) = match &self.text {
-            Some(text) => {
-                let preview: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).take(4).collect();
-                (t("ocr.text_copied"), preview.join("\n").into())
-            }
-            None if !has_russian() => (
-                t("ocr.no_text_found"),
-                t("ocr.for_russian_text_install_tesseract").into(),
-            ),
-            None => (t("ocr.no_text_found"), t("ocr.try_selecting_larger_area").into()),
-        };
-        let found = self.text.clone().map(Rc::<str>::from);
-        let chars = self.text.as_ref().map(|t| t.chars().count());
-
-        kit::root(cx).flex().items_end().justify_center().child(
-            v_flex()
-                .relative()
-                .w(px(400.))
-                .gap_1()
-                .pl_2p5()
-                .pr_1()
-                .pt_1()
-                .pb_2()
-                .elevation_3(cx)
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .child(Icon::new(IconName::CaseSensitive).size(IconSize::Small).color(if found.is_some() { Color::Accent } else { Color::Muted }))
-                        .child(div().flex_1().child(Label::new(title).size(LabelSize::Small)))
-                        .when_some(chars, |row, n| row.child(Label::new(tr!("ocr.chars", n)).size(LabelSize::XSmall).color(Color::Muted)))
-                        .child(
-                            IconButton::new("close", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text(t("common.close")))
-                                .on_click(|_, window, _| window.remove_window()),
-                        ),
-                )
-                .child(
-                    div()
-                        .pr_1p5()
-                        .font_family(kit::MONO_FONT)
-                        .text_xs()
-                        .text_color(cx.theme().colors().text_muted)
-                        .line_clamp(4)
-                        .child(body),
-                )
-                .when_some(found, |col, text| {
-                    col.child(
-                        h_flex().justify_end().pr_1().child(
-                            Button::new("again", t("ocr.copy_again"))
-                                .style(ButtonStyle::Subtle)
-                                .start_icon(Icon::new(IconName::Copy).size(IconSize::Small))
-                                .on_click(move |_, window, _| {
-                                    crate::platform::copy_text(&text);
-                                    window.remove_window();
-                                }),
-                        ),
-                    )
-                })
-                .child(self.region.mark()),
-        )
-    }
+    crate::cards::show_text(text, cx);
 }
 
 /// Fetch Tesseract's official Russian model into kadr's own folder (no root

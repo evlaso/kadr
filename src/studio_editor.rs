@@ -18,7 +18,7 @@ use gpui::{
     Window, canvas, div, img, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
 };
-use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
+use crate::ui::{IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit;
 use crate::ui::fill;
@@ -1320,39 +1320,33 @@ impl StudioEditor {
 
         // Presets: chips, and one button to keep or drop the current look.
         let current = self.project.look();
-        let active = self.presets.iter().position(|(_, look)| *look == current);
+        let active = self.presets.iter().position(|(_, look)| crate::studio::look_matches(look, &current));
         let presets = h_flex()
             .w_full()
             .flex_wrap()
             .gap_1()
             .children(self.presets.iter().enumerate().map(|(i, (name, look))| {
                 let look = look.clone();
-                ButtonLike::new(SharedString::from(format!("preset-{i}")))
-                    .style(if active == Some(i) { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                    .toggle_state(active == Some(i))
-                    .child(div().px_1p5().child(Label::new(name.clone()).size(LabelSize::Small)))
+                preset_chip(i, name, active == Some(i), cx)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.project = this.project.with_look(&look, &this.probe);
                         this.changed(cx);
                     }))
-            }))
-            .child(match active {
-                None => Button::new("save-preset", t("common.save_as_preset"))
-                    .style(ButtonStyle::Subtle)
-                    .color(Color::Muted)
-                    .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
-                    .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx)))
-                    .into_any_element(),
-                Some(i) => IconButton::new("delete-preset", IconName::Trash)
-                    .shape(IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text(t("common.delete_preset")))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .child(delete_mark(i).on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
                         this.presets.remove(i);
                         studio::save_presets(&this.presets);
                         cx.notify();
-                    }))
-                    .into_any_element(),
+                    })))
+            }))
+            .when(active.is_none(), |row| {
+                row.child(
+                    Button::new("save-preset", t("common.save_as_preset"))
+                        .style(ButtonStyle::Subtle)
+                        .color(Color::Muted)
+                        .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
+                        .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
+                )
             });
 
         // The backdrop: colours and gradients, then wallpapers.
@@ -1570,6 +1564,41 @@ impl StudioEditor {
             .child(overlays)
             .child(export)
     }
+}
+
+/// A preset as a chip; its × shows on hover.
+pub(crate) fn preset_chip<T: 'static>(i: usize, name: &str, on: bool, cx: &mut Context<T>) -> gpui::Stateful<Div> {
+    let colors = cx.theme().colors();
+    div()
+        .id(SharedString::from(format!("preset-{i}")))
+        .group(SharedString::from(format!("preset-{i}")))
+        .h(crate::ui::rems_from_px(22.))
+        .flex()
+        .items_center()
+        .gap_1()
+        .pl_2()
+        .pr_1()
+        .rounded(crate::ui::rems_from_px(7.))
+        .cursor_pointer()
+        .when(on, |d| d.bg(colors.element_selected))
+        .hover(|d| d.bg(colors.element_hover))
+        .child(Label::new(name.to_owned()).size(LabelSize::Small))
+}
+
+/// The × inside a preset chip, faint until the chip is hovered.
+pub(crate) fn delete_mark(i: usize) -> gpui::Stateful<Div> {
+    div()
+        .id(SharedString::from(format!("preset-delete-{i}")))
+        .size(px(14.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .opacity(0.)
+        .group_hover(SharedString::from(format!("preset-{i}")), |d| d.opacity(1.))
+        .hover(|d| d.bg(gpui::hsla(0., 0., 0.5, 0.3)))
+        .tooltip(Tooltip::text(t("common.delete_preset")))
+        .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Muted))
 }
 
 impl Render for StudioEditor {

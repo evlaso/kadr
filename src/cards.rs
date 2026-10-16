@@ -53,7 +53,10 @@ struct Thumb {
 struct Card {
     id: usize,
     path: PathBuf,
-    image: Thumb,
+    image: Option<Thumb>,
+    /// A text card (recognized text) instead of a file: the text, or None
+    /// when nothing was found.
+    text: Option<Option<String>>,
     /// Thumbnail height.
     height: f32,
     /// Clip duration in seconds for recordings.
@@ -92,7 +95,7 @@ pub fn show(path: PathBuf, cx: &mut App) {
         };
         match loaded {
             Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(path, image, height, video, cx));
+                let _ = cx.update(|cx| add(Card { id: 0, path, image: Some(image), text: None, height, video, deadline: Instant::now(), hovered: false }, cx));
             }
             None => util::notify(t("card.couldnt_open_file"), &path.display().to_string()),
         }
@@ -113,9 +116,14 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
         .unwrap_or(false)
 }
 
-fn add(path: PathBuf, image: Thumb, height: f32, video: Option<f64>, cx: &mut App) {
+/// A card with recognized text (copied already), or with "nothing found".
+pub fn show_text(text: Option<String>, cx: &mut App) {
+    add(Card { id: 0, path: PathBuf::new(), image: None, text: Some(text), height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
+}
+
+fn add(card: Card, cx: &mut App) {
     let settings = Settings::load();
-    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: dismiss_at(&settings), hovered: false });
+    let mut slot = Some(Card { deadline: dismiss_at(&settings), ..card });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
@@ -202,6 +210,9 @@ impl CardStack {
     /// hovering shows the main actions in the middle and the rest in the
     /// corners. Drag it out as a file; double-click to edit.
     fn render_card(&self, card: &Card, inside: bool, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(text) = &card.text {
+            return self.render_text_card(card, text.as_deref(), inside, cx);
+        }
         let shown = card.hovered && inside;
         // Off-screen offset toward the card's edge, to come in from.
         let away = (CARD_WIDTH + EDGE + PAD) * if self.settings.card_side == Side::Right { 1. } else { -1. };
@@ -304,7 +315,7 @@ impl CardStack {
             .rounded(px(kit::RADIUS))
             .opacity(if shown { 1. } else { 0. })
             // The picture blurs and dims behind the buttons.
-            .when(shown, |d| d.child(img(card.image.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
+            .when_some(card.image.as_ref().filter(|_| shown), |d, image| d.child(img(image.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
             .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000052)))
             .flex()
             .items_center()
@@ -375,7 +386,7 @@ impl CardStack {
             .bg(cx.theme().colors().elevated_surface_background)
             // GPUI clips children to a rectangle, so the image rounds its own
             // corners; it is pre-cropped to the card so those are the visible ones.
-            .child(img(card.image.sharp.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS)))
+            .children(card.image.as_ref().map(|image| img(image.sharp.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
             .children(badge)
             .child(hover)
             .child(self.region.mark())
@@ -387,6 +398,101 @@ impl CardStack {
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
             });
         // In from the screen edge the cards sit on.
+        card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
+    }
+}
+
+impl CardStack {
+    /// Recognized text, as a card like the others: the text fading out at
+    /// the bottom, Copy again on hover.
+    fn render_text_card(&self, card: &Card, text: Option<&str>, inside: bool, cx: &mut Context<Self>) -> AnyElement {
+        let shown = card.hovered && inside;
+        let away = (CARD_WIDTH + EDGE + PAD) * if self.settings.card_side == Side::Right { 1. } else { -1. };
+        let id = card.id;
+        let colors = cx.theme().colors();
+        let surface = colors.elevated_surface_background;
+        let (title, body): (&str, String) = match text {
+            Some(text) => (t("ocr.text_copied"), text.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join("\n")),
+            None if !ocr::has_russian() => (t("ocr.no_text_found"), t("ocr.for_russian_text_install_tesseract").into()),
+            None => (t("ocr.no_text_found"), t("ocr.try_selecting_larger_area").into()),
+        };
+        let chars = text.map(|t| t.chars().count());
+        let ink = hsla(0., 0., 0.12, 1.);
+        let pill = |el: Stateful<Div>| {
+            el.flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(hsla(0., 0., 1., 0.92))
+                .cursor_pointer()
+                .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
+                .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
+        };
+        let copy = text.map(|t| t.to_owned());
+        let hover = div()
+            .absolute()
+            .inset_0()
+            .rounded(px(kit::RADIUS))
+            .opacity(if shown { 1. } else { 0. })
+            .bg(rgba(0x00000080))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when_some(copy, |d, text| {
+                d.child(
+                    pill(div().id(("again", id)))
+                        .w(px(124. * kit::SCALE))
+                        .h(px(30. * kit::SCALE))
+                        .child(Label::new(t("ocr.copy_again")).size(LabelSize::Small).color(Color::Custom(ink)))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            crate::platform::copy_text(&text);
+                            this.remove(id, window, cx);
+                        })),
+                )
+            })
+            .child(
+                div().absolute().top_0().left_0().m_2().child(
+                    pill(div().id(("close", id)))
+                        .size(px(26. * kit::SCALE))
+                        .child(Icon::new(IconName::Close).size(IconSize::Small).color(Color::Custom(ink)))
+                        .tooltip(Tooltip::text(t("common.close")))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.remove(id, window, cx);
+                        })),
+                ),
+            );
+        let mut clear = surface;
+        clear.alpha = 0.;
+        let card_el = div()
+            .id(("card", id))
+            .relative()
+            .flex_none()
+            .w(px(CARD_WIDTH))
+            .h(px(card.height))
+            .rounded(px(kit::RADIUS))
+            .shadow(kit::shadow())
+            .bg(surface)
+            .child(
+                v_flex()
+                    .size_full()
+                    .gap_1p5()
+                    .p_3()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(Icon::new(IconName::CaseSensitive).size(IconSize::Small).color(if text.is_some() { Color::Accent } else { Color::Muted }))
+                            .child(div().flex_1().child(Label::new(title).size(LabelSize::Small)))
+                            .when_some(chars, |row, n| row.child(Label::new(tr!("ocr.chars", n)).size(LabelSize::XSmall).color(Color::Muted))),
+                    )
+                    .child(div().flex_1().min_h_0().overflow_hidden().text_sm().text_color(colors.text_muted).child(body)),
+            )
+            // Text that doesn't fit fades out instead of being cut.
+            .child(div().absolute().left_0().right_0().bottom_0().h(px(36.)).rounded_b(px(kit::RADIUS)).bg(gpui::linear_gradient(180., gpui::linear_color_stop(clear, 0.), gpui::linear_color_stop(surface, 0.9))))
+            .child(hover)
+            .child(self.region.mark())
+            .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)));
         card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
     }
 }

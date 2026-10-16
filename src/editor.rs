@@ -1584,44 +1584,38 @@ impl Editor {
     /// Saved backgrounds as chips, and one button to keep or drop the current one.
     fn render_presets(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.frame.to_json();
-        let active = self.presets.iter().position(|(_, look)| *look == current);
+        let active = self.presets.iter().position(|(_, look)| crate::studio::look_matches(look, &current));
         h_flex()
             .w_full()
             .flex_wrap()
             .gap_1()
             .children(self.presets.iter().enumerate().map(|(i, (name, look))| {
                 let look = look.clone();
-                ButtonLike::new(SharedString::from(format!("frame-preset-{i}")))
-                    .style(if active == Some(i) { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                    .toggle_state(active == Some(i))
-                    .child(div().px_1p5().child(Label::new(name.clone()).size(LabelSize::Small)))
+                studio_editor::preset_chip(i, name, active == Some(i), cx)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.frame = Frame::from_json(&look);
                         cx.notify();
                     }))
-            }))
-            .child(match active {
-                None => Button::new("save-frame-preset", t("common.save_as_preset"))
-                    .style(ButtonStyle::Subtle)
-                    .color(Color::Muted)
-                    .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let next = this.presets.iter().filter_map(|(name, _)| name.strip_prefix(t("common.preset_prefix"))?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
-                        this.presets.push((tr!("common.preset_n", next), this.frame.to_json()));
-                        save_frame_presets(&this.presets);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-                Some(i) => IconButton::new("delete-frame-preset", IconName::Trash)
-                    .shape(IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text(t("common.delete_preset")))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .child(studio_editor::delete_mark(i).on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
                         this.presets.remove(i);
                         save_frame_presets(&this.presets);
                         cx.notify();
-                    }))
-                    .into_any_element(),
+                    })))
+            }))
+            .when(active.is_none(), |row| {
+                row.child(
+                    Button::new("save-frame-preset", t("common.save_as_preset"))
+                        .style(ButtonStyle::Subtle)
+                        .color(Color::Muted)
+                        .start_icon(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let next = this.presets.iter().filter_map(|(name, _)| name.strip_prefix(t("common.preset_prefix"))?.parse::<usize>().ok()).max().unwrap_or(0) + 1;
+                            this.presets.push((tr!("common.preset_n", next), this.frame.to_json()));
+                            save_frame_presets(&this.presets);
+                            cx.notify();
+                        })),
+                )
             })
     }
 

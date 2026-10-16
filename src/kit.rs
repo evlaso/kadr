@@ -40,7 +40,6 @@ assets![
     // Zed's icon set, under the paths `ui::IconName` resolves to.
     "icons/close.svg" => "../data/zed/icons/close.svg",
     "icons/image.svg" => "../data/zed/icons/image.svg",
-    "icons/copy.svg" => "../data/zed/icons/copy.svg",
     "icons/pencil.svg" => "../data/zed/icons/pencil.svg",
     "icons/folder.svg" => "../data/zed/icons/folder.svg",
     "icons/trash.svg" => "../data/zed/icons/trash.svg",
