@@ -1718,10 +1718,11 @@ impl Editor {
                     window.paint_quad(outline(area(l, t, r, bt), gpui::white(), BorderStyle::Solid));
                 }
                 // Like CleanShot: shapes that resize show only round knobs;
-                // the rest (pen, text, counters) get a light dashed frame.
+                // the rest (pen, text, counters) get a thin solid frame.
                 if let Some(((l, t, r, b), handles, framed)) = selection {
                     if framed {
-                        window.paint_quad(outline(area(l, t, r, b), accent, BorderStyle::Dashed));
+                        let line = gpui::Hsla { alpha: 0.7, ..accent };
+                        window.paint_quad(crate::ui::quad(area(l, t, r, b), px(2.), gpui::transparent_black(), px(1.), line, BorderStyle::Solid));
                     }
                     for h in handles {
                         let c = pt(h);
