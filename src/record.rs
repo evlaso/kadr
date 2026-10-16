@@ -491,12 +491,21 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         return Err(None);
     }
 
-    let webcam = if opts.webcam { start_webcam(&target, cx).await } else { None };
-
     let settings = Settings::load();
     let dir = settings.video_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let file = dir.join(format!("screenrecording-{}.mp4", util::timestamp()));
+
+    // In studio mode the camera is recorded on its own, so the studio can
+    // shape, size and place it; otherwise it's a window on screen.
+    let (webcam, camera_began) = match (opts.webcam, opts.studio) {
+        (false, _) => (None, None),
+        (true, false) => (start_webcam(&target, cx).await, None),
+        (true, true) => match record_camera(&file, cx).await {
+            Some((pid, began)) => (Some(pid), Some(began)),
+            None => (None, None),
+        },
+    };
 
     let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
     let fps = settings.fps.to_string();
@@ -553,7 +562,42 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         let _ = std::fs::remove_file(&file);
         return Err(Some(log_tail()));
     }
+    if let Some(began) = camera_began {
+        crate::studio::save_camera_offset(&file, began.elapsed().as_secs_f64());
+    }
     Ok(Started { keys: opts.keys, studio: opts.studio, cursor_off, gsr, file, webcam, target })
+}
+
+/// Record the camera to the studio's camera file. Returns ffmpeg's pid and
+/// when its first frame was written, to line it up with the screen.
+async fn record_camera(video: &std::path::Path, cx: &mut AsyncApp) -> Option<(u32, std::time::Instant)> {
+    let (_, list) = util::output(&["omarchy-capture-webcam-list"]).await?;
+    let Some(device) = list.split_whitespace().next().map(str::to_owned) else {
+        util::notify("Камера не найдена", "Запись пойдёт без камеры");
+        return None;
+    };
+    let (_, formats) = util::output(&["v4l2-ctl", "--list-formats-ext", "-d", &device]).await.unwrap_or_default();
+    let size = ["1280x720", "1920x1080", "640x480", "640x360"].into_iter().find(|r| formats.contains(r)).unwrap_or("640x480");
+    let out = crate::studio::camera_file(video);
+    if let Some(dir) = out.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::remove_file(&out);
+    let out_arg = out.display().to_string();
+    let pid = util::spawn(&[
+        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "v4l2", "-framerate", "30", "-video_size", size, "-i", &device,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-pix_fmt", "yuv420p", "-y", &out_arg,
+    ])?;
+    // The file grows once frames come in.
+    for _ in 0..60 {
+        if std::fs::metadata(&out).is_ok_and(|m| m.len() > 0) {
+            return Some((pid, std::time::Instant::now()));
+        }
+        cx.background_executor().timer(Duration::from_millis(50)).await;
+    }
+    util::signal(pid, util::Signal::Terminate);
+    util::notify("Камера не запустилась", "Запись пойдёт без камеры");
+    None
 }
 
 /// Top-left margins of the control pill, relative to the monitor it goes on.

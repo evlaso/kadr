@@ -51,6 +51,7 @@ enum Knob {
     Shadow,
     CursorSize,
     CursorSmooth,
+    CamSize,
 }
 
 enum Drag {
@@ -76,6 +77,11 @@ pub struct StudioEditor {
     /// Saved looks, by name.
     presets: Vec<(String, serde_json::Value)>,
     frame: Option<ImageSource>,
+    /// The camera recorded alongside (studio mode), where its frame 0 sits
+    /// on the recording's clock, and its frame at the playhead.
+    cam_file: Option<PathBuf>,
+    cam_offset: f64,
+    cam_frame: Option<ImageSource>,
     /// Playing inside the editor; any seek stops it.
     playing: bool,
     /// Played frames no longer on screen, freed from the atlas on render.
@@ -134,6 +140,19 @@ pub fn open(video: PathBuf, cx: &mut App) {
                     let camera = Camera::new(&track, &probe, &project.segments);
                     let cursor = if track.cursor_hidden { studio::cursor_path(&track, &probe, project.cursor_smooth) } else { Vec::new() };
                     let playhead = project.trim.0;
+                    let video_path = video.clone();
+                    let cam_file = Some(studio::camera_file(&video_path)).filter(|f| f.exists());
+                    if let Some(file) = cam_file {
+                        let at = playhead + studio::camera_offset(&video_path);
+                        cx.spawn(async move |this, cx| {
+                            let still = trim::frame(&file, at, 480, u64::MAX).await;
+                            let _ = this.update(cx, |editor: &mut StudioEditor, cx| {
+                                editor.cam_frame = still.map(ImageSource::from);
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    }
                     StudioEditor {
                         video,
                         probe,
@@ -145,6 +164,9 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         walls,
                         presets: studio::presets(),
                         frame: frame.map(ImageSource::from),
+                        cam_file: Some(studio::camera_file(&video_path)).filter(|f| f.exists()),
+                        cam_offset: studio::camera_offset(&video_path),
+                        cam_frame: None,
                         playing: false,
                         stale: Vec::new(),
                         playhead,
@@ -260,12 +282,23 @@ impl StudioEditor {
         let id = self.request.get() + 1;
         self.request.set(id);
         let (video, width, request, at) = (self.video.clone(), (self.stage.0 * 2.) as u32, self.request.clone(), self.playhead);
+        let (cam_file, cam_offset) = (self.cam_file.clone(), self.cam_offset);
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_millis(40)).await;
             if request.get() != id {
                 return;
             }
             let frame = trim::frame(&video, at, width, id).await;
+            let cam = match &cam_file {
+                Some(file) => trim::frame(file, at + cam_offset, 480, id).await,
+                None => None,
+            };
+            if request.get() == id && cam.is_some() {
+                let _ = this.update(cx, |editor: &mut StudioEditor, cx| {
+                    editor.cam_frame = cam.map(ImageSource::from);
+                    cx.notify();
+                });
+            }
             if request.get() == id && frame.is_some() {
                 let _ = this.update(cx, |editor, cx| {
                     if let Some(ImageSource::Render(old)) = std::mem::replace(&mut editor.frame, frame.map(ImageSource::from)) {
@@ -325,11 +358,49 @@ impl StudioEditor {
             let _ = child.wait();
         });
 
+        // The camera plays alongside, square, at the same rate.
+        const CAM: usize = 240;
+        let mut cam_rx = self.cam_file.clone().filter(|_| self.project.cam).map(|file| {
+            let (mut tx, rx) = futures::channel::mpsc::channel::<Vec<u8>>(4);
+            let from = start + self.cam_offset;
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let Ok(mut child) = std::process::Command::new("ffmpeg")
+                    .args(["-nostdin", "-loglevel", "error", "-ss", &format!("{from:.3}"), "-i"])
+                    .arg(&file)
+                    .args(["-an", "-vf", &format!("fps={PLAY_FPS},crop='min(iw,ih)':'min(iw,ih)',scale={CAM}:{CAM}"), "-f", "rawvideo", "-pix_fmt", "bgra", "-"])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                else {
+                    return;
+                };
+                let mut out = child.stdout.take().expect("piped");
+                loop {
+                    let mut buf = vec![0u8; CAM * CAM * 4];
+                    if out.read_exact(&mut buf).is_err() || futures::executor::block_on(futures::SinkExt::send(&mut tx, buf)).is_err() {
+                        break;
+                    }
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+            rx
+        });
+
         let request = self.request.clone();
         cx.spawn_in(window, async move |this, cx| {
             let began = std::time::Instant::now();
             let mut n = 0u32;
             while let Some(buf) = futures::StreamExt::next(&mut rx).await {
+                let cam = match cam_rx.as_mut() {
+                    Some(r) => futures::StreamExt::next(r).await,
+                    None => None,
+                };
+                if cam.is_none() {
+                    cam_rx = None;
+                }
+                let cam = cam.and_then(|b| image::RgbaImage::from_raw(CAM as u32, CAM as u32, b)).map(|f| Arc::new(RenderImage::new([image::Frame::new(f)])));
                 if request.get() != id {
                     return;
                 }
@@ -352,6 +423,11 @@ impl StudioEditor {
                         }
                         Some(_) => {
                             if let Some(ImageSource::Render(old)) = editor.frame.replace(ImageSource::Render(shown)) {
+                                editor.stale.push(old);
+                            }
+                            if let Some(cam) = cam.clone()
+                                && let Some(ImageSource::Render(old)) = editor.cam_frame.replace(ImageSource::Render(cam))
+                            {
                                 editor.stale.push(old);
                             }
                             editor.playhead = t.min(editor.probe.duration);
@@ -554,6 +630,7 @@ impl StudioEditor {
             Knob::Shadow => self.project.shadow = v,
             Knob::CursorSize => self.project.cursor_size = 0.5 + v * (MAX_CURSOR - 0.5),
             Knob::CursorSmooth => self.project.cursor_smooth = v,
+            Knob::CamSize => self.project.cam_size = studio::MIN_CAM + v * (studio::MAX_CAM - studio::MIN_CAM),
         }
         self.changed(cx);
     }
@@ -703,6 +780,34 @@ impl StudioEditor {
             Some(path) => div().size_full().child(img(path.clone()).size_full().object_fit(ObjectFit::Cover)),
             None => div().size_full().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))),
         };
+        // The camera in its corner, cut to its shape like the export does.
+        let cam = self.cam_frame.clone().filter(|_| self.project.cam && self.cam_file.is_some()).map(|frame| {
+            let (cx0, cy0, side, r) = studio::camera_box(&l, &self.project);
+            let (cx0, cy0, side, r) = (cx0 as f32 * k, cy0 as f32 * k, side as f32 * k, r as f32 * k);
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, cx| {
+                    let data = match frame.clone() {
+                        ImageSource::Render(data) => Some(data),
+                        ImageSource::Image(image) => image.use_render_image(window, cx),
+                        _ => None,
+                    };
+                    let Some(data) = data else { return };
+                    // Cover the square with the frame's middle.
+                    let s = data.size(0);
+                    let (iw, ih) = (s.width.0 as f32, s.height.0 as f32);
+                    let fit = side / iw.min(ih).max(1.);
+                    let (w, h) = (iw * fit, ih * fit);
+                    let shown = Bounds::new(point(bounds.origin.x - px((w - side) / 2.), bounds.origin.y - px((h - side) / 2.)), size(px(w), px(h)));
+                    let _ = window.paint_image(bounds, shown, px(r).into(), 0., data, 0, false);
+                },
+            )
+            .absolute()
+            .left(px(cx0))
+            .top(px(cy0))
+            .w(px(side))
+            .h(px(side))
+        });
         div()
             .relative()
             .w(px(fw))
@@ -711,6 +816,7 @@ impl StudioEditor {
             .overflow_hidden()
             .child(backdrop)
             .child(picture)
+            .children(cam)
             .when(self.placing, |d| {
                 d.child(
                     div()
@@ -1360,6 +1466,57 @@ impl StudioEditor {
                     .child(Label::new("При зумах, сдвигах камеры и быстром курсоре. Видно в предпросмотре и экспорте").size(LabelSize::XSmall).color(Color::Muted)),
             )
             .child(cursor)
+            .children(self.cam_file.as_ref().map(|_| {
+                let shapes = studio::CAM_SHAPES.iter().enumerate().map(|(i, name)| {
+                    chip(SharedString::from(format!("cam-shape-{i}")), (*name).into(), self.project.cam_shape == i).on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.cam_shape = i;
+                        this.changed(cx);
+                    }))
+                })
+                .collect::<Vec<_>>();
+                // A little frame with the camera's corner filled in.
+                let (accent, muted, edge) = (cx.theme().colors().text_accent, cx.theme().colors().text_muted, cx.theme().colors().border);
+                let corners = (0..4).map(|i| {
+                    let on = self.project.cam_corner == i;
+                    let mark = div().absolute().size(px(6.)).rounded(px(2.)).bg(if on { accent } else { muted });
+                    let mark = match i {
+                        0 => mark.top(px(2.)).left(px(2.)),
+                        1 => mark.top(px(2.)).right(px(2.)),
+                        2 => mark.bottom(px(2.)).left(px(2.)),
+                        _ => mark.bottom(px(2.)).right(px(2.)),
+                    };
+                    ButtonLike::new(SharedString::from(format!("cam-corner-{i}")))
+                        .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                        .toggle_state(on)
+                        .child(div().m_1().relative().w(px(22.)).h(px(15.)).rounded(px(3.)).border_1().border_color(edge).child(mark))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.project.cam_corner = i;
+                            this.changed(cx);
+                        }))
+                })
+                .collect::<Vec<_>>();
+                section("Камера")
+                    .child(toggle_row(
+                        "Показывать камеру",
+                        "Записана отдельно, её можно менять",
+                        Switch::new("cam", ToggleState::from(self.project.cam)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
+                            this.project.cam = *state == ToggleState::Selected;
+                            this.changed(cx);
+                        })),
+                    ))
+                    .when(self.project.cam, |s| {
+                        s.child(h_flex().gap_1().children(shapes))
+                            .child(caption("Размер"))
+                            .child(self.slider(
+                                Knob::CamSize,
+                                (self.project.cam_size - studio::MIN_CAM) / (studio::MAX_CAM - studio::MIN_CAM),
+                                format!("{}%", (self.project.cam_size * 100.).round()),
+                                cx,
+                            ))
+                            .child(caption("Угол"))
+                            .child(h_flex().gap_1().children(corners))
+                    })
+            }))
             .child(
                 section("Поверх видео")
                     .child(toggle_row(

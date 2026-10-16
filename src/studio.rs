@@ -113,6 +113,63 @@ pub struct Project {
     pub cursor_smooth: f64,
     /// Index into `MOTION_BLUR`.
     pub motion_blur: usize,
+    /// The camera recorded alongside (studio mode), laid over a corner.
+    pub cam: bool,
+    /// Index into `CAM_SHAPES`.
+    pub cam_shape: usize,
+    /// Side as a share of the output's short side.
+    pub cam_size: f64,
+    /// 0 top left, 1 top right, 2 bottom left, 3 bottom right.
+    pub cam_corner: usize,
+}
+
+pub const CAM_SHAPES: [&str; 3] = ["Круг", "Скруглённый", "Квадрат"];
+pub const MIN_CAM: f64 = 0.12;
+pub const MAX_CAM: f64 = 0.5;
+
+/// The camera's own recording, made next to the screen in studio mode.
+pub fn camera_file(video: &Path) -> PathBuf {
+    let mut p = track::path_for(video).into_os_string();
+    p.push(".camera.mkv");
+    PathBuf::from(p)
+}
+
+/// Seconds into the camera file where the screen recording begins.
+pub fn camera_offset(video: &Path) -> f64 {
+    let mut p = track::path_for(video).into_os_string();
+    p.push(".camera.json");
+    std::fs::read_to_string(PathBuf::from(p))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["offset"].as_f64())
+        .unwrap_or(0.)
+        .max(0.)
+}
+
+pub fn save_camera_offset(video: &Path, offset: f64) {
+    let mut p = track::path_for(video).into_os_string();
+    p.push(".camera.json");
+    let path = PathBuf::from(p);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, json!({ "offset": offset }).to_string());
+}
+
+/// Where the camera sits on the output frame: left, top, side and corner
+/// radius, in output pixels.
+pub fn camera_box(l: &Layout, project: &Project) -> (f64, f64, f64, f64) {
+    let short = l.ow.min(l.oh) as f64;
+    let side = ((project.cam_size * short / 2.).round() * 2.).max(8.);
+    let margin = (short * 0.04).round();
+    let x = if project.cam_corner % 2 == 0 { margin } else { l.ow as f64 - side - margin };
+    let y = if project.cam_corner < 2 { margin } else { l.oh as f64 - side - margin };
+    let radius = match project.cam_shape {
+        0 => side / 2.,
+        1 => side * 0.2,
+        _ => 0.,
+    };
+    (x, y, side, radius)
 }
 
 impl Project {
@@ -184,6 +241,10 @@ impl Project {
             cursor_size: v["cursor_size"].as_f64().unwrap_or(d.cursor_size).clamp(0.5, MAX_CURSOR),
             cursor_smooth: v["cursor_smooth"].as_f64().unwrap_or(d.cursor_smooth).clamp(0., 1.),
             motion_blur: index("motion_blur", d.motion_blur, MOTION_BLUR.len()),
+            cam: v["cam"].as_bool().unwrap_or(d.cam),
+            cam_shape: index("cam_shape", d.cam_shape, CAM_SHAPES.len()),
+            cam_size: v["cam_size"].as_f64().unwrap_or(d.cam_size).clamp(MIN_CAM, MAX_CAM),
+            cam_corner: index("cam_corner", d.cam_corner, 4),
         }
     }
 
@@ -225,6 +286,10 @@ impl Project {
             "cursor_size": self.cursor_size,
             "cursor_smooth": self.cursor_smooth,
             "motion_blur": self.motion_blur,
+            "cam": self.cam,
+            "cam_shape": self.cam_shape,
+            "cam_size": self.cam_size,
+            "cam_corner": self.cam_corner,
         })
     }
 
@@ -307,6 +372,10 @@ impl Project {
             cursor_size: 1.5,
             cursor_smooth: 0.5,
             motion_blur: 1,
+            cam: true,
+            cam_shape: 0,
+            cam_size: 0.26,
+            cam_corner: 3,
         };
         // The look last used in the studio carries over.
         match std::fs::read_to_string(last_look_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
@@ -802,9 +871,10 @@ fn motion_ranges(camera: &Camera, cursor: Option<&[(f64, f64, f64)]>, p: &Probe)
 
 /// What a preset or the remembered look carries: everything but the edit
 /// (zooms, trim, cuts).
-const LOOK_KEYS: [&str; 20] = [
+const LOOK_KEYS: [&str; 24] = [
     "backdrop", "wallpaper", "pad", "radius", "shadow", "clicks", "keys", "keys_top", "keys_size", "audio", "aspect", "resolution",
-    "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "motion_blur",
+    "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "motion_blur", "cam", "cam_shape",
+    "cam_size", "cam_corner",
 ];
 
 fn last_look_path() -> PathBuf {
@@ -918,13 +988,31 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     // libplacebo measures corner rounding against a quarter of the shorter side.
     let rounding = (4.0 * l.radius / l.w.min(l.h) as f64).clamp(0.0, 1.0);
     let zexpr = expr(&z, 4);
+    // The camera goes over the finished frame, in its corner, cut to its
+    // shape with an antialiased alpha mask.
+    let cam_file = camera_file(video);
+    let cam = (project.cam && cam_file.exists()).then(|| {
+        let (cx, cy, side, r) = camera_box(&l, project);
+        let index = 2 + overlays.inputs.iter().filter(|a| a.as_os_str() == "-i").count();
+        let half = side / 2.;
+        let alpha = format!(
+            "255*clip(0.5-(hypot(max(abs(X+0.5-{half})-{inner},0),max(abs(Y+0.5-{half})-{inner},0))-{r}),0,1)",
+            inner = half - r
+        );
+        format!(
+            "[{index}:v]fps={fps},crop='min(iw,ih)':'min(iw,ih)',scale={side}:{side},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'[cam];[{last}][cam]overlay={cx}:{cy}:eof_action=pass[withcam];",
+            fps = p.fps,
+            last = overlays.last,
+        )
+    });
+    let last = if cam.is_some() { "withcam".to_owned() } else { overlays.last.clone() };
     let graph = format!(
         "{pre}[{src}]libplacebo=w={ow}:h={oh}:pos_x={px}:pos_y={py}:pos_w={pw}:pos_h={ph}\
          :crop_w='2*floor(iw/({zexpr})/2)':crop_h='2*floor(ih/({zexpr})/2)'\
          :crop_x='floor(clip({xe}-cw/2,0,iw-cw))':crop_y='floor(clip({ye}-ch/2,0,ih-ch))'\
          :corner_rounding={rounding:.4}:fillcolor=black@0:format=rgba[{fg}];{blur}\
-         [1:v][fg]overlay=0:0:shortest=1[framed];{post}[{last}]format=yuv420p{tail}[out]{audio_graph}",
-        pre = overlays.pre, src = overlays.src, post = overlays.post, last = overlays.last,
+         [1:v][fg]overlay=0:0:shortest=1[framed];{post}{cam}[{last}]format=yuv420p{tail}[out]{audio_graph}",
+        pre = overlays.pre, src = overlays.src, post = overlays.post, cam = cam.clone().unwrap_or_default(),
         fg = if blur.is_some() { "fg0" } else { "fg" }, blur = blur.clone().unwrap_or_default(),
         ow = l.ow, oh = l.oh, px = l.x, py = l.y, pw = l.w, ph = l.h,
         xe = expr(&x, 1), ye = expr(&y, 1),
@@ -936,6 +1024,7 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     // A GIF is made from an intermediate MP4.
     let gif = project.format == Format::Gif && !preview;
     let mp4 = if gif { tmp.join("studio.mp4") } else { out.to_path_buf() };
+    let cam_start = format!("{:.3}", camera_offset(video));
     let mut result = Err(String::new());
     // The export is encoded to a bitrate so its size matches the estimate; a
     // GIF's intermediate MP4 just needs to be clean.
@@ -956,6 +1045,9 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
             "-loop".as_ref(), "1".as_ref(), "-framerate".as_ref(), p.fps.as_ref(), "-i".as_ref(), bg.as_os_str(),
         ];
         argv.extend(overlays.inputs.iter().map(OsString::as_os_str));
+        if cam.is_some() {
+            argv.extend::<[&OsStr; 4]>(["-ss".as_ref(), cam_start.as_ref(), "-i".as_ref(), cam_file.as_os_str()]);
+        }
         argv.extend::<[&OsStr; 2]>(["-/filter_complex".as_ref(), script.as_os_str()]);
         argv.extend::<[&OsStr; 2]>(["-map".as_ref(), "[out]".as_ref()]);
         match (audio, whole) {
