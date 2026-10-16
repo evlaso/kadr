@@ -72,7 +72,8 @@ pub struct History {
 
 /// Files kadr and Omarchy save, newest first.
 fn scan() -> Vec<Item> {
-    let mut items: Vec<Item> = [(util::user_dir("PICTURES", "Pictures"), "screenshot-"), (util::user_dir("VIDEOS", "Videos"), "screenrecording-")]
+    let settings = crate::settings::Settings::load();
+    let mut items: Vec<Item> = [(settings.screenshot_dir(), "screenshot-"), (settings.video_dir(), "screenrecording-")]
         .into_iter()
         .flat_map(|(dir, prefix)| {
             std::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(move |entry| {
@@ -401,7 +402,7 @@ impl Render for History {
         let divider = cx.theme().colors().border_variant;
         let filters: Vec<_> = Filter::ALL.iter().map(|&(filter, label)| {
             ButtonLike::new(SharedString::from(format!("filter-{label}")))
-                .style(ButtonStyle::Subtle)
+                .style(if self.filter == filter { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .toggle_state(self.filter == filter)
                 .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -473,7 +474,16 @@ impl Render for History {
                             .border_color(divider)
                             .child(search)
                             .child(h_flex().gap_0p5().children(filters))
-                            .child(Label::new(format!("{}", visible.len())).size(LabelSize::Small).color(Color::Muted)),
+                            .child(Label::new(format!("{}", visible.len())).size(LabelSize::Small).color(Color::Muted))
+                            .child(
+                                IconButton::new("settings", IconName::Settings)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(Tooltip::text("Настройки"))
+                                    .on_click(|_, window, cx| {
+                                        window.remove_window();
+                                        crate::settings_view::open(cx);
+                                    }),
+                            ),
                     )
                     .child(body)
                     .child(

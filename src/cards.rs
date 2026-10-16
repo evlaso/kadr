@@ -14,20 +14,25 @@ use gpui::{
 use ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
+use crate::settings::{Settings, Side};
 use crate::{editor, ocr, pin, studio_editor, track, trim, util};
 
 const CARD_WIDTH: f32 = 300. * kit::SCALE;
 const THUMB_WIDTH: f32 = CARD_WIDTH;
 const THUMB_MAX: f32 = 220. * kit::SCALE;
 const CHROME: f32 = 0.;
-const MAX_CARDS: usize = 4;
 const GAP: f32 = 14.;
 /// Room above and to the right of the stack so card shadows aren't cut off by
 /// the overlay's edge. Below and to the left is the screen edge anyway.
 const PAD: f32 = 56.;
 /// Distance from the screen corner.
 const EDGE: f32 = 10.;
-const AUTO_DISMISS: Duration = Duration::from_secs(10);
+
+/// When an untouched card goes away; "never" is a long way off.
+fn dismiss_at(settings: &Settings) -> Instant {
+    let secs = if settings.card_seconds == 0 { 365 * 24 * 3600 } else { settings.card_seconds as u64 };
+    Instant::now() + Duration::from_secs(secs)
+}
 
 #[derive(Default)]
 struct CardsWindow(Option<WindowHandle<CardStack>>);
@@ -48,6 +53,7 @@ struct Card {
 
 pub struct CardStack {
     cards: Vec<Card>,
+    settings: Settings,
     next_id: usize,
     hidden: bool,
     region: InputRegion,
@@ -91,7 +97,8 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
 }
 
 fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &mut App) {
-    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: Instant::now() + AUTO_DISMISS, hovered: false });
+    let settings = Settings::load();
+    let mut slot = Some(Card { id: 0, path, image, height, video, deadline: dismiss_at(&settings), hovered: false });
 
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
@@ -99,7 +106,7 @@ fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &m
             card.id = stack.next_id;
             stack.next_id += 1;
             stack.cards.push(card);
-            if stack.cards.len() > MAX_CARDS {
+            if stack.cards.len() > stack.settings.max_cards {
                 stack.cards.remove(0);
             }
             cx.notify();
@@ -112,9 +119,9 @@ fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &m
     let Some(card) = slot else { return };
     let spec = LayerSpec {
         namespace: "kadr",
-        anchor: Anchor::BOTTOM | Anchor::LEFT,
+        anchor: Anchor::BOTTOM | if settings.card_side == Side::Right { Anchor::RIGHT } else { Anchor::LEFT },
         margin: (0., 0., 0., 0.),
-        size: (CARD_WIDTH + EDGE + PAD, MAX_CARDS as f32 * (THUMB_MAX + CHROME + GAP) + EDGE + PAD),
+        size: (CARD_WIDTH + EDGE + PAD, settings.max_cards as f32 * (THUMB_MAX + CHROME + GAP) + EDGE + PAD),
         keyboard: KeyboardInteractivity::None,
         ignore_zones: false,
         monitor: util::focused_monitor(),
@@ -122,7 +129,7 @@ fn add(path: PathBuf, image: Arc<Image>, height: f32, video: Option<f64>, cx: &m
     let handle = kit::open_layer(cx, spec, |window, cx| {
         cx.new(|cx| {
             CardStack::start_ticking(window, cx);
-            CardStack { cards: vec![card], next_id: 1, hidden: false, region: InputRegion::default() }
+            CardStack { cards: vec![card], settings, next_id: 1, hidden: false, region: InputRegion::default() }
         })
     });
     cx.set_global(CardsWindow(handle));
@@ -168,7 +175,7 @@ impl CardStack {
         if let Some(card) = self.cards.iter_mut().find(|c| c.id == id) {
             card.hovered = hovered;
             if !hovered {
-                card.deadline = Instant::now() + AUTO_DISMISS;
+                card.deadline = dismiss_at(&self.settings);
             }
         }
     }
@@ -356,9 +363,10 @@ impl Render for CardStack {
             .flex_col()
             .justify_end()
             .pt(px(PAD))
-            .pr(px(PAD))
             .pb(px(EDGE))
-            .pl(px(EDGE))
+            // The screen edge side needs no room for the shadow.
+            .when(self.settings.card_side == Side::Right, |d| d.items_end().pr(px(EDGE)).pl(px(PAD)))
+            .when(self.settings.card_side == Side::Left, |d| d.pr(px(PAD)).pl(px(EDGE)))
             .gap(px(GAP))
             .children(cards)
     }

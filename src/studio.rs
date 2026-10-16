@@ -15,6 +15,7 @@ use ui::IconName;
 
 use crate::track::{self, Track};
 use crate::job::{self, Job};
+use crate::settings::Settings;
 use crate::{cards, palette, util};
 
 /// Seconds to ease the zoom in or out.
@@ -101,6 +102,7 @@ impl Project {
 
     /// Zoom on clicks: a stretch per burst of clicks, held while typing.
     pub fn auto(track: &Track, p: &Probe) -> Project {
+        let settings = Settings::load();
         let (rx, ry, rw, rh) = track.rect;
         let (sx, sy) = (p.w / rw.max(1.0), p.h / rh.max(1.0));
         let in_frame = |x: f64, y: f64| {
@@ -128,10 +130,10 @@ impl Project {
         Project {
             segments: segs
                 .into_iter()
-                .map(|(s, e)| Seg { start: s.max(0.), end: (e + HOLD).min(p.duration), zoom: DEFAULT_ZOOM, focus: None })
+                .map(|(s, e)| Seg { start: s.max(0.), end: (e + HOLD).min(p.duration), zoom: settings.studio_zoom, focus: None })
                 .collect(),
-            backdrop: 0,
-            padding: 2,
+            backdrop: settings.studio_backdrop,
+            padding: settings.studio_padding,
             clicks: !track.clicks.is_empty(),
             keys: !track.keystrokes.is_empty(),
         }

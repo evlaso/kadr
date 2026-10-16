@@ -15,6 +15,7 @@ use gpui::{
 };
 
 use crate::panel::{self, Panel};
+use crate::settings::Settings;
 use crate::track::Tracker;
 use crate::kit::{self, Hold, InputRegion, LayerSpec};
 use ui::{Divider, IconButtonShape, Tooltip, prelude::*};
@@ -337,7 +338,9 @@ impl Recorder {
         let clock = Clock::new();
         let mut windows = Vec::new();
         // The frame goes first so the controls stack above its dimming.
-        windows.extend(open_frame(&target, cx));
+        if Settings::load().region_frame {
+            windows.extend(open_frame(&target, cx));
+        }
         windows.extend(self.open_indicator(&target, clock.clone(), cx));
         let tracker = Tracker::start(cx, keys, |rec: &Recorder| rec.clock());
         self.state = State::Recording(Session {
@@ -462,12 +465,15 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
 
     let webcam = if opts.webcam { start_webcam(&target, cx).await } else { None };
 
-    let dir = util::user_dir("VIDEOS", "Videos");
+    let settings = Settings::load();
+    let dir = settings.video_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let file = dir.join(format!("screenrecording-{}.mp4", util::timestamp()));
 
     let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
-    for a in ["-k", "auto", "-f", "60", "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
+    let fps = settings.fps.to_string();
+    let quality = crate::settings::QUALITIES[settings.quality].0;
+    for a in ["-k", "auto", "-f", &fps, "-q", quality, "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
         args.push(a.into());
     }
     args.push(file.clone().into());

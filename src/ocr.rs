@@ -69,7 +69,7 @@ enum Layout {
 /// kadr's own language models (system ones linked in), for languages the
 /// distro packages don't have installed; used instead of the system folder
 /// when present.
-fn tessdata_dir() -> Option<PathBuf> {
+pub(crate) fn tessdata_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
@@ -77,7 +77,7 @@ fn tessdata_dir() -> Option<PathBuf> {
 }
 
 /// Installed Tesseract languages kadr cares about, e.g. "rus+eng".
-fn languages() -> String {
+pub(crate) fn languages() -> String {
     let mut cmd = std::process::Command::new("tesseract");
     if let Some(dir) = tessdata_dir() {
         cmd.arg("--tessdata-dir").arg(dir);
@@ -234,5 +234,32 @@ impl Render for Toast {
                 })
                 .child(self.region.mark()),
         )
+    }
+}
+
+/// Fetch Tesseract's official Russian model into kadr's own folder (no root
+/// needed), with the system's other models linked next to it.
+pub async fn download_russian() -> Result<(), String> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .ok_or("нет домашней папки")?;
+    let dir = base.join("kadr/tessdata");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    for lang in ["eng", "osd"] {
+        let system = PathBuf::from(format!("/usr/share/tessdata/{lang}.traineddata"));
+        let link = dir.join(format!("{lang}.traineddata"));
+        if system.exists() && !link.exists() {
+            let _ = std::os::unix::fs::symlink(&system, &link);
+        }
+    }
+    let out = dir.join("rus.traineddata");
+    let url = "https://github.com/tesseract-ocr/tessdata_best/raw/main/rus.traineddata";
+    match util::output::<&OsStr>(&["curl".as_ref(), "-fsSL".as_ref(), "-o".as_ref(), out.as_os_str(), url.as_ref()]).await {
+        Some((true, _)) => Ok(()),
+        _ => {
+            let _ = std::fs::remove_file(&out);
+            Err("не удалось скачать модель".into())
+        }
     }
 }

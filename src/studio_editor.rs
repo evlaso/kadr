@@ -451,7 +451,7 @@ impl StudioEditor {
 
     fn render_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let chip = |id: SharedString, label: String, on: bool| {
-            ButtonLike::new(id).style(ButtonStyle::Subtle).toggle_state(on).child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
+            ButtonLike::new(id).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
         };
         let segment = self.selected.and_then(|i| self.project.segments.get(i).map(|s| (i, s.clone())));
         let inspector = match segment {

@@ -322,7 +322,7 @@ impl Trimmer {
         let chips = |prefix: &'static str, labels: Vec<String>, selected: usize, pick: fn(&mut Trimmer, usize), cx: &mut Context<Self>| {
             h_flex().gap_0p5().children(labels.into_iter().enumerate().map(move |(i, label)| {
                 ButtonLike::new(SharedString::from(format!("{prefix}-{i}")))
-                    .style(ButtonStyle::Subtle)
+                    .style(if i == selected { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                     .toggle_state(i == selected)
                     .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
                     .on_click(cx.listener(move |this, _, _, cx| {

@@ -6,6 +6,8 @@ mod palette;
 mod panel;
 mod pin;
 mod record;
+mod settings;
+mod settings_view;
 mod studio;
 mod studio_editor;
 mod track;
@@ -42,6 +44,7 @@ const USAGE: &str = "kadr — скриншоты с карточкой быст�
   kadr trim <видео> [--from С --to С]            обрезать запись (без флагов — окно обрезки)
   kadr gif <видео>                               сохранить запись как GIF (720px, 15 к/с)
   kadr history                                   история скриншотов и записей
+  kadr settings                                  настройки
   kadr text [картинка]                           распознать текст (в области или на картинке) и скопировать
 ";
 
@@ -60,6 +63,7 @@ enum Command {
     Trim(PathBuf, Option<(f64, f64)>),
     Gif(PathBuf),
     History,
+    Settings,
 }
 
 impl Command {
@@ -101,6 +105,7 @@ impl Command {
             }
             Some("gif") => file(1).map(Command::Gif),
             Some("history") => Ok(Command::History),
+            Some("settings") => Ok(Command::Settings),
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
@@ -145,6 +150,7 @@ impl Command {
             Command::Trim(path, Some((from, to))) => trim::save_trim(path, from, to, cx),
             Command::Gif(path) => trim::quick_gif(path, cx),
             Command::History => history::open(cx),
+            Command::Settings => settings_view::open(cx),
         }
     }
 }

@@ -704,7 +704,7 @@ impl Editor {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tool_button = |tool: Tool, cx: &mut Context<Self>| {
             ButtonLike::new(SharedString::from(format!("tool-{}", tool.key())))
-                .style(ButtonStyle::Subtle)
+                .style(if self.tool == tool { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
                 .toggle_state(self.tool == tool)
                 .child(div().px_1().child(tool.icon().size(IconSize::Small)))
@@ -742,7 +742,7 @@ impl Editor {
         let dot = cx.theme().colors().text;
         let weights = WIDTHS.iter().enumerate().map(|(i, w)| {
             ButtonLike::new(("weight", i))
-                .style(ButtonStyle::Subtle)
+                .style(if i == self.weight { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
                 .toggle_state(i == self.weight)
                 .child(div().w(px(18.)).flex().justify_center().child(div().size(px(w + 1.)).rounded_full().bg(dot)))
