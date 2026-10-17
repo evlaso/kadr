@@ -48,6 +48,13 @@ const WEIGHT: f32 = 0.22;
 fn sized((lo, hi): (f32, f32), weight: f32) -> f32 {
     lo + (hi - lo) * weight
 }
+/// How strongly a hidden area is blurred or pixelated, from its `size`
+/// (the slider's position, 0..1): about the old fixed amount near the
+/// slider's start, twice it at the end.
+fn hide_strength(size: f32) -> f32 {
+    if (0. ..=1.).contains(&size) { 0.6 + 1.4 * size } else { 0.9 }
+}
+
 /// Opacity of the highlighter.
 const MARKER_ALPHA: f32 = 0.4;
 /// Backdrop margin, as a fraction of the picture's longer side.
@@ -550,7 +557,12 @@ impl Shape {
             Kind::Text(_) => sized(FONT_SIZES, weight),
             Kind::Counter(_) => sized(COUNTER_SIZES, weight),
             Kind::Marker(_) => sized(WIDTHS, weight) * 3.,
-            Kind::Blur(..) | Kind::Spotlight | Kind::Picture(_) => return,
+            // A hidden area keeps the slider's position as its strength.
+            Kind::Blur(..) => {
+                self.size = weight;
+                return;
+            }
+            Kind::Spotlight | Kind::Picture(_) => return,
             _ => sized(WIDTHS, weight),
         } / s;
     }
@@ -1232,18 +1244,18 @@ impl Editor {
     /// Compute the patch for a hidden area in the background.
     fn refresh_patch(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(src) = self.source.clone() else { return };
-        let Some((how, a, b)) = self.doc.shapes.get(index).and_then(|s| match s.kind {
-            Kind::Blur(how, _) => Some((how, s.a, s.b)),
+        let Some((how, a, b, size)) = self.doc.shapes.get(index).and_then(|s| match s.kind {
+            Kind::Blur(how, _) => Some((how, s.a, s.b, s.size)),
             _ => None,
         }) else {
             return;
         };
         cx.spawn(async move |this, cx| {
-            let patch = cx.background_executor().spawn(async move { hide_png(&src, a, b, how) }).await;
+            let patch = cx.background_executor().spawn(async move { hide_png(&src, a, b, how, size) }).await;
             let _ = this.update(cx, |editor, cx| {
                 // Only if the shape is still where and how the patch was made.
-                if let Some(Shape { kind: Kind::Blur(now, slot), a: sa, b: sb, .. }) = editor.doc.shapes.get_mut(index)
-                    && (*sa, *sb, *now) == (a, b, how)
+                if let Some(Shape { kind: Kind::Blur(now, slot), a: sa, b: sb, size: ss, .. }) = editor.doc.shapes.get_mut(index)
+                    && (*sa, *sb, *now, *ss) == (a, b, how, size)
                 {
                     *slot = patch.map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png)));
                 }
@@ -1335,7 +1347,8 @@ impl Editor {
         };
         let width = if self.tool == Tool::Marker { sized(WIDTHS, self.weight) * 3. } else { sized(WIDTHS, self.weight) };
         let filled = self.fill && matches!(kind, Kind::Rect | Kind::Ellipse);
-        self.draft = Some(Shape { kind, a: p, b: p, color, size: width / s, filled, text: TextStyle::Plain, bend: None });
+        let size = if matches!(kind, Kind::Blur(..)) { self.weight } else { width / s };
+        self.draft = Some(Shape { kind, a: p, b: p, color, size, filled, text: TextStyle::Plain, bend: None });
         self.drag = Some(Drag::Draw);
         cx.notify();
     }
@@ -1569,11 +1582,12 @@ impl Editor {
     }
 
     /// Undo restores the size from before the whole slide, not each step.
-    fn pick_weight(&mut self, weight: f32) {
+    fn pick_weight(&mut self, weight: f32, cx: &mut Context<Self>) {
         self.weight = weight;
         if let Some(index) = self.selected {
             let s = self.scale();
             self.doc.shapes[index].set_weight(weight, s);
+            self.refresh_patch(index, cx);
         }
     }
 
@@ -1718,7 +1732,7 @@ impl Editor {
             return util::notify("kadr", t("editor.nothing_sensitive_found"));
         }
         self.checkpoint();
-        let (color, size) = (self.current_color(), sized(WIDTHS, self.weight) / self.scale());
+        let (color, size) = (self.current_color(), self.weight);
         for (l, t, r, b) in boxes {
             self.doc.shapes.push(Shape { kind: Kind::Blur(self.hide, None), a: (l, t), b: (r, b), color, size, filled: false, text: TextStyle::Plain, bend: None });
             self.refresh_patch(self.doc.shapes.len() - 1, cx);
@@ -1748,7 +1762,7 @@ impl Editor {
             Knob::Radius => self.frame.radius = v * MAX_ROUND,
             Knob::Shadow => self.frame.shadow = v,
             Knob::Weight => {
-                self.pick_weight(v);
+                self.pick_weight(v, cx);
                 return cx.notify();
             }
         }
@@ -3800,16 +3814,17 @@ pub(crate) fn metrics(size: f32) -> Metrics {
 }
 
 /// The hidden a–b area of `src` as PNG bytes, for the canvas.
-fn hide_png(src: &RgbaImage, a: P, b: P, how: Hide) -> Option<Vec<u8>> {
-    let patch = hide(src, a, b, how)?;
+fn hide_png(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<Vec<u8>> {
+    let patch = hide(src, a, b, how, size)?;
     let mut png = Vec::new();
     patch.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
     Some(png)
 }
 
 /// The a–b area of `src` pixelated or blurred, placed at the area's top
-/// left corner clamped to the picture. Screen and export share it.
-fn hide(src: &RgbaImage, a: P, b: P, how: Hide) -> Option<RgbaImage> {
+/// left corner clamped to the picture, as strong as `size` says (see
+/// `hide_strength`). Screen and export share it.
+fn hide(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<RgbaImage> {
     let (l, t, r, bt) = rect(a, b);
     let (x, y) = (l.floor().max(0.) as u32, t.floor().max(0.) as u32);
     let w = (r.ceil() as u32).min(src.width()).saturating_sub(x);
@@ -3819,16 +3834,17 @@ fn hide(src: &RgbaImage, a: P, b: P, how: Hide) -> Option<RgbaImage> {
     }
     // Blocks and blur scale with the screenshot so text stays unreadable at any size.
     let long = src.width().max(src.height());
+    let k = hide_strength(size);
     match how {
         Hide::Pixelate => {
-            let block = (long / 120).clamp(8, 32);
+            let block = (((long / 120).clamp(8, 32) as f32 * k).round() as u32).max(3);
             let region = image::imageops::crop_imm(src, x, y, w, h).to_image();
             let small = image::imageops::resize(&region, (w / block).max(1), (h / block).max(1), image::imageops::FilterType::Triangle);
             Some(image::imageops::resize(&small, w, h, image::imageops::FilterType::Nearest))
         }
         Hide::Blur => {
             // Blurred with what's around it, so the edges don't sharpen up.
-            let sigma = (long as f32 / 140.).clamp(6., 24.);
+            let sigma = (long as f32 / 140.).clamp(6., 24.) * k;
             let reach = (sigma * 2.).ceil() as u32;
             let (bx, by) = (x.saturating_sub(reach), y.saturating_sub(reach));
             let (bw, bh) = ((x + w + reach).min(src.width()) - bx, (y + h + reach).min(src.height()) - by);
@@ -3847,7 +3863,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
     let mut base = src.clone();
     for shape in shapes {
         if let Kind::Blur(how, _) = shape.kind
-            && let Some(patch) = hide(src, shape.a, shape.b, how)
+            && let Some(patch) = hide(src, shape.a, shape.b, how, shape.size)
         {
             let (l, t, _, _) = rect(shape.a, shape.b);
             image::imageops::replace(&mut base, &patch, l.floor().max(0.) as i64, t.floor().max(0.) as i64);
@@ -4168,9 +4184,9 @@ mod tests {
             values.iter().max().unwrap() - values.iter().min().unwrap()
         };
         for how in [Hide::Pixelate, Hide::Blur] {
-            let patch = hide(&src, (100., 50.), (300., 250.), how).unwrap();
+            let patch = hide(&src, (100., 50.), (300., 250.), how, WEIGHT).unwrap();
             assert_eq!(patch.dimensions(), (200, 200));
-            let shape = Shape { kind: Kind::Blur(how, None), a: (100., 50.), b: (300., 250.), color: red(), size: 2., filled: false, text: TextStyle::Plain, bend: None };
+            let shape = Shape { kind: Kind::Blur(how, None), a: (100., 50.), b: (300., 250.), color: red(), size: WEIGHT, filled: false, text: TextStyle::Plain, bend: None };
             let out = rasterize(&src, &[shape]).unwrap();
             // The export holds exactly the canvas's patch.
             for (x, y) in [(0, 0), (57, 91), (199, 199)] {
@@ -4180,9 +4196,14 @@ mod tests {
             assert!(spread(&out, (140, 100, 260, 200)) < 60, "{} hides the stripes", if how == Hide::Blur { "blur" } else { "pixelate" });
         }
         // The blur is smooth: neighbours differ little, unlike blocks.
-        let blurred = hide(&src, (100., 50.), (300., 250.), Hide::Blur).unwrap();
+        let blurred = hide(&src, (100., 50.), (300., 250.), Hide::Blur, WEIGHT).unwrap();
         let jumps = (1..200).map(|x| (blurred.get_pixel(x, 100).0[0] as i32 - blurred.get_pixel(x - 1, 100).0[0] as i32).abs()).max().unwrap();
         assert!(jumps < 8, "blur has no steps: {jumps}");
+        // The slider sets the strength: blocks grow toward its end.
+        let src = RgbaImage::from_fn(400, 300, |x, y| image::Rgba([(x * 7 % 256) as u8, (y * 5 % 256) as u8, 0, 255]));
+        let run = |img: &RgbaImage| (1..200).take_while(|&x| img.get_pixel(x, 0) == img.get_pixel(0, 0)).count();
+        let (weak, strong) = (hide(&src, (0., 0.), (200., 200.), Hide::Pixelate, 0.).unwrap(), hide(&src, (0., 0.), (200., 200.), Hide::Pixelate, 1.).unwrap());
+        assert!(run(&strong) > run(&weak), "stronger pixelation has bigger blocks: {} vs {}", run(&strong), run(&weak));
     }
 
     #[test]
