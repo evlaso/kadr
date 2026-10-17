@@ -343,7 +343,8 @@ impl Panel {
                     .child(div().font_family(kit::MONO_FONT).text_sm().child(text))
                     .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)),
             )
-            .tooltip(Tooltip::text(t("record_bar.area_size")))
+            // No tooltip over its own open menu.
+            .when(!self.size_menu, |b| b.tooltip(Tooltip::text(t("record_bar.area_size"))))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.typing = None;
                 this.size_menu = !this.size_menu;
