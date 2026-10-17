@@ -46,6 +46,11 @@ fn sized((lo, hi): (f32, f32), weight: f32) -> f32 {
 const MARKER_ALPHA: f32 = 0.4;
 /// Backdrop margin, as a fraction of the picture's longer side.
 const FRAME_PAD: f32 = 0.06;
+/// Room around the picture to draw and crop in, the same way: like
+/// CleanShot, the result grows to take in what's drawn outside the picture.
+const WORK_PAD: f32 = 0.1;
+/// Points this close to the picture's edge (screen pixels) snap onto it.
+const EDGE_SNAP: f32 = 6.;
 /// Grab distance for shapes and handles, in screen pixels.
 const GRAB: f32 = 7.;
 /// Toolbar and footer together, roughly: the first layout's guess at the
@@ -499,6 +504,9 @@ enum Drag {
     Handle { index: usize, handle: usize },
     Scale { index: usize, handle: usize, orig: Shape },
     Crop { start: P },
+    /// A crop's knob (corners, then edge middles) dragged, or the crop
+    /// moved whole (`handle` None) from `from`.
+    CropEdit { handle: Option<usize>, orig: (f32, f32, f32, f32), from: P },
     Slider(Knob),
 }
 
@@ -588,7 +596,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
     let image = Arc::new(Image::from_bytes(ImageFormat::Png, bytes.clone()));
     // A window around the picture with its backdrop margin, the stage
     // padding and the bars; the picture refits whenever the window resizes.
-    let pad = disp.0.max(disp.1) * FRAME_PAD * 2.;
+    let pad = disp.0.max(disp.1) * WORK_PAD * 2.;
     // Never a letterbox: at least a comfortable height, whatever the picture.
     let size = ((disp.0 + pad + 48.).max(1180. * kit::SCALE).min(mw - 80.), (disp.1 + pad + 48. + CHROME).max(640. * kit::SCALE).min(mh - 80.));
     let windowed = !cfg!(target_os = "linux") || crate::settings::Settings::load().editor_window;
@@ -676,16 +684,44 @@ impl Editor {
         self.disp.0 / self.px.0 as f32
     }
 
+    /// The room around the picture, in image pixels.
+    fn margin(&self) -> f32 {
+        work_margin(self.px)
+    }
+
+    /// A point on screen in image pixels: anywhere in the work area around
+    /// the picture, snapped onto the picture's edges when close.
     fn to_image(&self, pos: Point<gpui::Pixels>, clamp: bool) -> Option<P> {
         let (ox, oy) = self.origin.get();
-        let s = self.scale();
-        let (x, y) = ((f32::from(pos.x) - ox) / s, (f32::from(pos.y) - oy) / s);
+        let (s, m) = (self.scale(), self.margin());
+        let (x, y) = ((f32::from(pos.x) - ox) / s - m, (f32::from(pos.y) - oy) / s - m);
         let (w, h) = (self.px.0 as f32, self.px.1 as f32);
+        let snap = |v: f32, edge: f32| if (v - edge).abs() < EDGE_SNAP / s { edge } else { v };
+        let snapped = |x: f32, y: f32| (snap(snap(x, 0.), w), snap(snap(y, 0.), h));
         if clamp {
-            Some((x.clamp(0., w), y.clamp(0., h)))
+            Some(snapped(x.clamp(-m, w + m), y.clamp(-m, h + m)))
         } else {
-            (x >= 0. && y >= 0. && x <= w && y <= h).then_some((x, y))
+            (x >= -m && y >= -m && x <= w + m && y <= h + m).then(|| snapped(x, y))
         }
+    }
+
+    /// The crop's knobs: corners from the top left clockwise, then the
+    /// middles of the top, right, bottom and left edges.
+    fn crop_handles(&self) -> Vec<P> {
+        let Some((l, t, r, b)) = self.doc.crop.map(|(a, b)| rect(a, b)) else { return Vec::new() };
+        let (mx, my) = ((l + r) / 2., (t + b) / 2.);
+        vec![(l, t), (r, t), (r, b), (l, b), (mx, t), (r, my), (mx, b), (l, my)]
+    }
+
+    fn crop_handle_at(&self, p: P) -> Option<usize> {
+        let reach = GRAB * 1.5 / self.scale();
+        self.crop_handles().iter().position(|h| (h.0 - p.0).hypot(h.1 - p.1) <= reach)
+    }
+
+    /// What Save produces, in image pixels: the crop, or the picture and
+    /// everything drawn around it.
+    fn extent(&self) -> (f32, f32, f32, f32) {
+        extent(&self.doc, self.px)
     }
 
     fn current_color(&self) -> Hsla {
@@ -788,6 +824,16 @@ impl Editor {
         }
         if self.tool == Tool::Crop {
             self.checkpoint();
+            // An existing crop is resized at its knobs and moved from inside;
+            // elsewhere a new one starts.
+            if let Some(orig) = self.doc.crop.map(|(a, b)| rect(a, b)) {
+                let handle = self.crop_handle_at(p);
+                let inside = p.0 > orig.0 && p.0 < orig.2 && p.1 > orig.1 && p.1 < orig.3;
+                if handle.is_some() || inside {
+                    self.drag = Some(Drag::CropEdit { handle, orig, from: p });
+                    return cx.notify();
+                }
+            }
             self.doc.crop = Some((p, p));
             self.drag = Some(Drag::Crop { start: p });
             return cx.notify();
@@ -841,6 +887,17 @@ impl Editor {
         if e.pressed_button != Some(MouseButton::Left) {
             // Show what a press would do: resize at a knob, move over a shape.
             let hover = self.to_image(e.position, false).and_then(|p| {
+                if self.tool == Tool::Crop
+                    && let Some((l, t, r, b)) = self.doc.crop.map(|(a, b)| rect(a, b))
+                {
+                    return match self.crop_handle_at(p) {
+                        Some(0 | 2) => Some(CursorStyle::ResizeUpLeftDownRight),
+                        Some(1 | 3) => Some(CursorStyle::ResizeUpRightDownLeft),
+                        Some(4 | 6) => Some(CursorStyle::ResizeUpDown),
+                        Some(_) => Some(CursorStyle::ResizeLeftRight),
+                        None => (p.0 > l && p.0 < r && p.1 > t && p.1 < b).then_some(CursorStyle::OpenHand),
+                    };
+                }
                 if let Some((index, handle)) = self.handle_at(p) {
                     let shape = &self.doc.shapes[index];
                     let corners = shape.handles();
@@ -886,6 +943,28 @@ impl Editor {
                 self.doc.shapes[index].scale_from(orig, handle, p);
             }
             Some(Drag::Crop { start }) => self.doc.crop = Some((*start, p)),
+            Some(Drag::CropEdit { handle, orig, from }) => {
+                let (mut l, mut t, mut r, mut b) = *orig;
+                match handle {
+                    Some(0) => (l, t) = p,
+                    Some(1) => (r, t) = p,
+                    Some(2) => (r, b) = p,
+                    Some(3) => (l, b) = p,
+                    Some(4) => t = p.1,
+                    Some(5) => r = p.0,
+                    Some(6) => b = p.1,
+                    Some(_) => l = p.0,
+                    None => {
+                        // Moved whole, kept inside the work area.
+                        let m = work_margin(self.px);
+                        let (w, h) = (self.px.0 as f32 + m, self.px.1 as f32 + m);
+                        let dx = (p.0 - from.0).clamp(-m - l, w - r);
+                        let dy = (p.1 - from.1).clamp(-m - t, h - b);
+                        (l, t, r, b) = (l + dx, t + dy, r + dx, b + dy);
+                    }
+                }
+                self.doc.crop = Some(((l, t), (r, b)));
+            }
             Some(Drag::Slider(_)) => {}
             Some(Drag::Draw) => {
                 let min_step = 2.5 / self.scale();
@@ -912,7 +991,7 @@ impl Editor {
                 self.history.pop();
             }
             Some(Drag::Move { index, .. } | Drag::Handle { index, .. } | Drag::Scale { index, .. }) => self.refresh_patch(index, cx),
-            Some(Drag::Crop { .. }) => {
+            Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => {
                 if let Some((a, b)) = self.doc.crop
                     && ((a.0 - b.0).abs() < 4. || (a.1 - b.1).abs() < 4.)
                 {
@@ -966,6 +1045,12 @@ impl Editor {
             // Esc steps back: the colour menu, the selection, then the editor.
             ("escape", _, _) if self.colors_open => self.colors_open = false,
             ("escape", _, _) if self.selected.is_some() => self.selected = None,
+            // Done with the crop: it stays, the crop tool steps aside.
+            ("escape" | "enter", _, _) if self.tool == Tool::Crop && self.doc.crop.is_some() => self.tool = Tool::Select,
+            ("delete" | "backspace", false, _) if self.tool == Tool::Crop && self.doc.crop.is_some() => {
+                self.checkpoint();
+                self.doc.crop = None;
+            }
             ("escape", _, _) => window.remove_window(),
             ("delete" | "backspace", false, _) => self.delete_selected(),
             ("d", true, _) => self.duplicate(cx),
@@ -1742,15 +1827,9 @@ impl Editor {
         let padding = self.slider(Knob::Padding, self.frame.padding / MAX_PAD, format!("{}%", (self.frame.padding * 100.).round()), cx);
         let radius = self.slider(Knob::Radius, self.frame.radius / MAX_ROUND, format!("{}", (self.frame.radius / MAX_ROUND * 100.).round()), cx);
         let shadow = self.slider(Knob::Shadow, self.frame.shadow, format!("{}%", (self.frame.shadow * 100.).round()), cx);
-        let size = self.source.as_ref().map(|src| {
-            let (w, h) = match self.doc.crop {
-                Some((a, b)) => {
-                    let (l, t, r, bt) = rect(a, b);
-                    (r - l, bt - t)
-                }
-                None => (src.width() as f32, src.height() as f32),
-            };
-            let ((ow, oh), _) = self.frame.layout(w.round(), h.round());
+        let size = self.source.as_ref().map(|_| {
+            let (l, t, r, b) = self.extent();
+            let ((ow, oh), _) = self.frame.layout(r - l, b - t);
             format!("{ow}×{oh}")
         });
 
@@ -1800,12 +1879,10 @@ impl Editor {
 
     /// Output size after cropping, as shown in the footer.
     fn size_label(&self) -> String {
+        let (l, t, r, b) = self.extent();
         match self.doc.crop {
-            Some((a, b)) => {
-                let (l, t, r, bt) = rect(a, b);
-                tr!("editor.cropped", (r - l).round(), (bt - t).round())
-            }
-            None => format!("{}×{}", self.px.0, self.px.1),
+            Some(_) => tr!("editor.cropped", r - l, b - t),
+            None => format!("{}×{}", r - l, b - t),
         }
     }
 
@@ -1813,12 +1890,25 @@ impl Editor {
     /// crop shade and the selection on top.
     fn render_canvas(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.scale();
-        let at = |p: P| (px(p.0 * s), px(p.1 * s));
+        // Everything is laid out in the work area, the picture `m` in.
+        let m = self.margin();
+        let off = m * s;
+        let at = |p: P| (px(p.0 * s + off), px(p.1 * s + off));
+        let (pw, ph) = (self.px.0 as f32, self.px.1 as f32);
 
-        let patches = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
-            Kind::Blur(Some(patch)) | Kind::Picture(Picture { shown: patch, .. }) => {
+        // Pixelation stays on the picture (it covers only what's there).
+        let blurs = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
+            Kind::Blur(Some(patch)) => {
                 let (l, t, r, b) = rect(shape.a, shape.b);
+                let (l, t, r, b) = (l.max(0.).floor(), t.max(0.).floor(), r.min(pw).ceil(), b.min(ph).ceil());
                 Some(img(patch.clone()).absolute().left(px(l * s)).top(px(t * s)).w(px((r - l) * s)).h(px((b - t) * s)).object_fit(ObjectFit::Fill))
+            }
+            _ => None,
+        });
+        let pictures = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
+            Kind::Picture(Picture { shown: patch, .. }) => {
+                let (l, t, r, b) = rect(shape.a, shape.b);
+                Some(img(patch.clone()).absolute().left(px(l * s + off)).top(px(t * s + off)).w(px((r - l) * s)).h(px((b - t) * s)).object_fit(ObjectFit::Fill))
             }
             _ => None,
         });
@@ -1834,7 +1924,7 @@ impl Editor {
             },
             move |_, bounds, window, _| {
                 let o = bounds.origin;
-                let pt = |p: P| point(o.x + px(p.0 * s), o.y + px(p.1 * s));
+                let pt = |p: P| point(o.x + px(p.0 * s + off), o.y + px(p.1 * s + off));
                 // The dimming goes under the other shapes.
                 paint_spotlights(window, &spots, picture_size, &pt);
                 for shape in &vector {
@@ -1892,8 +1982,8 @@ impl Editor {
                 Some(
                     div()
                         .absolute()
-                        .left(px(shape.a.0 * s - d / 2.))
-                        .top(px(shape.a.1 * s - d / 2.))
+                        .left(px(shape.a.0 * s + off - d / 2.))
+                        .top(px(shape.a.1 * s + off - d / 2.))
                         .size(px(d))
                         .rounded_full()
                         .bg(shape.color)
@@ -1912,24 +2002,37 @@ impl Editor {
         });
 
         let crop = self.doc.crop;
+        let crop_knobs = if self.tool == Tool::Crop { self.crop_handles() } else { Vec::new() };
+        // The result's bounds, when drawing has grown it past the picture.
+        let (el, et, er, eb) = self.extent();
+        let grown = crop.is_none() && (el < 0. || et < 0. || er > pw || eb > ph);
         let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.handles(), sh.scales()));
         let accent = cx.theme().colors().text_accent;
         let overlay = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let o = bounds.origin;
-                let pt = |p: P| point(o.x + px(p.0 * s), o.y + px(p.1 * s));
+                let pt = |p: P| point(o.x + px(p.0 * s + off), o.y + px(p.1 * s + off));
                 let area = |l: f32, t: f32, r: f32, b: f32| Bounds::from_corners(pt((l, t)), pt((r, b)));
                 if let Some((a, b)) = crop {
                     let (l, t, r, bt) = rect(a, b);
-                    let (w, h) = (f32::from(bounds.size.width) / s, f32::from(bounds.size.height) / s);
+                    // The whole work area outside the crop, in image pixels.
+                    let (w, h) = (f32::from(bounds.size.width) / s - m, f32::from(bounds.size.height) / s - m);
                     let shade = rgba(0x000000a6);
-                    for (l0, t0, r0, b0) in [(0., 0., w, t), (0., bt, w, h), (0., t, l, bt), (r, t, w, bt)] {
+                    for (l0, t0, r0, b0) in [(-m, -m, w, t), (-m, bt, w, h), (-m, t, l, bt), (r, t, w, bt)] {
                         if r0 > l0 && b0 > t0 {
                             window.paint_quad(fill(area(l0, t0, r0, b0), shade));
                         }
                     }
-                    window.paint_quad(outline(area(l, t, r, bt), gpui::white(), BorderStyle::Solid));
+                    window.paint_quad(outline(area(l, t, r, bt), gpui::white(), BorderStyle::Dashed));
+                    for &h in &crop_knobs {
+                        let c = pt(h);
+                        let disc = |r: f32| Bounds::new(point(c.x - px(r), c.y - px(r)), size(px(2. * r), px(2. * r)));
+                        window.paint_quad(fill(disc(8.), rgba(0x00000033)).corner_radii(px(8.)));
+                        window.paint_quad(crate::ui::quad(disc(6.), px(6.), gpui::white(), px(1.5), accent, BorderStyle::Solid));
+                    }
+                } else if grown {
+                    window.paint_quad(outline(area(el, et, er, eb), gpui::hsla(0., 0., 1., 0.45), BorderStyle::Dashed));
                 }
                 // Like CleanShot: shapes that resize show only round knobs;
                 // the rest (pen, text, counters) get a thin solid frame.
@@ -1960,9 +2063,9 @@ impl Editor {
         let framed = self.frame.on();
         let radius = if framed { self.disp.0.max(self.disp.1) * self.frame.radius } else { 6. };
         let picture = div()
-            .id("canvas")
-            .relative()
-            .flex_none()
+            .absolute()
+            .left(px(off))
+            .top(px(off))
             .w(px(self.disp.0))
             .h(px(self.disp.1))
             .rounded(px(radius))
@@ -1978,16 +2081,12 @@ impl Editor {
                     inset: false,
                 }])
             })
-            .cursor(pointer)
             .child(img(self.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(radius)))
-            .children(patches)
-            .child(strokes)
-            .children(labels)
-            .child(overlay)
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.mouse_down(e, cx)));
+            .children(blurs);
 
-        // The background preview mirrors what Save produces.
-        let ((ow, oh), _) = self.frame.layout(self.disp.0, self.disp.1);
+        // The background preview mirrors what Save produces: around the
+        // result, which may reach past the picture.
+        let ((ow, oh), (left, top)) = self.frame.layout((er - el) * s, (eb - et) * s);
         let backdrop = match &self.frame.backdrop {
             Backdrop::None => None,
             Backdrop::Transparent => Some(checkerboard(10.).absolute().inset_0().size_full().into_any_element()),
@@ -1997,22 +2096,31 @@ impl Editor {
             }
             Backdrop::Wallpaper(path) => Some(img(path.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Cover).into_any_element()),
         };
-        match backdrop {
-            Some(backdrop) => div()
-                .relative()
-                .flex_none()
+        let backdrop = backdrop.map(|fill| {
+            div()
+                .absolute()
+                .left(px(el * s + off - left))
+                .top(px(et * s + off - top))
                 .w(px(ow))
                 .h(px(oh))
                 .rounded_lg()
                 .overflow_hidden()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(backdrop)
-                .child(picture)
-                .into_any_element(),
-            None => div().p(px(self.disp.0.max(self.disp.1) * FRAME_PAD)).child(picture).into_any_element(),
-        }
+                .child(fill)
+        });
+        div()
+            .id("canvas")
+            .relative()
+            .flex_none()
+            .w(px(self.disp.0 + 2. * off))
+            .h(px(self.disp.1 + 2. * off))
+            .cursor(pointer)
+            .children(backdrop)
+            .child(picture)
+            .children(pictures)
+            .child(strokes)
+            .children(labels)
+            .child(overlay)
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.mouse_down(e, cx)))
     }
 }
 
@@ -2034,7 +2142,7 @@ impl Render for Editor {
             if frame.on() {
                 frame.layout(w, h).0
             } else {
-                let pad = w.max(h) * FRAME_PAD;
+                let pad = w.max(h) * WORK_PAD;
                 (w + 2. * pad, h + 2. * pad)
             }
         };
@@ -2204,20 +2312,50 @@ fn segment_distance(p: P, a: P, b: P) -> f32 {
     (p.0 - (a.0 + t * dx)).hypot(p.1 - (a.1 + t * dy))
 }
 
+/// The room around a picture of `size` to draw and crop in, in its pixels.
+fn work_margin(size: (u32, u32)) -> f32 {
+    (size.0.max(size.1) as f32 * WORK_PAD).round()
+}
+
+/// What the result covers, in image pixels (whole, within the work area):
+/// the crop, or else the picture and everything drawn around it.
+fn extent(doc: &Doc, size: (u32, u32)) -> (f32, f32, f32, f32) {
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    let m = work_margin(size);
+    let (l, t, r, b) = match doc.crop {
+        Some((a, b)) => rect(a, b),
+        None => doc.shapes.iter().map(Shape::bounds).fold((0f32, 0f32, w, h), |e, s| (e.0.min(s.0), e.1.min(s.1), e.2.max(s.2), e.3.max(s.3))),
+    };
+    let (l, t) = (l.round().clamp(-m, w + m), t.round().clamp(-m, h + m));
+    let (r, b) = (r.round().clamp(l + 1., w + m + 1.), b.round().clamp(t + 1., h + m + 1.));
+    (l, t, r, b)
+}
+
 /// Annotated, cropped, optionally framed picture as PNG bytes.
 fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
-    let mut out = rasterize(src, &doc.shapes)?;
-    if let Some((a, b)) = doc.crop {
-        let (l, t, r, bt) = rect(a, b);
-        let (x, y) = (l.max(0.).round() as u32, t.max(0.).round() as u32);
-        let w = (r.round() as u32).min(out.width()).saturating_sub(x);
-        let h = (bt.round() as u32).min(out.height()).saturating_sub(y);
-        if w > 0 && h > 0 {
-            out = image::imageops::crop_imm(&out, x, y, w, h).to_image();
-        }
-    }
+    // The picture on a transparent canvas the size of the result, and the
+    // shapes moved along with it.
+    let (l, t, r, b) = extent(doc, src.dimensions());
+    let (ew, eh) = ((r - l) as u32, (b - t) as u32);
+    let mut canvas = RgbaImage::new(ew, eh);
+    image::imageops::replace(&mut canvas, src, -l as i64, -t as i64);
+    let shapes: Vec<Shape> = doc
+        .shapes
+        .iter()
+        .map(|sh| {
+            let mut sh = sh.clone();
+            sh.translate((-l, -t));
+            sh
+        })
+        .collect();
+    let mut out = rasterize(&canvas, &shapes)?;
     if frame.on() {
-        out = framed(&out, frame);
+        // The picture gets the rounded corners and the shadow; what's drawn
+        // past its edges sits on the backdrop as it is.
+        let drawn = rasterize(&RgbaImage::new(ew, eh), &shapes)?;
+        let (w, h) = (src.width() as f32, src.height() as f32);
+        let inner = ((-l).max(0.), (-t).max(0.), (w - l).min(ew as f32), (h - t).min(eh as f32));
+        out = framed(&out, &drawn, inner, frame);
     }
     let mut png = Vec::new();
     out.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
@@ -2258,9 +2396,13 @@ fn backdrop_pixels(backdrop: &Backdrop, w: u32, h: u32) -> RgbaImage {
 
 /// The picture with rounded corners and a soft shadow on its background,
 /// like the studio render does for recordings.
-fn framed(img: &RgbaImage, frame: &Frame) -> RgbaImage {
-    let (w, h) = (img.width() as f32, img.height() as f32);
-    let ((ow, oh), (left, top)) = frame.layout(w, h);
+/// `img` on the backdrop: the `inner` part (the picture, in `img` pixels)
+/// rounded and shadowed, and `drawn` (the shapes alone) wherever it reaches
+/// past that.
+fn framed(img: &RgbaImage, drawn: &RgbaImage, inner: (f32, f32, f32, f32), frame: &Frame) -> RgbaImage {
+    let ((ow, oh), (left, top)) = frame.layout(img.width() as f32, img.height() as f32);
+    let (iw, ih) = (img.width() as f32, img.height() as f32);
+    let (w, h) = ((inner.2 - inner.0).max(1.), (inner.3 - inner.1).max(1.));
     let radius = w.max(h) * frame.radius;
     let blur = (w.max(h) * frame.padding * 0.45).max(w.max(h) * 0.02);
     let strength = frame.shadow.clamp(0., 1.);
@@ -2272,7 +2414,7 @@ fn framed(img: &RgbaImage, frame: &Frame) -> RgbaImage {
         let qy = (y - cy).abs() - (h / 2. - radius);
         qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - radius
     };
-    let (cx, cy) = (left + w / 2., top + h / 2.);
+    let (cx, cy) = (left + inner.0 + w / 2., top + inner.1 + h / 2.);
     for (x, y, px) in out.enumerate_pixels_mut() {
         let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
         // Premultiplied colour and coverage: an opaque background stays
@@ -2289,14 +2431,24 @@ fn framed(img: &RgbaImage, frame: &Frame) -> RgbaImage {
         }
         // The picture itself, antialiased along its rounded edge.
         let cover = (0.5 - sdf(fx, fy, cx, cy)).clamp(0., 1.);
-        if cover > 0. {
-            let (ix, iy) = ((fx - left).clamp(0., w - 1.) as u32, (fy - top).clamp(0., h - 1.) as u32);
-            let p = img.get_pixel(ix, iy).0;
-            let k = cover * p[3] as f32 / 255.;
-            for (v, s) in c.iter_mut().zip(p) {
-                *v = *v * (1. - k) + s as f32 / 255. * k;
+        let (ix, iy) = (fx - left, fy - top);
+        if ix >= 0. && iy >= 0. && ix < iw && iy < ih {
+            let (ix, iy) = (ix as u32, iy as u32);
+            // The picture with its drawing inside the rounded edge, the
+            // drawing alone outside it.
+            let mut over = |p: [u8; 4], k: f32| {
+                let k = k * p[3] as f32 / 255.;
+                for (v, s) in c.iter_mut().zip(p) {
+                    *v = *v * (1. - k) + s as f32 / 255. * k;
+                }
+                a = a * (1. - k) + k;
+            };
+            if cover < 1. {
+                over(drawn.get_pixel(ix, iy).0, 1.);
             }
-            a = a * (1. - k) + k;
+            if cover > 0. {
+                over(img.get_pixel(ix, iy).0, cover);
+            }
         }
         let un = |v: f32| if a > 0. { (v / a * 255.).round().clamp(0., 255.) as u8 } else { 0 };
         *px = image::Rgba([un(c[0]), un(c[1]), un(c[2]), (a * 255.).round() as u8]);
@@ -2853,10 +3005,40 @@ mod tests {
     fn a_transparent_background_leaves_the_margin_clear() {
         let src = RgbaImage::from_pixel(100, 80, image::Rgba([200, 30, 30, 255]));
         let frame = Frame { backdrop: Backdrop::Transparent, padding: 0.1, radius: 0., shadow: 0., aspect: 0 };
-        let out = framed(&src, &frame);
+        let out = framed(&src, &RgbaImage::new(100, 80), (0., 0., 100., 80.), &frame);
         assert_eq!(out.get_pixel(0, 0).0[3], 0, "the margin is see-through");
         let (w, h) = out.dimensions();
         assert_eq!(out.get_pixel(w / 2, h / 2).0, [200, 30, 30, 255], "the picture stays as it was");
+    }
+
+    #[test]
+    fn drawing_past_the_edge_grows_the_result() {
+        let src = RgbaImage::from_pixel(200, 100, image::Rgba([200, 200, 200, 255]));
+        // A line from inside to 15 px past the right edge (the room is 20).
+        let line = Shape { kind: Kind::Line, a: (150., 50.), b: (215., 50.), color: red(), size: 4., filled: false, text: TextStyle::Plain, bend: None };
+        let doc = Doc { shapes: vec![line], crop: None };
+        let out = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.dimensions(), (217, 100));
+        assert!(out.get_pixel(210, 50).0[3] > 200, "the line goes on past the picture");
+        assert_eq!(out.get_pixel(210, 10).0[3], 0, "and the new room is clear");
+        // A crop reaching past the picture makes it bigger too.
+        let doc = Doc { shapes: Vec::new(), crop: Some(((-10., -10.), (210., 100.))) };
+        let out = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.dimensions(), (220, 110));
+        assert_eq!(out.get_pixel(5, 5).0[3], 0);
+        assert_eq!(out.get_pixel(15, 15).0, [200, 200, 200, 255]);
+        // On a backdrop the line still shows past the rounded picture.
+        let frame = Frame { backdrop: Backdrop::Gradient(0), ..Frame::default() };
+        let doc = Doc { shapes: doc_line(), crop: None };
+        let png = compose(&src, &doc, &frame).unwrap();
+        let framed = image::load_from_memory(&png).unwrap().to_rgba8();
+        let ((_, _), (left, top)) = frame.layout(217., 100.);
+        let p = framed.get_pixel(left as u32 + 210, top as u32 + 50).0;
+        assert!(p[0] > 150 && p[1] < 120, "red line on the backdrop: {p:?}");
+    }
+
+    fn doc_line() -> Vec<Shape> {
+        vec![Shape { kind: Kind::Line, a: (150., 50.), b: (215., 50.), color: red(), size: 4., filled: false, text: TextStyle::Plain, bend: None }]
     }
 
     #[test]
