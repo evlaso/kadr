@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use gpui::{
     App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, RenderImage,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, RenderImage,
     Window, canvas, div, img, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
 };
@@ -23,23 +23,34 @@ use crate::ui::{ButtonLike, IconButtonShape, Switch, ToggleState, Tooltip, prelu
 use crate::kit;
 use crate::ui::fill;
 use crate::studio::{
-    self, ASPECTS, CURSOR_RATE, CURSOR_STYLES, MOTION_BLUR, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_CURSOR, MAX_PADDING, MAX_RADIUS, Probe, Project, QUALITIES,
-    RESOLUTIONS, Seg, ZOOMS,
+    self, ASPECT_ORDER, ASPECTS, CURSOR_RATE, CURSOR_STYLES, MOTION_BLUR, Camera, FRAME_RATES, Format, KEY_SIZES, MAX_CURSOR, MAX_PADDING, MAX_RADIUS, Probe, Project, QUALITIES,
+    RESOLUTIONS, Seg,
 };
 use crate::track::Track;
 use crate::{palette, trim, util};
 use crate::i18n::t;
 
 const FILMSTRIP: f32 = 52.;
-const RULER: f32 = 18.;
-const LANE: f32 = 52.;
-const SIDEBAR: f32 = 320. * kit::SCALE;
-/// The sidebar cards' inset and corners: the 6px segments inside sit
-/// concentric with them.
-pub(crate) const CARD_PAD: f32 = 10.;
-pub(crate) const CARD_RADIUS: f32 = 16.;
-/// Width of the labels in front of sidebar controls.
-const ROW_LABEL: f32 = 74.;
+const RULER: f32 = 22.;
+/// The zoom lane, above the filmstrip, and the row under the filmstrip for
+/// the cuts' badges.
+const LANE: f32 = 34.;
+const BADGE_ROW: f32 = 28.;
+/// The section rail at the left, and the panel beside it.
+const RAIL: f32 = 52.;
+const PANEL: f32 = 264.;
+const SIDEBAR: f32 = RAIL + PANEL;
+/// Width of the labels in front of the export settings.
+const ROW_LABEL: f32 = 64.;
+/// Background tiles, like the screenshot editor's.
+const TILE: f32 = 36.;
+const TILE_RADIUS: f32 = 10.;
+const TILE_GAP: f32 = 4.;
+const DOT: f32 = 22.;
+/// Gradients shown before "Show more": two rows.
+const GRADIENT_ROWS: usize = 10;
+/// The zoom level slider's range.
+const ZOOM_RANGE: (f64, f64) = (1., 4.);
 /// Air around the preview inside the window.
 const STAGE_PAD: f32 = 24.;
 /// Edge grab width on segments, in pixels.
@@ -58,11 +69,55 @@ enum Knob {
     Radius,
     Shadow,
     CursorSize,
-    CursorSmooth,
     CamSize,
     CamRound,
     TimelineZoom,
+    Zoom,
 }
+
+/// The rail's sections, like CleanShot's: one shown at a time.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Zoom,
+    Cursor,
+    Keys,
+    Audio,
+    Camera,
+    Background,
+    Cut,
+}
+
+impl Section {
+    /// Top to bottom; Cut sits apart at the bottom.
+    const RAIL: [Section; 6] = [Section::Zoom, Section::Cursor, Section::Keys, Section::Audio, Section::Camera, Section::Background];
+
+    fn icon(self) -> &'static str {
+        match self {
+            Section::Zoom => "icons/zoom_in.svg",
+            Section::Cursor => "icons/pointer.svg",
+            Section::Keys => "icons/keyboard.svg",
+            Section::Audio => "icons/audio_on.svg",
+            Section::Camera => "icons/video.svg",
+            Section::Background => "icons/image.svg",
+            Section::Cut => "icons/scissors.svg",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Section::Zoom => t("studio.zoom"),
+            Section::Cursor => t("studio.cursor"),
+            Section::Keys => t("common.keyboard_shortcuts"),
+            Section::Audio => t("studio.audio"),
+            Section::Camera => t("common.camera"),
+            Section::Background => t("studio.background"),
+            Section::Cut => t("studio.cut_section"),
+        }
+    }
+}
+
+/// A choice's effect, for the shared control helpers.
+type Set<T> = Rc<dyn Fn(&mut StudioEditor, T, &mut Context<StudioEditor>)>;
 
 enum Drag {
     Playhead,
@@ -93,6 +148,25 @@ pub struct StudioEditor {
     /// The side panel's scroll, and its scrollbar's grab.
     side_scroll: gpui::ScrollHandle,
     side_grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    /// The rail's chosen section, shown in the panel beside it.
+    section: Section,
+    /// Something changed since the window opened.
+    edited: bool,
+    /// The export settings under the Export button, and the aspect menu;
+    /// an open one's bounds, so clicks inside don't close it.
+    export_open: bool,
+    aspect_open: bool,
+    menu_bounds: crate::ui::MenuBounds,
+    more_gradients: bool,
+    /// The zoom level new zooms get.
+    new_zoom: f64,
+    /// The preview alone, without the rail and its panel.
+    expanded: bool,
+    /// The cursor styles as small pictures, for their tiles.
+    style_thumbs: Vec<Option<Arc<Image>>>,
+    /// The timeline's sideways scroll when it's zoomed, and its bar's grab.
+    timeline_scroll: gpui::ScrollHandle,
+    timeline_grab: Rc<Cell<Option<f32>>>,
     frame: Option<ImageSource>,
     /// The camera recorded alongside (studio mode), where its frame 0 sits
     /// on the recording's clock, and its frame at the playhead.
@@ -118,9 +192,9 @@ pub struct StudioEditor {
     stage: (f32, f32),
     /// The preview area measured in the last layout; `stage` follows it.
     stage_cell: Rc<Cell<(f32, f32)>>,
-    /// Timeline x origin and width, and the segment lane's top, in window
-    /// coordinates.
-    timeline: Rc<Cell<(f32, f32, f32)>>,
+    /// Timeline x origin and width, and the zoom lane's and the filmstrip's
+    /// tops, in window coordinates.
+    timeline: Rc<Cell<(f32, f32, f32, f32)>>,
     /// The video box inside the preview, in window coordinates.
     video_box: Rc<Cell<(f32, f32, f32, f32)>>,
     /// Slider tracks (x, width) in window coordinates.
@@ -196,8 +270,22 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         thumbs,
                         walls,
                         presets: crate::presets::Presets::new(studio::presets(), studio::save_presets, cx),
-                side_scroll: gpui::ScrollHandle::new(),
-                side_grab: Default::default(),
+                        side_scroll: gpui::ScrollHandle::new(),
+                        side_grab: Default::default(),
+                        section: Section::Zoom,
+                        edited: false,
+                        export_open: false,
+                        aspect_open: false,
+                        menu_bounds: Default::default(),
+                        more_gradients: false,
+                        new_zoom: crate::settings::Settings::load().studio_zoom,
+                        expanded: false,
+                        style_thumbs: [0, 2, 1]
+                            .into_iter()
+                            .map(|style| studio::cursor_image(style, "default", 26., 0.).map(|(png, _, _)| Arc::new(Image::from_bytes(ImageFormat::Png, png))))
+                            .collect(),
+                        timeline_scroll: gpui::ScrollHandle::new(),
+                        timeline_grab: Default::default(),
                         frame: frame.map(ImageSource::from),
                         cam_file: Some(studio::camera_file(&video_path)).filter(|f| f.exists()),
                         cam_offset: studio::camera_offset(&video_path),
@@ -213,7 +301,7 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         timeline_zoom: 1.,
                         stage,
                         stage_cell: Rc::new(Cell::new(stage)),
-                        timeline: Rc::new(Cell::new((0., 1., 0.))),
+                        timeline: Rc::new(Cell::new((0., 1., 0., 0.))),
                         video_box: Rc::new(Cell::new((0., 0., 1., 1.))),
                         sliders: Rc::new(RefCell::new(HashMap::new())),
                         request: Rc::new(Cell::new(0)),
@@ -294,18 +382,19 @@ impl StudioEditor {
             self.cursor_shapes = studio::cursor_shapes(&self.track, &self.cursor, &self.probe);
         }
         self.project.save(&self.video);
+        self.edited = true;
         // The next recording starts with this look.
         self.project.remember_look();
         cx.notify();
     }
 
     fn time_at(&self, x: f32) -> f64 {
-        let (ox, w, _) = self.timeline.get();
+        let (ox, w, _, _) = self.timeline.get();
         (((x - ox) / w.max(1.)) as f64).clamp(0., 1.) * self.probe.duration
     }
 
     fn x_of(&self, t: f64) -> f32 {
-        let (_, w, _) = self.timeline.get();
+        let (_, w, _, _) = self.timeline.get();
         w * (t / self.probe.duration.max(0.001)) as f32
     }
 
@@ -492,16 +581,37 @@ impl StudioEditor {
         cx.notify();
     }
 
+    /// Picking a zoom or a cut on the timeline shows its section.
     fn select_zoom(&mut self, index: Option<usize>) {
         self.selected = index;
         self.cut = None;
         self.placing = false;
+        if index.is_some() {
+            self.show_section(Section::Zoom);
+        }
     }
 
     fn select_cut(&mut self, index: Option<usize>) {
         self.cut = index;
         self.selected = None;
         self.placing = false;
+        if index.is_some() {
+            self.show_section(Section::Cut);
+        }
+    }
+
+    fn show_section(&mut self, section: Section) {
+        if self.section != section {
+            self.section = section;
+            self.side_scroll.set_offset(point(px(0.), px(0.)));
+        }
+        self.expanded = false;
+    }
+
+    /// The zoom level the slider shows: the selected zoom's, or the one new
+    /// zooms get.
+    fn zoom_level(&self) -> f64 {
+        self.selected.and_then(|i| self.project.segments.get(i)).map_or(self.new_zoom, |s| s.zoom)
     }
 
     /// Cut a second out at the playhead; its edges then set the length.
@@ -540,14 +650,15 @@ impl StudioEditor {
     }
 
     fn timeline_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
-        let (ox, _, lane_top) = self.timeline.get();
-        let strip_top = lane_top - 6. - FILMSTRIP;
+        let (ox, _, lane_top, strip_top) = self.timeline.get();
         let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
         let t = self.time_at(x);
         let local = x - ox;
         self.placing = false;
+        self.export_open = false;
+        self.aspect_open = false;
 
-        if y >= strip_top && y < lane_top {
+        if y >= strip_top && y < strip_top + FILMSTRIP {
             // The filmstrip: trim handles, then cuts, else the playhead.
             let (a, b) = (self.x_of(self.project.trim.0), self.x_of(self.project.trim.1));
             if (local - a).abs() <= EDGE + 3. {
@@ -578,11 +689,12 @@ impl StudioEditor {
                 return cx.notify();
             }
         }
-        if y < lane_top {
+        if !(lane_top..lane_top + LANE).contains(&y) {
+            // The ruler, the filmstrip's free parts and the gaps: the playhead.
             self.drag = Some(Drag::Playhead);
             return self.seek(t, cx);
         }
-        // The segment lane: edges resize, bodies move, empty space adds.
+        // The zoom lane: edges resize, bodies move, empty space adds.
         let hit = self.project.segments.iter().enumerate().rev().find_map(|(i, s)| {
             let (a, b) = (self.x_of(s.start), self.x_of(s.end));
             if (local - a).abs() <= EDGE {
@@ -605,7 +717,7 @@ impl StudioEditor {
             None => {
                 let start = t.min(self.probe.duration - MIN_SEG).max(0.);
                 let end = (start + NEW_SEG).min(self.probe.duration);
-                self.project.segments.push(Seg { start, end, zoom: studio::DEFAULT_ZOOM, focus: None });
+                self.project.segments.push(Seg { start, end, zoom: self.new_zoom, focus: None });
                 self.select_zoom(Some(self.project.segments.len() - 1));
                 self.drag = Some(Drag::Edge { index: self.project.segments.len() - 1, start: false });
                 self.seek(start + 0.01, cx);
@@ -618,23 +730,21 @@ impl StudioEditor {
     /// What the pointer over the timeline would grab: edges resize, bodies
     /// move, the rest seeks or adds a zoom.
     fn timeline_cursor_at(&self, x: f32, y: f32) -> CursorStyle {
-        let (ox, w, lane_top) = self.timeline.get();
-        let strip_top = lane_top - 6. - FILMSTRIP;
+        let (ox, w, lane_top, strip_top) = self.timeline.get();
         let local = x - ox;
-        if local < -EDGE || local > w + EDGE || y < strip_top - RULER {
+        if local < -EDGE || local > w + EDGE || y < lane_top - RULER - 6. || y > strip_top + FILMSTRIP + BADGE_ROW {
             return CursorStyle::Arrow;
         }
         let near = |t: f64| (local - self.x_of(t)).abs() <= EDGE;
-        if y >= strip_top && y < lane_top {
+        if (strip_top..strip_top + FILMSTRIP).contains(&y) {
             if near(self.project.trim.0) || near(self.project.trim.1) || self.project.cuts.iter().any(|&(a, b)| near(a) || near(b)) {
                 return CursorStyle::ResizeLeftRight;
             }
             if self.project.cuts.iter().any(|&(a, b)| local > self.x_of(a) && local < self.x_of(b)) {
                 return CursorStyle::OpenHand;
             }
-            return CursorStyle::PointingHand;
         }
-        if y >= lane_top {
+        if (lane_top..lane_top + LANE).contains(&y) {
             if self.project.segments.iter().any(|s| near(s.start) || near(s.end)) {
                 return CursorStyle::ResizeLeftRight;
             }
@@ -719,12 +829,22 @@ impl StudioEditor {
             Knob::Radius => self.project.radius = v * MAX_RADIUS,
             Knob::Shadow => self.project.shadow = v,
             Knob::CursorSize => self.project.cursor_size = 0.5 + v * (MAX_CURSOR - 0.5),
-            Knob::CursorSmooth => self.project.cursor_smooth = v,
             Knob::CamSize => self.project.cam_size = studio::MIN_CAM + v * (studio::MAX_CAM - studio::MIN_CAM),
             Knob::CamRound => self.project.cam_round = v,
             Knob::TimelineZoom => {
                 self.timeline_zoom = 1. + v as f32 * (MAX_TIMELINE_ZOOM - 1.);
                 return cx.notify();
+            }
+            Knob::Zoom => {
+                // In steps of 5%, like the label shows it.
+                let level = ((ZOOM_RANGE.0 + v * (ZOOM_RANGE.1 - ZOOM_RANGE.0)) * 20.).round() / 20.;
+                match self.selected.and_then(|i| self.project.segments.get_mut(i)) {
+                    Some(seg) => seg.zoom = level,
+                    None => {
+                        self.new_zoom = level;
+                        return cx.notify();
+                    }
+                }
             }
         }
         self.changed(cx);
@@ -804,6 +924,10 @@ impl StudioEditor {
         let k = &e.keystroke;
         let ctrl = k.modifiers.control || k.modifiers.platform;
         match (k.key.as_str(), ctrl) {
+            ("escape", _) if self.export_open || self.aspect_open => {
+                self.export_open = false;
+                self.aspect_open = false;
+            }
             ("escape", _) if self.placing => self.placing = false,
             ("escape", _) if self.selected.is_some() || self.cut.is_some() => self.select_zoom(None),
             ("escape", _) => return window.remove_window(),
@@ -1004,91 +1128,95 @@ impl StudioEditor {
         )
     }
 
-    /// Ruler, filmstrip (trim and cuts) and the zoom lane, under the preview.
+    /// The timeline, like CleanShot's: a ruler, the zoom lane, then the
+    /// filmstrip (trim and cuts, each cut a gap with a badge under it).
     fn render_timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let status = cx.theme().status();
-        let (text, tick) = (colors.text, colors.border);
-        let line = colors.border_variant;
-        let zoom_blue = crate::ui::from_hex(0x0A84FF);
-        let (handle_color, cut_color) = (status.warning, status.error);
+        let accent = colors.text_accent;
+        let faint = |alpha: f32| {
+            let mut c = colors.text;
+            c.alpha = alpha;
+            c
+        };
+        let (grid, tick, block, gap_edge) = (faint(0.05), faint(0.22), faint(0.2), faint(0.22));
+        let (lane_bg, gap_bg) = (colors.element_background, colors.panel_background);
+        let (handle_color, red) = (status.warning, status.error);
         let thumbs = self.thumbs.iter().map(|t| img(t.clone()).flex_1().h_full().object_fit(ObjectFit::Cover));
         let d = self.probe.duration.max(0.001);
         let segments: Vec<(f64, f64, bool)> = self.project.segments.iter().enumerate().map(|(i, s)| (s.start, s.end, self.selected == Some(i))).collect();
-        let cuts: Vec<(f64, f64, bool)> = self.project.cuts.iter().enumerate().map(|(i, &(a, b))| (a, b, self.cut == Some(i))).collect();
+        let cuts: Vec<(f64, f64, bool)> = self.project.cuts.iter().enumerate().map(|(i, &(a, b))| (a.min(b), a.max(b), self.cut == Some(i))).collect();
         let trim = self.project.trim;
         let playhead = self.playhead;
         let timeline = self.timeline.clone();
-        // About ten labelled ticks, on round seconds.
-        let step = [0.5, 1., 2., 5., 10., 15., 30., 60., 120., 300.].into_iter().find(|s| d / s <= 12.).unwrap_or(600.);
+        // About ten labelled ticks, on round seconds, more as it's zoomed.
+        let shown = d / self.timeline_zoom as f64;
+        let step = [0.5, 1., 2., 5., 10., 15., 30., 60., 120., 300.].into_iter().find(|s| shown / s <= 12.).unwrap_or(600.);
         let marks: Vec<f64> = (0..).map(|i| i as f64 * step).take_while(|&t| t <= d).collect();
         let ticks = marks.clone();
-        let top = RULER;
-        let lane_y = RULER + FILMSTRIP + 6.;
+        let lane_y = RULER + 6.;
+        let strip_y = lane_y + LANE + 8.;
+        let height = strip_y + FILMSTRIP + BADGE_ROW;
 
-        // Ticks, trim, cuts, segments and the playhead are painted; text goes on top.
+        // Grid, lane, blocks, trim, cuts and the playhead are painted; text
+        // goes on top.
         let painter = canvas(
             move |bounds, _, _| bounds,
             move |_, bounds, window, _| {
-                let (x0, w) = (bounds.origin.x, bounds.size.width);
+                let (x0, w, y0) = (bounds.origin.x, bounds.size.width, bounds.origin.y);
                 let at = |t: f64| x0 + w * (t / d) as f32;
-                let strip_top = bounds.origin.y + px(top);
-                let lane_top = bounds.origin.y + px(lane_y);
-                timeline.set((f32::from(x0), f32::from(w), f32::from(lane_top)));
+                let (lane_top, strip_top) = (y0 + px(lane_y), y0 + px(strip_y));
+                timeline.set((f32::from(x0), f32::from(w), f32::from(lane_top), f32::from(strip_top)));
                 for &t in &ticks {
-                    window.paint_quad(fill(Bounds::new(point(at(t), bounds.origin.y + px(top - 6.)), size(px(1.), px(5.))), tick));
+                    window.paint_quad(fill(Bounds::new(point(at(t), y0 + px(RULER - 5.)), size(px(1.), px(5.))), tick));
+                    window.paint_quad(fill(Bounds::new(point(at(t), y0 + px(RULER)), size(px(1.), px(height - RULER))), grid));
                 }
-                // Cut pieces: the frames darkened, with a red outline.
-                for &(a, b, selected) in &cuts {
-                    let wash = gpui::hsla(0., 0., 0., if selected { 0.72 } else { 0.62 });
-                    let block = Bounds::new(point(at(a.min(b)), strip_top), size(at(a.max(b)) - at(a.min(b)), px(FILMSTRIP)));
-                    window.paint_quad(crate::ui::quad(block, px(6.), wash, px(if selected { 2.5 } else { 1.5 }), cut_color, BorderStyle::Solid));
+                // The zoom lane: a soft track, the zooms on it.
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, lane_top), size(w, px(LANE))), px(9.), lane_bg, px(0.), lane_bg, BorderStyle::Solid));
+                for &(s, e, selected) in &segments {
+                    let rect = Bounds::new(point(at(s), lane_top + px(3.)), size((at(e) - at(s)).max(px(4.)), px(LANE - 6.)));
+                    let color = if selected { accent } else { block };
+                    window.paint_quad(crate::ui::quad(rect, px(6.), color, px(0.), color, BorderStyle::Solid));
                 }
                 // Trimmed-off ends are dimmed, with handles on the kept part.
                 let shade = gpui::hsla(0., 0., 0., 0.62);
                 if trim.0 > 0. {
-                    window.paint_quad(fill(Bounds::new(point(x0, strip_top), size(at(trim.0) - x0, px(FILMSTRIP))), shade));
+                    window.paint_quad(crate::ui::quad(Bounds::new(point(x0, strip_top), size(at(trim.0) - x0, px(FILMSTRIP))), px(8.), shade, px(0.), shade, BorderStyle::Solid));
                 }
                 if trim.1 < d {
-                    window.paint_quad(fill(Bounds::new(point(at(trim.1), strip_top), size(x0 + w - at(trim.1), px(FILMSTRIP))), shade));
+                    window.paint_quad(crate::ui::quad(Bounds::new(point(at(trim.1), strip_top), size(x0 + w - at(trim.1), px(FILMSTRIP))), px(8.), shade, px(0.), shade, BorderStyle::Solid));
                 }
-                let kept = Bounds::new(point(at(trim.0), strip_top), size(at(trim.1) - at(trim.0), px(FILMSTRIP)));
-                window.paint_quad(crate::ui::quad(kept, px(6.), gpui::transparent_black(), px(2.), handle_color, BorderStyle::Solid));
+                if trim.0 > 0. || trim.1 < d {
+                    let kept = Bounds::new(point(at(trim.0), strip_top), size(at(trim.1) - at(trim.0), px(FILMSTRIP)));
+                    window.paint_quad(crate::ui::quad(kept, px(8.), gpui::transparent_black(), px(2.), handle_color, BorderStyle::Solid));
+                }
                 for (x, left) in [(at(trim.0), true), (at(trim.1), false)] {
                     let hx = if left { x } else { x - px(8.) };
                     window.paint_quad(crate::ui::quad(Bounds::new(point(hx, strip_top), size(px(8.), px(FILMSTRIP))), px(4.), handle_color, px(0.), handle_color, BorderStyle::Solid));
                     let grip = gpui::hsla(0., 0., 0., 0.5);
                     window.paint_quad(fill(Bounds::new(point(hx + px(3.5), strip_top + px(FILMSTRIP / 2. - 7.)), size(px(1.), px(14.))), grip));
                 }
-                for &(s, e, selected) in &segments {
-                    let block = Bounds::new(point(at(s), lane_top + px(2.)), size(at(e) - at(s), px(LANE - 4.)));
-                    // Blue like CleanShot's zoom strip, brighter when chosen.
-                    let mut fill_color = zoom_blue;
-                    fill_color.alpha = if selected { 1. } else { 0.55 };
-                    window.paint_quad(crate::ui::quad(block, px(8.), fill_color, px(if selected { 2. } else { 0. }), text, BorderStyle::Solid));
-                    // Grips at both ends, like Final Cut's: something to catch.
-                    let mut grip = text;
-                    grip.alpha = if selected { 0.9 } else { 0.55 };
-                    for x in [at(s) + px(6.), at(e) - px(9.)] {
-                        if at(e) - at(s) > px(24.) {
-                            for dx in [0., 3.] {
-                                window.paint_quad(crate::ui::quad(Bounds::new(point(x + px(dx), lane_top + px(LANE / 2. - 7.)), size(px(1.5), px(14.))), px(1.), grip, px(0.), grip, BorderStyle::Solid));
-                            }
-                        }
-                    }
+                // Cut pieces: gaps in the strip, outlined when chosen.
+                for &(a, b, selected) in &cuts {
+                    let rect = Bounds::new(point(at(a), strip_top - px(1.)), size((at(b) - at(a)).max(px(2.)), px(FILMSTRIP + 2.)));
+                    window.paint_quad(fill(rect, gap_bg));
+                    let edge = Bounds::new(point(at(a) + px(2.), strip_top + px(2.)), size((at(b) - at(a) - px(4.)).max(px(1.)), px(FILMSTRIP - 4.)));
+                    let (color, width) = if selected { (accent, 2.) } else { (gap_edge, 1.) };
+                    window.paint_quad(crate::ui::quad(edge, px(6.), gpui::transparent_black(), px(width), color, BorderStyle::Dashed));
                 }
+                // The playhead: a red line with a rounded head on the ruler.
                 let x = at(playhead);
-                let line_top = bounds.origin.y + px(top - 2.);
-                window.paint_quad(fill(Bounds::new(point(x - px(1.), line_top), size(px(2.), bounds.size.height - px(top - 2.))), text));
-                window.paint_quad(crate::ui::quad(Bounds::new(point(x - px(6.), line_top - px(6.)), size(px(12.), px(10.))), px(3.), text, px(0.), text, BorderStyle::Solid));
+                window.paint_quad(fill(Bounds::new(point(x - px(1.), y0 + px(6.)), size(px(2.), px(height - 6. - BADGE_ROW + 4.))), red));
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x - px(6.), y0), size(px(12.), px(14.))), px(6.), red, px(0.), red, BorderStyle::Solid));
             },
         )
         .absolute()
         .inset_0()
         .size_full();
 
-        let labels = self.project.segments.iter().map(|s| {
+        let labels = self.project.segments.iter().enumerate().map(|(i, s)| {
             let (a, b) = ((s.start / d) as f32, (s.end / d) as f32);
+            let on = self.selected == Some(i);
             div()
                 .absolute()
                 .left(relative(a))
@@ -1100,135 +1228,246 @@ impl StudioEditor {
                 .justify_center()
                 .gap_1()
                 .overflow_hidden()
-                .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).text_color(gpui::white()).child(tr!("studio.zoom_block", format!("{:.2}", s.zoom).trim_end_matches('0').trim_end_matches('.'))))
-                .when(s.focus.is_some(), |d| d.child(Icon::new(IconName::Crosshair).size(IconSize::XSmall).color(Color::Custom(gpui::white()))))
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(if on { gpui::white() } else { colors.text })
+                        .child(tr!("studio.zoom_block", format!("{}", (s.zoom * 100.).round()))),
+                )
+                .when(s.focus.is_some(), |d| d.child(Icon::new(IconName::Crosshair).size(IconSize::XSmall).color(if on { Color::Custom(gpui::white()) } else { Color::Muted })))
         });
-        let cut_marks = self.project.cuts.iter().map(|&(a, b)| {
-            let (a, b) = ((a.min(b) / d) as f32, (a.max(b) / d) as f32);
+        // A badge under each cut: the scissors and how long it is.
+        let badges = self.project.cuts.iter().enumerate().map(|(i, &(a, b))| {
+            let mid = ((a + b) / 2. / d) as f32;
+            let on = self.cut == Some(i);
+            div().absolute().left(relative(mid)).ml(px(-40.)).w(px(80.)).top(px(strip_y + FILMSTRIP + 5.)).flex().justify_center().child(
+                h_flex()
+                    .id(SharedString::from(format!("cut-badge-{i}")))
+                    .h(px(20.))
+                    .px_1p5()
+                    .gap_1()
+                    .rounded(px(6.))
+                    .bg(if on { accent } else { colors.element_selected })
+                    .cursor_pointer()
+                    .child(Icon::new(IconName::Scissors).size(IconSize::XSmall).color(if on { Color::Custom(gpui::white()) } else { Color::Default }))
+                    .child(div().text_xs().text_color(if on { gpui::white() } else { colors.text }).child(seconds((b - a).abs())))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.select_cut(Some(i));
+                            cx.notify();
+                        }),
+                    ),
+            )
+        });
+        let ruler = marks.into_iter().map(|t| div().absolute().top(px(2.)).left(relative((t / d) as f32)).ml_1().child(Label::new(ruler_label(t, step)).size(LabelSize::XSmall).color(Color::Muted)));
+        let hint = self.project.segments.is_empty().then(|| {
             div()
                 .absolute()
-                .left(relative(a))
-                .top(px(top))
-                .w(relative(b - a))
-                .h(px(FILMSTRIP))
+                .left_0()
+                .right_0()
+                .top(px(lane_y))
+                .h(px(LANE))
                 .flex()
                 .items_center()
                 .justify_center()
-                .overflow_hidden()
-                .child(Icon::new(IconName::Scissors).size(IconSize::Small).color(Color::Error))
-        });
-        let ruler = marks.into_iter().map(|t| {
-            div().absolute().top_0().left(relative((t / d) as f32)).ml_1().child(Label::new(ruler_label(t, step)).size(LabelSize::XSmall).color(Color::Muted))
+                .child(Label::new(t("studio.click_track_add_zoom")).size(LabelSize::XSmall).color(Color::Placeholder))
         });
 
-        // A hairline sets the timeline apart from the preview above.
-        div().w_full().px_4().pt_2().pb_3().border_t_1().border_color(line).child(
-            div().id("timeline-scroll").w_full().overflow_x_scroll().child(
-            div()
-                .id("timeline")
-                .relative()
-                .w(relative(self.timeline_zoom))
-                .h(px(lane_y + LANE))
-                .cursor(match self.drag {
-                    Some(Drag::Move { .. } | Drag::CutMove { .. }) => CursorStyle::ClosedHand,
-                    Some(Drag::Edge { .. } | Drag::CutEdge { .. } | Drag::Trim { .. }) => CursorStyle::ResizeLeftRight,
-                    _ => self.timeline_cursor,
-                })
-                .children(ruler)
-                .child(div().absolute().top(px(top)).left_0().right_0().h(px(FILMSTRIP)).rounded_md().overflow_hidden().child(h_flex().size_full().children(thumbs)))
-                .child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .top(px(lane_y))
-                        .h(px(LANE))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .when(self.project.segments.is_empty(), |lane| {
-                            lane.child(Label::new(t("studio.click_track_add_zoom")).size(LabelSize::XSmall).color(Color::Placeholder))
-                        }),
-                )
-                .child(painter)
-                // Labels over the painted blocks, which are solid now.
-                .children(labels)
-                .children(cut_marks)
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.timeline_down(e, cx))),
-            ),
-        )
+        let lane = div()
+            .id("timeline")
+            .relative()
+            .w(relative(self.timeline_zoom))
+            .h(px(height))
+            .cursor(match self.drag {
+                Some(Drag::Move { .. } | Drag::CutMove { .. }) => CursorStyle::ClosedHand,
+                Some(Drag::Edge { .. } | Drag::CutEdge { .. } | Drag::Trim { .. }) => CursorStyle::ResizeLeftRight,
+                _ => self.timeline_cursor,
+            })
+            .children(ruler)
+            .child(div().absolute().top(px(strip_y)).left_0().right_0().h(px(FILMSTRIP)).rounded(px(8.)).overflow_hidden().child(h_flex().size_full().children(thumbs)))
+            .children(hint)
+            .child(painter)
+            .children(labels)
+            .children(badges)
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.timeline_down(e, cx)));
+        div()
+            .relative()
+            .w_full()
+            .px_4()
+            .pt_2()
+            .pb_3()
+            .child(div().id("timeline-scroll").w_full().overflow_x_scroll().track_scroll(&self.timeline_scroll).child(lane))
+            .when(self.timeline_zoom > 1.01, |d| d.child(hscrollbar(&self.timeline_scroll, &self.timeline_grab, cx)))
     }
 
+    /// The title centred with "Edited" once changed; the project and the
+    /// export at the right, with the window's own controls where the
+    /// system wants them.
     fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = self.video.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let gif = self.project.format == Format::Gif;
+        let name = self.video.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let colors = cx.theme().colors().clone();
+        let left = h_flex().flex_1().min_w_0().h_full().children(kit::window_controls(false, cx)).child(kit::drags_window(div().flex_1().h_full()));
+        let title = h_flex()
+            .flex_none()
+            .max_w(px(560.))
+            .min_w_0()
+            .gap_2()
+            .child(div().min_w_0().child(Label::new(name).truncate()))
+            .when(self.edited, |d| d.child(Label::new(t("studio.edited")).size(LabelSize::Small).color(Color::Muted)));
+        let right = h_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .justify_end()
+            .gap_1()
+            .child(kit::drags_window(div().flex_1().h_full()))
+            .child(
+                Button::new("save-project", t("bundle.project"))
+                    .style(ButtonStyle::Subtle)
+                    .start_icon(Icon::from_path("icons/kadr/project.svg").size(IconSize::Small))
+                    .tooltip(Tooltip::text(t("bundle.save_project_tip")))
+                    .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
+            )
+            .child(self.render_export(cx))
+            .children(kit::window_controls(true, cx));
         h_flex()
             .w_full()
-            .justify_between()
+            .flex_none()
+            .h(px(42.))
             .gap_2()
             // An even inset keeps corner buttons concentric with the window.
-            .p_1()
-            .bg(cx.theme().colors().title_bar_background)
+            .px_1()
+            .bg(colors.title_bar_background)
             .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .pl_2()
-                    .gap_2()
-                    .child(div().min_w_0().child(Label::new(name).truncate()))
-                    .child(Label::new(clock(self.project.kept_duration())).size(LabelSize::Small).color(Color::Muted)),
-            )
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_1()
-                    .child(
-                        Button::new("save-project", t("bundle.project"))
-                            .style(ButtonStyle::Subtle)
-                            .size(ButtonSize::Large)
-                            .start_icon(Icon::from_path("icons/kadr/project.svg").size(IconSize::Small))
-                            .tooltip(Tooltip::text(t("bundle.save_project_tip")))
-                            .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
-                    )
-                    .child(
-                        Button::new("preview", t("studio.preview"))
-                            .style(ButtonStyle::Filled)
-                            .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text(t("studio.build_720p_preview_with_all")))
-                            .on_click(cx.listener(|this, _, _, cx| studio::export(this.video.clone(), this.project.clone(), true, cx))),
-                    )
-                    .child(
-                        Button::new("export", if gif { t("studio.export_gif") } else { t("studio.export") })
-                            .style(ButtonStyle::Accent)
-                            .size(ButtonSize::Large)
-                            .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                            .key_binding(kit::keys("ctrl-s"))
-                            .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
-                    ),
-            )
+            .border_color(colors.border_variant)
+            .child(left)
+            .child(title)
+            .child(right)
     }
 
-    /// Time, stepping, cutting and the current zoom, under the preview.
-    /// Time on the left, play controls in the middle, cutting and the
-    /// timeline's zoom on the right, like CleanShot's.
+    /// Export, like CleanShot's: the button opens the output settings, and
+    /// the export starts from there (or with Ctrl+S right away).
+    fn render_export(&self, cx: &mut Context<Self>) -> AnyElement {
+        let gif = self.project.format == Format::Gif;
+        let button = Button::new("export", if gif { t("studio.export_gif") } else { t("studio.export") })
+            .style(ButtonStyle::Accent)
+            .size(ButtonSize::Large)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.export_open = !this.export_open;
+                this.aspect_open = false;
+                cx.notify();
+            }));
+        let popover = self.export_open.then(|| {
+            let files = vec!["MP4".to_string(), "GIF".to_string()];
+            let resolutions = RESOLUTIONS.iter().map(|r| r.0.to_string()).collect();
+            let rates = FRAME_RATES.iter().map(|r| t(r.0).to_string()).collect();
+            let qualities = QUALITIES.iter().map(|q| t(q.0).to_string()).collect();
+            let row = |text: &'static str, control: AnyElement| {
+                h_flex().w_full().gap_2().child(div().w(px(ROW_LABEL)).flex_none().child(Label::new(text).size(LabelSize::Small).color(Color::Muted))).child(div().flex_1().min_w_0().child(control))
+            };
+            let out = studio::layout(&self.probe, &self.project, false);
+            let format = self.choices("format", files, gif as usize, Rc::new(|this, i, cx| {
+                this.project.format = if i == 1 { Format::Gif } else { Format::Mp4 };
+                this.changed(cx);
+            }), cx);
+            let size = self.choices("res", resolutions, self.project.resolution, Rc::new(|this, i, cx| {
+                this.project.resolution = i;
+                this.changed(cx);
+            }), cx);
+            let fps = self.choices("fps", rates, self.project.frame_rate, Rc::new(|this, i, cx| {
+                this.project.frame_rate = i;
+                this.changed(cx);
+            }), cx);
+            let quality = (!gif).then(|| {
+                self.choices("quality", qualities, self.project.quality, Rc::new(|this, i, cx| {
+                    this.project.quality = i;
+                    this.changed(cx);
+                }), cx)
+            });
+            gpui::deferred(
+                v_flex()
+                    .id("export-popover")
+                    .occlude()
+                    .absolute()
+                    .top(px(40.))
+                    .right_0()
+                    .w(px(420.))
+                    .p_3()
+                    .gap_3()
+                    .elevation_3(cx)
+                    .child(row(t("studio.row_format"), format))
+                    .child(row(t("studio.row_size"), size))
+                    .child(row(t("studio.row_fps"), fps))
+                    .children(quality.map(|q| row(t("studio.row_quality"), q)))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(Label::new(format!("{}×{} · {}", out.ow, out.oh, clock(self.project.kept_duration()))).size(LabelSize::XSmall).color(Color::Muted))
+                            .child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small)),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Button::new("preview", t("studio.preview"))
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
+                                    .tooltip(Tooltip::text(t("studio.build_720p_preview_with_all")))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.export_open = false;
+                                        studio::export(this.video.clone(), this.project.clone(), true, cx);
+                                    })),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                Button::new("export-now", if gif { t("studio.export_gif") } else { t("studio.export") })
+                                    .style(ButtonStyle::Accent)
+                                    .size(ButtonSize::Large)
+                                    .key_binding(kit::keys("ctrl-s"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
+                            ),
+                    )
+                    .child(crate::ui::track_bounds(&self.menu_bounds)),
+            )
+        });
+        div()
+            .relative()
+            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                if this.export_open && !this.menu_bounds.get().contains(&e.position) {
+                    this.export_open = false;
+                    cx.notify();
+                }
+            }))
+            .child(button)
+            .children(popover)
+            .into_any_element()
+    }
+
+    /// Time on the left, play controls in the middle, the timeline's zoom on
+    /// the right, like CleanShot's.
     fn render_transport(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let time = h_flex()
             .gap_1()
             .font_family(kit::MONO_FONT)
             .text_sm()
-            .child(div().text_color(colors.text).child(clock(self.playhead)))
-            .child(div().text_color(colors.text_muted).child(format!("/ {}", clock(self.probe.duration))));
+            .child(div().text_color(colors.text).child(timecode(self.playhead)))
+            .child(div().text_color(colors.text_muted).child(format!("/ {}", timecode(self.probe.duration))));
         let (start, end) = self.project.trim;
         h_flex()
             .w_full()
-            .px_3()
+            .flex_none()
+            .px_4()
             .py_1p5()
             .child(div().flex_1().child(time))
             .child(
                 h_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(
                         ButtonLike::new("to-start")
                             .style(ButtonStyle::Subtle)
@@ -1260,15 +1499,6 @@ impl StudioEditor {
                     .justify_end()
                     .gap_1()
                     .child(
-                        Button::new("cut", t("studio.cut"))
-                            .style(ButtonStyle::Subtle)
-                            .size(ButtonSize::Large)
-                            .start_icon(Icon::new(IconName::Scissors).size(IconSize::Small))
-                            .tooltip(|_, cx| cx.new(|_| Tooltip::new(t("studio.cut_piece_from_here")).meta(t("studio.then_drag_edges_on_filmstrip")).key_binding(kit::keys("x"))).into())
-                            .on_click(cx.listener(|this, _, _, cx| this.add_cut(cx))),
-                    )
-                    .child(div().w(px(8.)))
-                    .child(
                         IconButton::new("timeline-out", IconName::Dash)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
@@ -1279,7 +1509,7 @@ impl StudioEditor {
                                 cx.notify();
                             })),
                     )
-                    .child(div().flex_none().w(px(150.)).child(self.slider(Knob::TimelineZoom, ((self.timeline_zoom - 1.) / (MAX_TIMELINE_ZOOM - 1.)) as f64, String::new(), cx)))
+                    .child(div().flex_none().w(px(120.)).child(self.slider(Knob::TimelineZoom, ((self.timeline_zoom - 1.) / (MAX_TIMELINE_ZOOM - 1.)) as f64, 0, cx)))
                     .child(
                         IconButton::new("timeline-in", IconName::Plus)
                             .shape(IconButtonShape::Square)
@@ -1294,9 +1524,12 @@ impl StudioEditor {
             )
     }
 
-    fn slider(&self, knob: Knob, value: f64, label: String, cx: &mut Context<Self>) -> impl IntoElement {
+    /// A slider's track and knob; `ticks` marks under it, like CleanShot's.
+    fn slider(&self, knob: Knob, value: f64, ticks: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let (track, filled, knob_color, knob_edge) = (colors.element_active, colors.text_accent, gpui::white(), colors.border);
+        let mut tick = colors.text;
+        tick.alpha = 0.3;
         let sliders = self.sliders.clone();
         let v = value.clamp(0., 1.) as f32;
         let bar = canvas(
@@ -1305,8 +1538,15 @@ impl StudioEditor {
                 bounds
             },
             move |_, bounds, window, _| {
-                let mid = bounds.origin.y + bounds.size.height / 2.;
+                let mid = bounds.origin.y + bounds.size.height / 2. - px(if ticks > 0 { 3. } else { 0. });
                 let (x0, w) = (bounds.origin.x, bounds.size.width);
+                for i in 0..=ticks.max(1) {
+                    if ticks == 0 {
+                        break;
+                    }
+                    let x = x0 + w * (i as f32 / ticks as f32);
+                    window.paint_quad(crate::ui::quad(Bounds::new(point(x - px(1.), mid + px(9.)), size(px(2.), px(2.))), px(1.), tick, px(0.), tick, BorderStyle::Solid));
+                }
                 window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
                 window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
                 let cx0 = x0 + w * v;
@@ -1315,259 +1555,389 @@ impl StudioEditor {
             },
         )
         .size_full();
+        div().id(SharedString::from(format!("slider-{}", knob as u8))).w_full().h(px(if ticks > 0 { 28. } else { 22. })).px_2().cursor(CursorStyle::PointingHand).child(bar).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                this.drag = Some(Drag::Slider(knob));
+                this.slide(knob, f32::from(e.position.x), cx);
+            }),
+        )
+    }
+
+    /// A slider under its name, the value at the right, like CleanShot's.
+    fn labeled_slider(&self, name: &'static str, knob: Knob, value: f64, shown: String, ticks: usize, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(h_flex().w_full().justify_between().child(Label::new(name).size(LabelSize::Small)).child(Label::new(shown).size(LabelSize::Small).color(Color::Muted)))
+            .child(div().mx(px(-8.)).child(self.slider(knob, value, ticks, cx)))
+            .into_any_element()
+    }
+
+    /// Options side by side, the chosen one filled with the accent.
+    fn choices(&self, id: &'static str, labels: Vec<String>, selected: usize, set: Set<usize>, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        let (accent, idle, hover) = (colors.text_accent, colors.element_background, colors.element_hover);
+        h_flex()
+            .w_full()
+            .gap(px(4.))
+            .children(labels.into_iter().enumerate().map(|(i, text)| {
+                let on = i == selected;
+                let set = set.clone();
+                div()
+                    .id(SharedString::from(format!("{id}-{i}")))
+                    .flex_grow(1.)
+                    .flex_basis(px(0.))
+                    .min_w_0()
+                    .px_1()
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(7.))
+                    .cursor_pointer()
+                    .bg(if on { accent } else { idle })
+                    .when(!on, |d| d.hover(move |d| d.bg(hover)))
+                    .child(div().text_size(px(13.)).truncate().text_color(if on { gpui::white() } else { colors.text }).child(text))
+                    .on_click(cx.listener(move |this, _, _, cx| set(this, i, cx)))
+            }))
+            .into_any_element()
+    }
+
+    /// A checkbox and its label, like the crop mode's "Snap to edges".
+    fn check(&self, id: &'static str, text: &'static str, on: bool, enabled: bool, set: Set<bool>, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        let (accent, edge) = (colors.text_accent, colors.border);
+        let boxed = div()
+            .size(px(16.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.))
+            .border_1()
+            .border_color(if on { accent } else { edge })
+            .when(on, |d| d.bg(accent).child(gpui::svg().path("icons/check.svg").size(px(12.)).text_color(gpui::white())));
+        h_flex()
+            .id(id)
+            .gap_2()
+            .h(px(26.))
+            .when(enabled, |d| d.cursor_pointer())
+            .when(!enabled, |d| d.opacity(0.45))
+            .child(boxed)
+            .child(Label::new(text).size(LabelSize::Small))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if enabled {
+                    set(this, !on, cx);
+                }
+            }))
+            .into_any_element()
+    }
+
+    /// A switch with its name, and a muted line under it.
+    fn switch_row(&self, id: &'static str, text: &'static str, note: Option<&'static str>, on: bool, enabled: bool, set: Set<bool>, cx: &mut Context<Self>) -> AnyElement {
         h_flex()
             .w_full()
             .gap_3()
-            .child(div().id(SharedString::from(format!("slider-{}", knob as u8))).flex_1().h(px(22.)).mx_2().cursor(CursorStyle::PointingHand).child(bar).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                    this.drag = Some(Drag::Slider(knob));
-                    this.slide(knob, f32::from(e.position.x), cx);
-                }),
-            ))
-            // No value, no room kept for one: the track gets it all.
-            .when(!label.is_empty(), |row| row.child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted))))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Label::new(text).size(LabelSize::Small))
+                    .children(note.map(|n| Label::new(n).size(LabelSize::XSmall).color(Color::Muted))),
+            )
+            .child(Switch::new(id, ToggleState::from(on)).disabled(!enabled).on_click(cx.listener(move |this, state: &ToggleState, _, cx| set(this, *state == ToggleState::Selected, cx))))
+            .into_any_element()
     }
 
-    /// Settings on the right, like CleanShot's studio: the selected zoom or
-    /// cut first, then the look of the whole video and the export.
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        let (card_bg, track_bg, thumb_bg, ring, edge) = (colors.element_background, colors.element_hover, colors.element_selected, colors.text, colors.border_variant);
-        let (sidebar_bg, divider) = (colors.editor_background, colors.border_variant);
-        let (accent, line) = (colors.text_accent, colors.border);
-        // An inset group, like System Settings: a soft card, rows inside.
-        let card = || v_flex().w_full().p(px(CARD_PAD)).gap_3().rounded(px(CARD_RADIUS)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
-        let label = |text: &'static str| div().w(px(ROW_LABEL)).flex_none().child(Label::new(text).size(LabelSize::Small).color(Color::Muted));
-        let row = |text: &'static str, control: AnyElement| h_flex().w_full().gap_2().child(label(text)).child(div().flex_1().min_w_0().child(control));
-        let toggle = |text: &'static str, switch: Switch| h_flex().w_full().justify_between().child(Label::new(text).size(LabelSize::Small)).child(switch);
-        // A macOS segmented control: options share a track, the chosen one lifts.
-        let segment = |id: SharedString, text: String, on: bool| {
+    /// The icons down the left: one section shown at a time.
+    fn render_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let item = |section: Section, cx: &mut Context<Self>| {
+            let on = self.section == section;
             div()
-                .id(id)
-                // Wide enough for its text; spare room is shared out.
-                .flex_grow(1.)
-                .px_2()
-                .h(px(24.))
+                .id(SharedString::from(format!("rail-{}", section as u8)))
+                .size(px(36.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(6.))
+                .rounded(px(9.))
                 .cursor_pointer()
-                .when(on, |d| d.bg(thumb_bg))
-                .when(!on, |d| d.hover(|d| d.bg(track_bg)))
-                .child(Label::new(text).size(LabelSize::Small).color(if on { Color::Default } else { Color::Muted }).truncate())
+                .when(on, |d| d.bg(colors.text_accent))
+                .when(!on, |d| d.hover(|d| d.bg(colors.ghost_element_hover)))
+                .child(Icon::from_path(section.icon()).size(IconSize::Medium).color(if on { Color::Custom(gpui::white()) } else { Color::Muted }))
+                .tooltip(Tooltip::text(section.label()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.show_section(section);
+                    cx.notify();
+                }))
         };
-        // Like the settings' choices: no track, only the chosen one is filled.
-        let segmented = |items: Vec<AnyElement>| h_flex().w_full().gap(px(2.)).children(items).into_any_element();
+        let top: Vec<_> = Section::RAIL.into_iter().map(|s| item(s, cx)).collect();
+        v_flex()
+            .flex_none()
+            .w(px(RAIL))
+            .h_full()
+            .py_2()
+            .items_center()
+            .gap_1()
+            .bg(colors.title_bar_background)
+            .children(top)
+            .child(div().flex_1())
+            .child(item(Section::Cut, cx))
+    }
 
-        // What's selected on the timeline, or the timeline's own tools.
-        let context = if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
-            card()
-                .child(Label::new(tr!("studio.removing", seconds((b - a).abs()), clock(a.min(b)), clock(a.max(b)))).size(LabelSize::Small))
-                .child(
-                    Button::new("delete-cut", t("studio.restore_piece"))
-                        .style(ButtonStyle::Filled)
-                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .key_binding(kit::keys("delete"))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.project.cuts.remove(index);
-                            this.cut = None;
+    /// The chosen section's settings, scrolling.
+    fn render_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = match self.section {
+            Section::Zoom => self.zoom_section(cx),
+            Section::Cursor => self.cursor_section(cx),
+            Section::Keys => self.keys_section(cx),
+            Section::Audio => self.audio_section(cx),
+            Section::Camera => self.camera_section(cx),
+            Section::Background => self.background_section(cx),
+            Section::Cut => self.cut_section(cx),
+        };
+        div()
+            .relative()
+            .flex_none()
+            .w(px(PANEL))
+            .h_full()
+            .bg(cx.theme().colors().panel_background)
+            .child(v_flex().id("section").size_full().overflow_y_scroll().track_scroll(&self.side_scroll).p_3().gap_5().children(content))
+            .child(crate::ui::scrollbar(&self.side_scroll, &self.side_grab, cx))
+    }
+
+    /// A group in a section: its heading, then its controls.
+    fn group(heading: &'static str, items: Vec<AnyElement>) -> AnyElement {
+        v_flex().w_full().gap_2().child(Label::new(heading).size(LabelSize::Small).color(Color::Muted)).children(items).into_any_element()
+    }
+
+    fn note(text: impl Into<SharedString>) -> AnyElement {
+        Label::new(text).size(LabelSize::XSmall).color(Color::Muted).into_any_element()
+    }
+
+    fn zoom_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let level = self.zoom_level();
+        let selected = self.selected.and_then(|i| self.project.segments.get(i).map(|s| (i, s.clone())));
+        let span = ZOOM_RANGE.1 - ZOOM_RANGE.0;
+        let mut items = vec![
+            self.labeled_slider(t("studio.zoom_level"), Knob::Zoom, (level - ZOOM_RANGE.0) / span, format!("{}%", (level * 100.).round()), 6, cx),
+            wide(Button::new("zoom-all", t("studio.apply_zoom_to_all"))
+                .style(ButtonStyle::Filled)
+                .disabled(self.project.segments.is_empty())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let level = this.zoom_level();
+                    for seg in &mut this.project.segments {
+                        seg.zoom = level;
+                    }
+                    this.new_zoom = level;
+                    this.changed(cx);
+                }))
+            ),
+        ];
+        match &selected {
+            Some((index, seg)) => {
+                let index = *index;
+                let manual = seg.focus.is_some() || self.placing;
+                let mode = self.choices(
+                    "zoom-mode",
+                    vec![t("studio.follow_cursor_short").into(), t("studio.manual").into()],
+                    manual as usize,
+                    Rc::new(move |this, i, cx| {
+                        if i == 0 {
+                            this.placing = false;
+                            this.project.segments[index].focus = None;
                             this.changed(cx);
-                        })),
-                )
-        } else if let Some((index, seg)) = self.selected.and_then(|i| self.project.segments.get(i).map(|s| (i, s.clone()))) {
-            let zooms = ZOOMS
-                .iter()
-                .map(|&z| {
-                    segment(SharedString::from(format!("zoom-{z}")), format!("×{z}"), (seg.zoom - z).abs() < 0.01)
+                        } else {
+                            this.placing = true;
+                            cx.notify();
+                        }
+                    }),
+                    cx,
+                );
+                let mut mode_items = vec![mode];
+                if self.placing {
+                    mode_items.push(Label::new(t("studio.click_video_where_zoom")).size(LabelSize::XSmall).color(Color::Accent).into_any_element());
+                } else if manual {
+                    mode_items.push(Self::note(t("studio.manual_note")));
+                }
+                items.push(Self::group(t("studio.zoom_mode"), mode_items));
+                items.push(
+                    Button::new("delete-zoom", t("studio.delete_zoom"))
+                        .style(ButtonStyle::Subtle)
+                        .start_icon(Icon::new(IconName::Trash).size(IconSize::Small).color(Color::Error))
+                        .key_binding(kit::keys("delete"))
+                        .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx)))
+                        .into_any_element(),
+                );
+            }
+            None => items.push(Self::note(if self.project.segments.is_empty() {
+                t("studio.no_zooms_click_lower_track").into()
+            } else {
+                SharedString::from(tr!("studio.zooms_pick_one_on_timeline", self.project.segments.len()))
+            })),
+        }
+        let has_clicks = !self.track.clicks.is_empty();
+        items.push(Self::group(
+            t("studio.automatic"),
+            vec![
+                wide(Button::new("auto", t("studio.zooms_on_clicks"))
+                    .style(ButtonStyle::Filled)
+                    .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
+                    .disabled(!has_clicks)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let auto = Project::auto(&this.track, &this.probe);
+                        this.project.segments = auto.segments;
+                        this.select_zoom(None);
+                        this.changed(cx);
+                    }))
+                ),
+            ]
+            .into_iter()
+            .chain((!has_clicks).then(|| Self::note(t("studio.no_clicks_in_recording"))))
+            .collect(),
+        ));
+        let blur = MOTION_BLUR.iter().map(|b| t(b.0).to_string()).collect();
+        items.push(Self::group(
+            t("studio.motion_blur"),
+            vec![
+                self.choices("blur", blur, self.project.motion_blur, Rc::new(|this, i, cx| {
+                    this.project.motion_blur = i;
+                    this.changed(cx);
+                }), cx),
+                Self::note(t("studio.on_zooms_camera_moves_fast")),
+            ],
+        ));
+        items
+    }
+
+    fn cursor_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let colors = cx.theme().colors().clone();
+        let mut items = Vec::new();
+        if self.track.cursor_hidden {
+            items.push(self.switch_row("cursor", t("studio.show_cursor"), None, self.project.cursor, true, Rc::new(|this, on, cx| {
+                this.project.cursor = on;
+                this.changed(cx);
+            }), cx));
+            if self.project.cursor {
+                let size = self.project.cursor_size;
+                items.push(self.labeled_slider(t("studio.row_size"), Knob::CursorSize, (size - 0.5) / (MAX_CURSOR - 0.5), crate::i18n::decimal(format!("{size:.1}×")), 10, cx));
+                // The styles as tiles, each showing itself.
+                let tiles = [0usize, 2, 1].into_iter().zip(self.style_thumbs.iter()).map(|(style, thumb)| {
+                    let on = self.project.cursor_style == style;
+                    div()
+                        .id(SharedString::from(format!("cursor-style-{style}")))
+                        .size(px(52.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(12.))
+                        .bg(colors.element_background)
+                        .border_2()
+                        .border_color(if on { colors.text_accent } else { gpui::transparent_black() })
+                        .cursor_pointer()
+                        .hover(|d| d.bg(colors.element_hover))
+                        .children(thumb.clone().map(|i| img(i).max_w(px(30.)).max_h(px(30.)).object_fit(ObjectFit::Contain)))
+                        .tooltip(Tooltip::text(t(CURSOR_STYLES[style])))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.project.segments[index].zoom = z;
+                            this.project.cursor_style = style;
                             this.changed(cx);
                         }))
                         .into_any_element()
-                })
-                .collect();
-            let toward = vec![
-                segment("focus-cursor".into(), t("studio.follow_cursor").into(), seg.focus.is_none() && !self.placing)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.placing = false;
-                        this.project.segments[index].focus = None;
+                });
+                items.push(Self::group(t("studio.style"), vec![h_flex().gap_2().children(tiles).into_any_element()]));
+                let smooth = self.project.cursor_smooth >= 0.5;
+                items.push(Self::group(
+                    t("studio.motion"),
+                    vec![self.choices("cursor-motion-kind", vec![t("studio.natural").into(), t("studio.smooth").into()], smooth as usize, Rc::new(|this, i, cx| {
+                        this.project.cursor_smooth = if i == 1 { 0.7 } else { 0.25 };
                         this.changed(cx);
-                    }))
-                    .into_any_element(),
-                segment("focus-point".into(), t("studio.point").into(), seg.focus.is_some() || self.placing)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.placing = true;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ];
-            card()
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(Label::new(t("studio.zoom")).size(LabelSize::Small))
-                        .child(
-                            IconButton::new("delete", IconName::Trash)
-                                .shape(IconButtonShape::Square)
-                                .icon_color(Color::Error)
-                                .tooltip(Tooltip::text(t("studio.delete_zoom")))
-                                .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
-                        ),
-                )
-                .child(segmented(zooms))
-                .child(segmented(toward))
-                .when(self.placing, |s| s.child(Label::new(t("studio.click_video_where_zoom")).size(LabelSize::XSmall).color(Color::Accent)))
+                    }), cx)],
+                ));
+            }
         } else {
-            let edited = self.project.trim != (0., self.probe.duration) || !self.project.cuts.is_empty();
-            card().child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .child(
-                        Button::new("auto", t("studio.zooms_on_clicks"))
-                            .style(ButtonStyle::Filled)
-                            .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                            .disabled(self.track.clicks.is_empty())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let auto = Project::auto(&this.track, &this.probe);
-                                this.project.segments = auto.segments;
-                                this.select_zoom(None);
-                                this.changed(cx);
-                            })),
-                    )
-                    .when(edited, |row| {
-                        row.child(Button::new("uncut", t("studio.restore_whole_video")).style(ButtonStyle::Subtle).on_click(cx.listener(|this, _, _, cx| {
-                            this.project.trim = (0., this.probe.duration);
-                            this.project.cuts.clear();
-                            this.select_cut(None);
-                            this.changed(cx);
-                        })))
-                    }),
-            )
-        };
+            items.push(Self::note(t("studio.change_cursors_size_smoothness_record")));
+        }
+        let has_clicks = !self.track.clicks.is_empty();
+        let mut clicks = Vec::new();
+        if self.track.cursor_hidden && self.project.cursor {
+            clicks.push(self.check("press-effect", t("studio.press_effect"), self.project.cursor_motion, true, Rc::new(|this, on, cx| {
+                this.project.cursor_motion = on;
+                this.changed(cx);
+            }), cx));
+        }
+        clicks.push(self.check("ripple", t("studio.ripple_animation"), self.project.clicks && has_clicks, has_clicks, Rc::new(|this, on, cx| {
+            this.project.clicks = on;
+            this.changed(cx);
+        }), cx));
+        if !has_clicks {
+            clicks.push(Self::note(t("studio.no_clicks_in_recording")));
+        }
+        items.push(Self::group(t("studio.clicks"), clicks));
+        items
+    }
 
-        // Presets: a dropdown, with "+" to keep the current look.
-        let presets = crate::presets::render(&self.presets, &self.project.look(), cx);
+    fn keys_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let has_keys = !self.track.keystrokes.is_empty();
+        let on = self.project.keys && has_keys;
+        let mut items = vec![self.switch_row("keys", t("studio.show_shortcuts"), Some(t("studio.badge_with_shortcuts_pressed")), on, has_keys, Rc::new(|this, on, cx| {
+            this.project.keys = on;
+            this.changed(cx);
+        }), cx)];
+        if !has_keys {
+            items.push(Self::note(t("studio.record_with_shortcuts_on")));
+        }
+        if on {
+            let sides = vec![t("studio.bottom").into(), t("studio.top").into()];
+            items.push(Self::group(t("studio.row_position"), vec![self.choices("keys-side", sides, self.project.keys_top as usize, Rc::new(|this, i, cx| {
+                this.project.keys_top = i == 1;
+                this.changed(cx);
+            }), cx)]));
+            let sizes = KEY_SIZES.iter().map(|k| k.0.to_string()).collect();
+            items.push(Self::group(t("studio.row_size"), vec![self.choices("keys-size", sizes, self.project.keys_size, Rc::new(|this, i, cx| {
+                this.project.keys_size = i;
+                this.changed(cx);
+            }), cx)]));
+        }
+        items
+    }
 
-        // The backdrop: colours and gradients, then wallpapers.
-        let swatch = |id: SharedString, selected: bool| {
-            div().id(id).flex().items_center().justify_center().rounded(px(9.)).border_2().border_color(if selected { ring } else { gpui::transparent_black() }).cursor_pointer()
-        };
-        let tiles = palette::backdrops()
-            .into_iter()
-            .enumerate()
-            .map(|(i, (c0, c1))| {
-                swatch(SharedString::from(format!("backdrop-{i}")), self.project.wallpaper.is_none() && i == self.project.backdrop)
-                    .size(px(32.))
-                    .child(div().size(px(24.)).rounded(px(6.)).border_1().border_color(edge).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.backdrop = i;
-                        this.project.wallpaper = None;
-                        this.changed(cx);
-                    }))
-            })
-            .collect::<Vec<_>>();
-        let walls = self
-            .walls
-            .iter()
-            .enumerate()
-            .map(|(i, (path, thumb))| {
-                let path = path.clone();
-                swatch(SharedString::from(format!("wall-{i}")), self.project.wallpaper.as_ref() == Some(&path))
-                    .w(px(52.))
-                    .h(px(36.))
-                    .child(img(thumb.clone()).w(px(44.)).h(px(28.)).rounded(px(5.)).object_fit(ObjectFit::Cover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.wallpaper = Some(path.clone());
-                        this.changed(cx);
-                    }))
-                    .into_any_element()
-            })
-            .chain(std::iter::once(
-                swatch("own-wallpaper".into(), self.project.wallpaper.as_ref().is_some_and(|w| !self.walls.iter().any(|(p, _)| p == w)))
-                    .w(px(52.))
-                    .h(px(36.))
-                    .child(div().w(px(44.)).h(px(28.)).rounded(px(5.)).border_1().border_color(edge).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
-                    .tooltip(Tooltip::text(t("common.your_own_image")))
-                    .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
-                    .into_any_element(),
-            ))
-            .collect::<Vec<_>>();
+    fn audio_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if !self.probe.audio {
+            return vec![Self::note(t("studio.no_audio_in_recording"))];
+        }
+        let gif = self.project.format == Format::Gif;
+        let mut items = vec![self.switch_row("audio", t("studio.audio"), Some(t("studio.microphone_system_as_recorded")), self.project.audio && !gif, !gif, Rc::new(|this, on, cx| {
+            this.project.audio = on;
+            this.changed(cx);
+        }), cx)];
+        if gif {
+            items.push(Self::note(t("studio.gifs_have_no_audio")));
+        }
+        items
+    }
 
-        let pick = |items: &[&'static str], selected: usize, id: &'static str, set: fn(&mut Project, usize), cx: &mut Context<Self>| -> AnyElement {
-            segmented(
-                items
-                    .iter()
-                    .enumerate()
-                    .map(|(i, text)| {
-                        segment(SharedString::from(format!("{id}-{i}")), t(text).to_string(), selected == i)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                set(&mut this.project, i);
-                                this.changed(cx);
-                            }))
-                            .into_any_element()
-                    })
-                    .collect(),
-            )
-        };
-        let aspect_names: Vec<&'static str> = ASPECTS.iter().map(|a| a.0).collect();
-        let blur_names: Vec<&'static str> = MOTION_BLUR.iter().map(|a| a.0).collect();
-        let look = card()
-            .child(pick(&aspect_names, self.project.aspect, "aspect", |p, i| p.aspect = i, cx))
-            .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(tiles))
-            .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(walls))
-            .child(row(t("studio.row_padding"), self.slider(Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), cx).into_any_element()))
-            .child(row(t("studio.row_corners"), self.slider(Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), cx).into_any_element()))
-            .child(row(t("studio.row_shadow"), self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx).into_any_element()))
-            .child(row(t("studio.row_blur"), pick(&blur_names, self.project.motion_blur, "blur", |p, i| p.motion_blur = i, cx)));
-
-        // The drawn cursor: only recordings made in studio mode have one to
-        // change; others say how to get one.
-        let baked = (!self.track.cursor_hidden).then(|| {
-            card()
-                .child(Label::new(t("studio.cursor")).size(LabelSize::Small))
-                .child(Label::new(t("studio.change_cursors_size_smoothness_record")).size(LabelSize::XSmall).color(Color::Muted))
-        });
-        let cursor = self.track.cursor_hidden.then(|| {
-            let styles: Vec<&'static str> = CURSOR_STYLES.to_vec();
-            card()
-                .child(toggle(
-                    t("studio.cursor"),
-                    Switch::new("cursor", ToggleState::from(self.project.cursor)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                        this.project.cursor = *state == ToggleState::Selected;
-                        this.changed(cx);
-                    })),
-                ))
-                .when(self.project.cursor, |s| {
-                    s.child(pick(&styles, self.project.cursor_style, "cursor-style", |p, i| p.cursor_style = i, cx))
-                        .child(toggle(
-                            t("studio.cursor_motion"),
-                            Switch::new("cursor-motion", ToggleState::from(self.project.cursor_motion)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                                this.project.cursor_motion = *state == ToggleState::Selected;
-                                this.changed(cx);
-                            })),
-                        ))
-                        .child(row(
-                            t("studio.row_size"),
-                            self.slider(Knob::CursorSize, (self.project.cursor_size - 0.5) / (MAX_CURSOR - 0.5), crate::i18n::decimal(format!("×{:.1}", self.project.cursor_size)), cx).into_any_element(),
-                        ))
-                        .child(row(
-                            t("studio.row_smooth"),
-                            self.slider(Knob::CursorSmooth, self.project.cursor_smooth, format!("{}%", (self.project.cursor_smooth * 100.).round()), cx).into_any_element(),
-                        ))
-                })
-        });
-
-        let camera = self.cam_file.as_ref().map(|_| {
+    fn camera_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.cam_file.is_none() {
+            return vec![Self::note(t("studio.no_camera_in_recording"))];
+        }
+        let colors = cx.theme().colors().clone();
+        let (accent, line) = (colors.text_accent, colors.border);
+        let mut items = vec![self.switch_row("cam", t("studio.show_camera"), Some(t("studio.camera_recorded_separately")), self.project.cam, true, Rc::new(|this, on, cx| {
+            this.project.cam = on;
+            this.changed(cx);
+        }), cx)];
+        if self.project.cam {
+            let size = (self.project.cam_size - studio::MIN_CAM) / (studio::MAX_CAM - studio::MIN_CAM);
+            items.push(self.labeled_slider(t("studio.row_size"), Knob::CamSize, size, format!("{}%", (self.project.cam_size * 100.).round()), 0, cx));
+            items.push(self.labeled_slider(t("studio.rounding"), Knob::CamRound, self.project.cam_round, format!("{}%", (self.project.cam_round * 100.).round()), 0, cx));
             // A 3×3 grid without the middle: the spots the camera snaps to.
             let spot = |i: usize, cx: &mut Context<Self>| {
                 let on = self.project.cam_anchor == i;
                 div()
                     .id(SharedString::from(format!("cam-anchor-{i}")))
-                    .size(px(14.))
-                    .rounded(px(4.))
+                    .size(px(18.))
+                    .rounded(px(5.))
                     .border_1()
                     .border_color(if on { accent } else { line })
                     .when(on, |d| d.bg(accent))
@@ -1579,113 +1949,308 @@ impl StudioEditor {
                     }))
                     .into_any_element()
             };
-            let mut grid = v_flex().gap(px(3.));
+            let mut grid = v_flex().gap(px(4.));
             for cells in [[Some(0), Some(1), Some(2)], [Some(7), None, Some(3)], [Some(6), Some(5), Some(4)]] {
-                let cells: Vec<AnyElement> = cells.iter().map(|c| c.map(|i| spot(i, cx)).unwrap_or_else(|| div().size(px(14.)).into_any_element())).collect();
-                grid = grid.child(h_flex().gap(px(3.)).children(cells));
+                let cells: Vec<AnyElement> = cells.iter().map(|c| c.map(|i| spot(i, cx)).unwrap_or_else(|| div().size(px(18.)).into_any_element())).collect();
+                grid = grid.child(h_flex().gap(px(4.)).children(cells));
             }
-            card()
-                .child(toggle(
-                    t("common.camera"),
-                    Switch::new("cam", ToggleState::from(self.project.cam)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                        this.project.cam = *state == ToggleState::Selected;
+            items.push(Self::group(t("studio.row_position"), vec![grid.into_any_element()]));
+        }
+        items
+    }
+
+    fn background_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let colors = cx.theme().colors().clone();
+        let (accent, edge) = (colors.text_accent, colors.border_variant);
+        let clear = gpui::transparent_black();
+        // A square tile with an accent ring when chosen; the ring, a gap and
+        // the swatch keep their corners concentric.
+        let tile = |id: SharedString, on: bool| div().id(id).flex_none().p(px(2.)).rounded(px(TILE_RADIUS)).border_2().border_color(if on { accent } else { clear }).cursor_pointer();
+        let swatch = || div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).overflow_hidden().border_1().border_color(edge);
+        let grid = || h_flex().w_full().flex_wrap().gap(px(TILE_GAP));
+
+        let all = palette::backdrops();
+        let gradients: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 != all[i].1).collect();
+        let plains: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 == all[i].1).collect();
+        let shown = if self.more_gradients { gradients.len() } else { gradients.len().min(GRADIENT_ROWS) };
+        let chosen = |i: usize| self.project.wallpaper.is_none() && self.project.backdrop == i;
+        let gradient_tiles: Vec<AnyElement> = gradients[..shown]
+            .iter()
+            .map(|&i| {
+                let (c0, c1) = all[i];
+                tile(SharedString::from(format!("gradient-{i}")), chosen(i))
+                    .child(swatch().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.backdrop = i;
+                        this.project.wallpaper = None;
                         this.changed(cx);
-                    })),
-                ))
-                .when(self.project.cam, |s| {
-                    s.child(row(
-                        t("studio.row_size"),
-                        self.slider(Knob::CamSize, (self.project.cam_size - studio::MIN_CAM) / (studio::MAX_CAM - studio::MIN_CAM), format!("{}%", (self.project.cam_size * 100.).round()), cx).into_any_element(),
-                    ))
-                    .child(row(t("studio.rounding"), self.slider(Knob::CamRound, self.project.cam_round, format!("{}%", (self.project.cam_round * 100.).round()), cx).into_any_element()))
-                    .child(row(t("studio.row_position"), grid.into_any_element()))
-                })
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let toggle_more = (gradients.len() > GRADIENT_ROWS).then(|| {
+            Button::new("more-gradients", t(if self.more_gradients { "editor.show_less" } else { "editor.show_more" }))
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.more_gradients = !this.more_gradients;
+                    cx.notify();
+                }))
         });
 
-        // Over the video: click rings and shortcut badges.
-        let has_clicks = !self.track.clicks.is_empty();
-        let has_keys = !self.track.keystrokes.is_empty();
-        let keys_on = self.project.keys && has_keys;
-        let key_sides: [&'static str; 2] = ["studio.bottom", "studio.top"];
-        let key_sizes: Vec<&'static str> = KEY_SIZES.iter().map(|k| k.0).collect();
-        let overlays = card()
-            .child(toggle(
-                t("studio.clicks"),
-                Switch::new("clicks", ToggleState::from(self.project.clicks && has_clicks)).disabled(!has_clicks).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                    this.project.clicks = *state == ToggleState::Selected;
-                    this.changed(cx);
-                })),
-            ))
-            .child(toggle(
-                t("common.keyboard_shortcuts"),
-                Switch::new("keys", ToggleState::from(keys_on)).disabled(!has_keys).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                    this.project.keys = *state == ToggleState::Selected;
-                    this.changed(cx);
-                })),
-            ))
-            .when(keys_on, |s| {
-                s.child(
-                    h_flex()
-                        .gap_2()
-                        .child(div().flex_1().child(pick(&key_sides, self.project.keys_top as usize, "keys-side", |p, i| p.keys_top = i == 1, cx)))
-                        .child(div().flex_1().child(pick(&key_sizes, self.project.keys_size, "keys-size", |p, i| p.keys_size = i, cx))),
-                )
-            });
-
-        // Export: file, size, rate, compression, sound; what comes out.
-        let gif = self.project.format == Format::Gif;
-        let files: [&'static str; 2] = ["MP4", "GIF"];
-        let resolutions: Vec<&'static str> = RESOLUTIONS.iter().map(|r| r.0).collect();
-        let rates: Vec<&'static str> = FRAME_RATES.iter().map(|r| r.0).collect();
-        let qualities: Vec<&'static str> = QUALITIES.iter().map(|q| q.0).collect();
-        let out = studio::layout(&self.probe, &self.project, false);
-        let export = card()
-            .child(row(t("studio.row_format"), pick(&files, gif as usize, "format", |p, i| p.format = if i == 1 { Format::Gif } else { Format::Mp4 }, cx)))
-            .child(row(t("studio.row_size"), pick(&resolutions, self.project.resolution, "res", |p, i| p.resolution = i, cx)))
-            .child(row(t("studio.row_fps"), pick(&rates, self.project.frame_rate, "fps", |p, i| p.frame_rate = i, cx)))
-            .when(!gif, |s| s.child(row(t("studio.row_quality"), pick(&qualities, self.project.quality, "quality", |p, i| p.quality = i, cx))))
-            .when(self.probe.audio && !gif, |s| {
-                s.child(toggle(
-                    t("studio.audio"),
-                    Switch::new("audio", ToggleState::from(self.project.audio)).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                        this.project.audio = *state == ToggleState::Selected;
+        let mut walls: Vec<AnyElement> = self
+            .walls
+            .iter()
+            .enumerate()
+            .map(|(i, (path, thumb))| {
+                let path = path.clone();
+                tile(SharedString::from(format!("wall-{i}")), self.project.wallpaper.as_ref() == Some(&path))
+                    .child(swatch().child(img(thumb.clone()).size_full().object_fit(ObjectFit::Cover)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.wallpaper = Some(path.clone());
                         this.changed(cx);
-                    })),
-                ))
+                    }))
+                    .into_any_element()
             })
-            .child(
-                h_flex()
-                    .justify_between()
-                    .child(Label::new(format!("{}×{} · {}", out.ow, out.oh, clock(self.project.kept_duration()))).size(LabelSize::XSmall).color(Color::Muted))
-                    .child(Label::new(size_label(&self.project, &self.probe)).size(LabelSize::Small)),
-            );
+            .collect();
+        let own = self.project.wallpaper.as_ref().is_some_and(|w| !self.walls.iter().any(|(p, _)| p == w));
+        walls.push(
+            tile("own-wallpaper".into(), own)
+                .child(div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).border_1().border_dashed().border_color(colors.border).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
+                .tooltip(Tooltip::text(t("common.your_own_image")))
+                .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
+                .into_any_element(),
+        );
 
-        let content = v_flex()
-            .id("sidebar")
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.side_scroll)
-            .gap_2()
-            .p_3()
-            .child(presets)
-            .child(context)
-            .child(look)
-            .children(cursor)
-            .children(baked)
-            .children(camera)
-            .child(overlays)
-            .child(export);
+        let dots: Vec<AnyElement> = plains
+            .iter()
+            .map(|&i| {
+                div()
+                    .id(SharedString::from(format!("plain-{i}")))
+                    .flex_none()
+                    .p(px(2.))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(if chosen(i) { accent } else { clear })
+                    .cursor_pointer()
+                    .child(div().size(px(DOT)).rounded_full().border_1().border_color(edge).bg(all[i].0))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.project.backdrop = i;
+                        this.project.wallpaper = None;
+                        this.changed(cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        vec![
+            crate::presets::render(&self.presets, &self.project.look(), cx).into_any_element(),
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(h_flex().w_full().justify_between().child(Label::new(t("editor.gradients")).size(LabelSize::Small).color(Color::Muted)).children(toggle_more))
+                .child(grid().children(gradient_tiles))
+                .into_any_element(),
+            Self::group(t("editor.wallpapers"), vec![grid().children(walls).into_any_element()]),
+            Self::group(t("editor.plain_color"), vec![h_flex().w_full().flex_wrap().gap(px(2.)).children(dots).into_any_element()]),
+            Self::group(t("editor.aspect_ratio"), vec![self.aspect_dropdown(cx)]),
+            self.labeled_slider(t("studio.row_padding"), Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), 0, cx),
+            self.labeled_slider(t("studio.row_corners"), Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), 0, cx),
+            self.labeled_slider(t("studio.row_shadow"), Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), 0, cx),
+        ]
+    }
+
+    /// The output's shape as a dropdown, wide shapes then tall ones.
+    fn aspect_dropdown(&self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        let (field, hover) = (colors.element_background, colors.element_hover);
+        let label = |i: usize| t(ASPECTS[i].0);
+        let field_el = h_flex()
+            .id("aspect")
+            .w_full()
+            .h(px(30.))
+            .px_2p5()
+            .justify_between()
+            .rounded(px(8.))
+            .bg(field)
+            .cursor_pointer()
+            .hover(move |d| d.bg(hover))
+            .child(Label::new(label(self.project.aspect)).size(LabelSize::Small))
+            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.aspect_open = !this.aspect_open;
+                this.export_open = false;
+                cx.notify();
+            }));
+        let menu = self.aspect_open.then(|| {
+            let mut rows: Vec<AnyElement> = Vec::new();
+            for (g, group) in ASPECT_ORDER.iter().enumerate() {
+                if g > 0 {
+                    rows.push(div().mx_2().my_1().h(px(1.)).bg(colors.border_variant).into_any_element());
+                }
+                for &i in group.iter() {
+                    let on = self.project.aspect == i;
+                    rows.push(
+                        h_flex()
+                            .id(SharedString::from(format!("aspect-{i}")))
+                            .w_full()
+                            .gap_1p5()
+                            .px_2()
+                            .h(px(28.))
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .hover(move |d| d.bg(hover))
+                            .child(div().w(px(14.)).children(on.then(|| Icon::new(IconName::Check).size(IconSize::XSmall))))
+                            .child(Label::new(label(i)).size(LabelSize::Small))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.aspect_open = false;
+                                this.project.aspect = i;
+                                this.changed(cx);
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            gpui::deferred(v_flex().id("aspect-menu").occlude().absolute().top(px(34.)).left_0().right_0().p_1().elevation_3(cx).children(rows).child(crate::ui::track_bounds(&self.menu_bounds)))
+        });
         div()
             .relative()
-            .flex_none()
-            .w(px(SIDEBAR))
-            .h_full()
-            .bg(sidebar_bg)
-            .border_l_1()
-            .border_color(divider)
-            .child(content)
-            .child(crate::ui::scrollbar(&self.side_scroll, &self.side_grab, cx))
+            .w_full()
+            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                if this.aspect_open && !this.menu_bounds.get().contains(&e.position) {
+                    this.aspect_open = false;
+                    cx.notify();
+                }
+            }))
+            .child(field_el)
+            .children(menu)
+            .into_any_element()
     }
+
+    fn cut_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut items = vec![
+            wide(Button::new("cut", t("studio.cut_at_playhead"))
+                .style(ButtonStyle::Filled)
+                .start_icon(Icon::new(IconName::Scissors).size(IconSize::Small))
+                .key_binding(kit::keys("x"))
+                .on_click(cx.listener(|this, _, _, cx| this.add_cut(cx)))
+            ),
+            Self::note(t("studio.filmstrips_yellow_edges_trim_start")),
+        ];
+        if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
+            items.push(Self::group(
+                t("studio.selected_cut"),
+                vec![
+                    Label::new(tr!("studio.removing", seconds((b - a).abs()), clock(a.min(b)), clock(a.max(b)))).size(LabelSize::Small).into_any_element(),
+                    wide(Button::new("delete-cut", t("studio.restore_piece"))
+                        .style(ButtonStyle::Filled)
+                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
+                        .key_binding(kit::keys("delete"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.project.cuts.remove(index);
+                            this.cut = None;
+                            this.changed(cx);
+                        }))
+                    ),
+                ],
+            ));
+        }
+        if self.project.trim != (0., self.probe.duration) || !self.project.cuts.is_empty() {
+            items.push(
+                wide(Button::new("uncut", t("studio.restore_whole_video"))
+                    .style(ButtonStyle::Subtle)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.project.trim = (0., this.probe.duration);
+                        this.project.cuts.clear();
+                        this.select_cut(None);
+                        this.changed(cx);
+                    }))
+                ),
+            );
+        }
+        items
+    }
+}
+
+/// A button across a section's width.
+fn wide(button: Button) -> AnyElement {
+    h_flex().w_full().child(button.full_width()).into_any_element()
+}
+
+/// A horizontal scrollbar under a sideways-scrolling pane, like
+/// `ui::scrollbar` turned on its side.
+fn hscrollbar(handle: &gpui::ScrollHandle, grab: &Rc<Cell<Option<f32>>>, cx: &App) -> impl IntoElement {
+    let (handle, grab) = (handle.clone(), grab.clone());
+    let mut color = cx.theme().colors.text;
+    canvas(
+        |_, _, _| {},
+        move |_, _, window, _| {
+            let view = handle.bounds();
+            let max = f32::from(handle.max_offset().x);
+            let w = f32::from(view.size.width);
+            if max < 1. || w < 40. {
+                return;
+            }
+            let thumb_w = (w * w / (w + max)).max(32.);
+            let travel = w - thumb_w;
+            let left = f32::from(view.left()) + travel * (-f32::from(handle.offset().x) / max).clamp(0., 1.);
+            let track_y = f32::from(view.bottom()) + 2.;
+            color.alpha = if grab.get().is_some() { 0.5 } else { 0.28 };
+            let thumb = Bounds::new(point(px(left + 3.), px(track_y + 2.)), size(px(thumb_w - 6.), px(5.)));
+            window.paint_quad(fill(thumb, color).corner_radii(px(2.5)));
+
+            let scroll_to = {
+                let handle = handle.clone();
+                move |thumb_left: f32| {
+                    let at = ((thumb_left - f32::from(view.left())) / travel.max(1.)).clamp(0., 1.) * max;
+                    handle.set_offset(point(px(-at), handle.offset().y));
+                }
+            };
+            let on_track = move |p: gpui::Point<Pixels>| f32::from(p.y) >= track_y && f32::from(p.y) <= track_y + 10. && p.x >= view.left() && p.x <= view.right();
+            let g = grab.clone();
+            let jump = scroll_to.clone();
+            window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
+                if phase != gpui::DispatchPhase::Capture || e.button != MouseButton::Left || !on_track(e.position) {
+                    return;
+                }
+                let x = f32::from(e.position.x);
+                if x < left || x > left + thumb_w {
+                    jump(x - thumb_w / 2.);
+                    g.set(Some(thumb_w / 2.));
+                } else {
+                    g.set(Some(x - left));
+                }
+                cx.stop_propagation();
+                window.refresh();
+            });
+            let g = grab.clone();
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, _| {
+                if phase != gpui::DispatchPhase::Capture {
+                    return;
+                }
+                if let Some(at) = g.get() {
+                    if !e.dragging() {
+                        g.set(None);
+                    } else {
+                        scroll_to(f32::from(e.position.x) - at);
+                    }
+                    window.refresh();
+                }
+            });
+            let g = grab.clone();
+            window.on_mouse_event(move |_: &gpui::MouseUpEvent, _, window, _| {
+                if g.take().is_some() {
+                    window.refresh();
+                }
+            });
+        },
+    )
+    .absolute()
+    .left_4()
+    .right_4()
+    .bottom_0()
+    .h(px(12.))
 }
 
 impl Render for StudioEditor {
@@ -1709,10 +2274,31 @@ impl Render for StudioEditor {
         )
         .absolute()
         .size_full();
+        let colors = cx.theme().colors().clone();
+        let expand = ButtonLike::new("expand")
+            .style(ButtonStyle::Subtle)
+            .child(div().p_1().child(Icon::from_path("icons/expand.svg").size(IconSize::Small).color(Color::Muted)))
+            .tooltip(Tooltip::text(t(if self.expanded { "studio.show_settings" } else { "studio.preview_only" })))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.expanded = !this.expanded;
+                cx.notify();
+            }));
+        let expand = div().absolute().top_2().right_2().child(expand);
+        let stage = div()
+            .relative()
+            .w_full()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(measure)
+            .child(self.render_preview(cx))
+            .child(expand);
         kit::root(cx)
             .flex()
             .flex_col()
-            .bg(cx.theme().colors().panel_background)
+            .bg(colors.panel_background)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
@@ -1723,40 +2309,27 @@ impl Render for StudioEditor {
                     .w_full()
                     .flex_1()
                     .min_h_0()
-                    .items_start()
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .h_full()
-                            .child(
-                                div()
-                                    .relative()
-                                    .w_full()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .child(measure)
-                                    .child(self.render_preview(cx)),
-                            )
-                            .child(self.render_transport(cx)),
-                    )
-                    .child(div().h_full().child(self.render_sidebar(cx))),
+                    .when(!self.expanded, |row| row.child(self.render_rail(cx)).child(self.render_panel(cx)))
+                    .child(v_flex().flex_1().min_w_0().h_full().bg(colors.editor_background).child(stage).child(self.render_transport(cx))),
             )
             .child(self.render_timeline(cx))
     }
 }
 
-/// Ruler text: whole seconds as "0:05", halves as "0:05.5".
+/// Ruler text, like CleanShot's: "00:05", halves as "00:05.5".
 fn ruler_label(t: f64, step: f64) -> String {
     if step < 1. {
-        clock(t)
+        format!("{:02}:{:04.1}", (t / 60.) as u64, t % 60.)
     } else {
         let t = t.round() as u64;
-        format!("{}:{:02}", t / 60, t % 60)
+        format!("{:02}:{:02}", t / 60, t % 60)
     }
+}
+
+/// The transport's time: "00:20".
+fn timecode(t: f64) -> String {
+    let t = t.max(0.).floor() as u64;
+    format!("{:02}:{:02}", t / 60, t % 60)
 }
 
 /// "1:05.3"

@@ -69,6 +69,10 @@ assets![
     "icons/copy.svg" => "../data/icons/ui/copy.svg",
     "icons/image_plus.svg" => "../data/icons/ui/image_plus.svg",
     "icons/window_max.svg" => "../data/icons/ui/window_max.svg",
+    "icons/zoom_in.svg" => "../data/icons/ui/zoom_in.svg",
+    "icons/pointer.svg" => "../data/icons/ui/pointer.svg",
+    "icons/video.svg" => "../data/icons/ui/video.svg",
+    "icons/expand.svg" => "../data/icons/ui/expand.svg",
     // Editor tools Zed's set lacks, drawn in the same style.
     "icons/kadr/rect.svg" => "../data/icons/editor/rect.svg",
     "icons/kadr/ellipse.svg" => "../data/icons/editor/ellipse.svg",

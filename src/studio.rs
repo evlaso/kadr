@@ -44,7 +44,21 @@ pub struct Seg {
 }
 
 /// Output shapes: the recording's own, then landscape, square and vertical.
-pub const ASPECTS: [(&str, Option<f64>); 5] = [("studio.like_video", None), ("16:9", Some(16. / 9.)), ("1:1", Some(1.)), ("4:5", Some(0.8)), ("9:16", Some(9. / 16.))];
+/// Saved projects keep the index, so new shapes go at the end;
+/// `ASPECT_ORDER` is how the menu lists them.
+pub const ASPECTS: [(&str, Option<f64>); 9] = [
+    ("studio.like_video", None),
+    ("16:9", Some(16. / 9.)),
+    ("1:1", Some(1.)),
+    ("4:5", Some(0.8)),
+    ("9:16", Some(9. / 16.)),
+    ("5:4", Some(1.25)),
+    ("4:3", Some(4. / 3.)),
+    ("3:2", Some(1.5)),
+    ("3:4", Some(0.75)),
+];
+/// The aspect menu, CleanShot's order: wide shapes, then tall ones.
+pub const ASPECT_ORDER: [&[usize]; 2] = [&[0, 2, 5, 6, 7, 1], &[3, 8, 4]];
 /// Export size by the output's short side.
 pub const RESOLUTIONS: [(&str, u32); 4] = [("720p", 720), ("1080p", 1080), ("1440p", 1440), ("4K", 2160)];
 pub const FRAME_RATES: [(&str, Option<u32>); 3] = [("studio.as_recorded", None), ("30", Some(30)), ("60", Some(60))];
@@ -59,7 +73,9 @@ pub const MAX_RADIUS: f64 = 60.;
 /// × seconds. Screen recordings often come out well under it.
 pub const QUALITIES: [(&str, f64); 4] = [("studio.maximum", 0.12), ("common.high", 0.06), ("common.medium", 0.03), ("studio.small", 0.012)];
 pub const AUDIO_BITRATE: f64 = 160_000.;
-pub const CURSOR_STYLES: [&str; 2] = ["common.arrow", "studio.dot"];
+/// The drawn cursor: the pointer's own shapes, a dot, or the shapes in
+/// inverted colours (white with a dark rim). Indexes are saved.
+pub const CURSOR_STYLES: [&str; 3] = ["common.arrow", "studio.dot", "studio.light_arrow"];
 /// Motion blur, like a camera shutter: the moving picture is rendered at
 /// `SUBFRAMES` times the frame rate while the camera or the cursor moves
 /// fast, and this many sub-frames are averaged into each frame (0 is off).
@@ -747,7 +763,17 @@ fn cursor_pixmap(style: usize, shape: &str, height: f64) -> Option<(tiny_skia::P
         return Some((pm, (c as f64, c as f64)));
     }
     // A macOS-like picture of the pointer's shape, the arrow `h` tall.
-    crate::cursors::render(shape, h)
+    let (mut pm, hot) = crate::cursors::render(shape, h)?;
+    if style == 2 {
+        // Inverted: premultiplied, so each channel turns into alpha less it.
+        for px in pm.data_mut().chunks_exact_mut(4) {
+            let a = px[3];
+            for c in &mut px[..3] {
+                *c = a.saturating_sub(*c);
+            }
+        }
+    }
+    Some((pm, hot))
 }
 
 fn ease(x: f64) -> f64 {

@@ -43,7 +43,7 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 
 ## Conventions
 
-- Nested corners are concentric: an inner element's radius is the outer radius less the inset (see `cards::CORNER`, `history::BUTTON`, `studio_editor::CARD_RADIUS`). Scrolling panes get `ui::scrollbar`.
+- Nested corners are concentric: an inner element's radius is the outer radius less the inset (see `cards::CORNER`, `history::BUTTON`, `studio_editor::TILE_RADIUS`). Scrolling panes get `ui::scrollbar`.
 - Look and feel: CleanShot X UX in a soft, clean Apple-like look (references: CleanShot, Raycast, Atlas for Mac). No glass. Separate groups with space and tone, not lines. The main action uses the accent color.
 - Before changing the user's Hyprland config (`~/.config/hypr/*.lua`), back up the file (`.bak-<timestamp>`).
 - Commits go to `main` (GitHub `vlasmn/kadr`, private). End commit messages with the `Co-Authored-By` trailer the session specifies.

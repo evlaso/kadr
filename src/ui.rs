@@ -757,6 +757,11 @@ impl Button {
         self
     }
 
+    pub fn full_width(mut self) -> Self {
+        self.base = self.base.full_width();
+        self
+    }
+
 
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
