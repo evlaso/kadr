@@ -146,6 +146,9 @@ struct Session {
     clock: Rc<Clock>,
     stopping: bool,
     discard: bool,
+    /// Discarded to record the same area again with the same options.
+    restart: bool,
+    opts: Opts,
     windows: Vec<AnyWindowHandle>,
     tracker: Option<Tracker>,
     studio: bool,
@@ -200,6 +203,7 @@ struct Started {
     file: PathBuf,
     webcam: Option<u32>,
     target: Target,
+    opts: Opts,
 }
 
 pub struct Recorder {
@@ -230,6 +234,18 @@ pub fn command_area(geometry: &str, cx: &mut App) {
     let Some(target) = parse_area(geometry) else {
         return util::notify("kadr", t("record.area_given_as_x_y"));
     };
+    open_panel(target, cx);
+}
+
+/// `kadr record previous`: the recording bar for the last area picked.
+pub fn command_previous(cx: &mut App) {
+    let Some((_, (x, y, w, h))) = crate::picker::previous_area() else {
+        return util::notify("kadr", t("picker.no_previous_area"));
+    };
+    open_panel(Target::Region { x, y, w, h }, cx);
+}
+
+fn open_panel(target: Target, cx: &mut App) {
     recorder(cx).update(cx, |rec, cx| {
         if matches!(rec.state, State::Idle)
             && let Some(handle) = panel::open(target, cx)
@@ -345,7 +361,7 @@ impl Recorder {
     }
 
     fn on_started(&mut self, started: Started, hold: Hold, cx: &mut Context<Self>) {
-        let Started { keys, studio, cursor_off, mut gsr, file, webcam, target } = started;
+        let Started { keys, studio, cursor_off, mut gsr, file, webcam, target, opts } = started;
         let pid = gsr.id();
         cx.spawn(async move |this, cx| {
             let _ = gsr.status().await;
@@ -370,6 +386,8 @@ impl Recorder {
             clock,
             stopping: false,
             discard: false,
+            restart: false,
+            opts,
             windows,
             tracker: Some(tracker),
             studio,
@@ -448,10 +466,28 @@ impl Recorder {
                 let studio = s.studio;
                 let _ = cx.update(|cx| if studio { crate::studio_editor::open(file, cx) } else { cards::show(file, cx) });
             }
-            let _ = this.update(cx, |rec, _| rec.state = State::Idle);
+            // Let the session go (the cursor setting comes back) before
+            // starting over in the same area.
+            let again = s.restart.then(|| (s.target.clone(), s.opts.clone()));
             drop(s);
+            let _ = this.update(cx, |rec, cx| {
+                rec.state = State::Idle;
+                if let Some((target, opts)) = again {
+                    rec.start(Area::Fixed(target), opts, Duration::from_millis(250), cx);
+                }
+            });
         })
         .detach();
+    }
+
+    /// Throw the take away and record the same area again.
+    fn restart(&mut self, cx: &mut Context<Self>) {
+        let State::Recording(s) = &mut self.state else { return };
+        if s.stopping {
+            return;
+        }
+        s.restart = true;
+        self.stop(true, cx);
     }
 
     /// Recording controls, kept outside the captured area so they don't end up
@@ -579,7 +615,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     if let Some(began) = camera_began {
         crate::studio::save_camera(&file, began.elapsed().as_secs_f64(), webcam::Look::load());
     }
-    Ok(Started { keys: opts.keys, studio: opts.studio, cursor_off, gsr, file, webcam, target })
+    Ok(Started { keys: opts.keys, studio: opts.studio, cursor_off, gsr, file, webcam, target, opts: opts.clone() })
 }
 
 /// The camera bubble over the recorded area.
@@ -787,6 +823,14 @@ impl Render for RecBar {
                         })),
                 )
                 .child(button("stop", IconName::Stop, t("record.stop_save")).icon_color(Color::Error).on_click(with_rec(true, |rec, cx| rec.stop(false, cx))))
+                .child(
+                    IconButton::new("restart", IconName::Restart)
+                        .shape(IconButtonShape::Square)
+                        .size(ButtonSize::Large)
+                        .icon_size(IconSize::Small)
+                        .tooltip(|_: &mut Window, cx: &mut App| cx.new(|_| Tooltip::new(t("record.restart")).meta(t("record.restart_hint"))).into())
+                        .on_click(with_rec(true, |rec, cx| rec.restart(cx))),
+                )
                 .child(button("discard", IconName::Trash, t("record.stop_delete")).on_click(with_rec(true, |rec, cx| rec.stop(true, cx))))
                 .child(self.region.mark());
         kit::root(cx)
@@ -795,9 +839,10 @@ impl Render for RecBar {
     }
 }
 
-/// Omarchy's picker, so selection works like for screenshots.
+/// kadr's picker, like for screenshots, but the selection stays to be
+/// adjusted until Enter, like CleanShot's recording area.
 async fn pick_target(cx: &mut AsyncApp) -> Option<Target> {
-    let picked = crate::picker::pick(true, false, cx).await?;
+    let picked = crate::picker::pick_with(crate::picker::PickOpts { snap: true, color: false, adjust: true }, cx).await?;
     if picked.whole {
         return Some(Target::Monitor(picked.mon.name));
     }

@@ -12,13 +12,15 @@ pub struct Action {
     pub command: &'static str,
 }
 
-pub const ACTIONS: [Action; 9] = [
+pub const ACTIONS: [Action; 11] = [
     Action { title: "shortcuts.all_modes_on_one_bar", command: "kadr capture" },
     Action { title: "shortcuts.screenshot_area", command: "kadr shot region" },
+    Action { title: "shortcuts.screenshot_previous_area", command: "kadr shot previous" },
     Action { title: "shortcuts.screenshot_window_area", command: "kadr shot smart" },
     Action { title: "shortcuts.screenshot_screen", command: "kadr shot fullscreen" },
     Action { title: "common.scrolling_screenshot", command: "kadr shot scroll" },
     Action { title: "common.record_screen", command: "kadr record" },
+    Action { title: "shortcuts.record_previous_area", command: "kadr record previous" },
     Action { title: "common.recognize_text", command: "kadr text" },
     Action { title: "shortcuts.history", command: "kadr history" },
     Action { title: "common.settings", command: "kadr settings" },

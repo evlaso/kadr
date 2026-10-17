@@ -83,6 +83,8 @@ assets![
     "icons/kadr/timer.svg" => "../data/icons/editor/timer.svg",
     "icons/kadr/grip.svg" => "../data/icons/editor/grip.svg",
     "icons/kadr/area.svg" => "../data/icons/editor/area.svg",
+    "icons/kadr/previous_area.svg" => "../data/icons/editor/previous_area.svg",
+    "icons/kadr/restart.svg" => "../data/icons/editor/restart.svg",
     "icons/kadr/window.svg" => "../data/icons/editor/window.svg",
     "icons/kadr/scroll.svg" => "../data/icons/editor/scroll.svg",
     "icons/kadr/skip_back.svg" => "../data/icons/editor/skip_back.svg",
