@@ -64,6 +64,8 @@ const CHROME: f32 = 110. * kit::SCALE;
 /// Narrower than this, the toolbar folds its style controls into a menu and
 /// the footer drops its zoom.
 const COMPACT_TOOLBAR: f32 = 1000.;
+/// Wide enough for the "Hide sensitive" label next to its icon.
+const WIDE_TOOLBAR: f32 = 1600.;
 /// Width of the background panel.
 const PANEL: f32 = 300. * kit::SCALE;
 use crate::studio_editor::{CARD_PAD, CARD_RADIUS};
@@ -1557,7 +1559,7 @@ impl Editor {
                     })),
             );
         // Groups apart with space, not lines.
-        let tools = h_flex().gap(px(12.)).children(groups);
+        let tools = h_flex().gap(px(24.)).children(groups);
         // Solid or outline, for boxes and ellipses.
         let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
             || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
@@ -1628,18 +1630,36 @@ impl Editor {
                 .gap_0p5()
                 .child(option("hide-pixelate", Hide::Pixelate, "icons/kadr/pixelate.svg", t("editor.pixelate")))
                 .child(option("hide-blur", Hide::Blur, "icons/kadr/blur.svg", t("editor.blur")))
-                .child(
-                    Button::new("hide-sensitive", if self.redacting { t("editor.looking") } else { t("editor.hide_sensitive") })
-                        .style(ButtonStyle::Subtle)
-                        .size(ButtonSize::Large)
-                        .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                        .disabled(self.redacting || self.source.is_none())
-                        .tooltip(Tooltip::text(t("editor.hide_sensitive_tip")))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.hide_sensitive(cx);
-                            cx.notify();
-                        })),
-                )
+                .child({
+                    // Short of room the label goes, the tooltip still says it.
+                    let tip = Tooltip::text(t("editor.hide_sensitive_tip"));
+                    let button = if width >= WIDE_TOOLBAR {
+                        Button::new("hide-sensitive", if self.redacting { t("editor.looking") } else { t("editor.hide_sensitive") })
+                            .style(ButtonStyle::Subtle)
+                            .size(ButtonSize::Large)
+                            .start_icon(Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Small))
+                            .disabled(self.redacting || self.source.is_none())
+                            .tooltip(tip)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.hide_sensitive(cx);
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    } else {
+                        ButtonLike::new("hide-sensitive")
+                            .style(ButtonStyle::Subtle)
+                            .size(ButtonSize::Large)
+                            .disabled(self.redacting || self.source.is_none())
+                            .child(div().px_1().child(Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Small)))
+                            .tooltip(tip)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.hide_sensitive(cx);
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    };
+                    button
+                })
                 .child(Divider::vertical().h_5().mx_1())
         });
         // A narrow window folds the style controls into a "⋯" menu, like
