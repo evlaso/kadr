@@ -946,6 +946,10 @@ impl Editor {
         self.colors_open = false;
         self.more_open = false;
         self.panel = false;
+        // Like CleanShot, the frame starts round the whole picture.
+        if self.doc.crop.is_none() {
+            self.doc.crop = Some(((0., 0.), (self.px.0 as f32, self.px.1 as f32)));
+        }
         self.find_edges(cx);
     }
 
@@ -954,6 +958,11 @@ impl Editor {
         let Some(session) = self.cropping.take() else { return };
         self.size_field = None;
         self.crop_menu = None;
+        // A frame left round the whole picture crops nothing.
+        let whole = ((0., 0.), (self.px.0 as f32, self.px.1 as f32));
+        if self.doc.crop.is_some_and(|(a, b)| rect(a, b) == (whole.0.0, whole.0.1, whole.1.0, whole.1.1)) {
+            self.doc.crop = None;
+        }
         self.tool = if session.tool == Tool::Crop { Tool::Select } else { session.tool };
     }
 
