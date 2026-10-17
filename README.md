@@ -17,7 +17,7 @@ Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI C
   - pictures on top: drop a file into the editor or paste with Ctrl+V;
   - one size slider for every tool, zoomable canvas.
 - **Screen recording:**
-  - a bar by the selected area: microphone (with a level meter), system audio, camera, logged shortcuts, a countdown; the area is adjusted with handles before recording, and a take can be started over from the recording controls;
+  - a bar by the selected area: microphone (with a level meter), system audio, camera, logged shortcuts, a countdown; the bar appears as soon as the mouse is let go, and the area stays adjustable there (handles, dragging, arrow keys, a size from the size menu or typed), and a take can be started over from the recording controls;
   - a camera bubble you set up before recording: drag it (it snaps to corners and edges), resize it, round it;
   - studio mode: the system cursor stays out of the video, kadr draws its own, large and smooth; the camera is recorded separately.
 - **Studio** (video editor):

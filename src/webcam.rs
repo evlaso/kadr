@@ -400,7 +400,9 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
         .bg(gpui::black())
         .shadow(kit::shadow())
         .when(interactive, |d| {
-            d.cursor_grab()
+            // Presses here don't reach the recording area beneath.
+            d.occlude()
+                .cursor_grab()
                 .on_hover(move |on: &bool, _, cx| hover.update(cx, |s, cx| {
                     s.hovered = *on;
                     cx.notify();

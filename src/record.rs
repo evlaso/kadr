@@ -839,10 +839,10 @@ impl Render for RecBar {
     }
 }
 
-/// kadr's picker, like for screenshots, but the selection stays to be
-/// adjusted until Enter, like CleanShot's recording area.
+/// kadr's picker, like for screenshots: it closes on release, and the
+/// recording bar then lets the area be adjusted, like CleanShot's.
 async fn pick_target(cx: &mut AsyncApp) -> Option<Target> {
-    let picked = crate::picker::pick_with(crate::picker::PickOpts { snap: true, color: false, adjust: true }, cx).await?;
+    let picked = crate::picker::pick(true, false, cx).await?;
     if picked.whole {
         return Some(Target::Monitor(picked.mon.name));
     }

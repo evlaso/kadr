@@ -3,9 +3,9 @@
 //! magnifier with the pixel's colour and the selection's size. Shared by
 //! screenshots, recording, scrolling capture and text recognition.
 //!
-//! A screenshot is taken when the mouse is let go, like CleanShot's. For a
-//! recording (or once the keyboard has touched it) the selection stays: it
-//! has handles, moves when dragged from inside, nudges with the arrows, keeps
+//! The area is taken when the mouse is let go, like CleanShot's (a
+//! recording's is adjusted afterwards, on the recording bar). Once the
+//! keyboard has touched it the selection stays: it has handles, moves when dragged from inside, nudges with the arrows, keeps
 //! an aspect ratio (A), takes a typed size (digits) and is taken with Enter.
 //! P brings back the last area picked.
 
@@ -24,7 +24,7 @@ use crate::util::{self, Mon};
 use crate::i18n::t;
 
 /// Rectangle in the monitor's logical coordinates: x, y, w, h.
-type Rect = (f32, f32, f32, f32);
+pub(crate) type Rect = (f32, f32, f32, f32);
 
 /// What was picked.
 pub struct Picked {
@@ -55,27 +55,11 @@ impl Picked {
     }
 }
 
-/// How the picker behaves.
-#[derive(Clone, Copy, Default)]
-pub struct PickOpts {
-    /// Hovering highlights windows and a plain click takes one.
-    pub snap: bool,
-    /// A click on nothing copies the colour under the pointer.
-    pub color: bool,
-    /// The selection stays after the mouse is let go, to be adjusted and
-    /// taken with Enter (recording).
-    pub adjust: bool,
-}
-
 /// Freeze the monitor under the pointer and let the user pick an area on it.
 /// With `snap`, hovering highlights windows and a plain click takes one.
 /// A click on nothing takes the whole monitor, or with `color` copies the
 /// colour under the pointer instead. None when cancelled.
 pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> {
-    pick_with(PickOpts { snap, color, adjust: false }, cx).await
-}
-
-pub async fn pick_with(opts: PickOpts, cx: &mut AsyncApp) -> Option<Picked> {
     // One selection at a time: a second hotkey while picking does nothing.
     if PICKING.swap(true, Ordering::SeqCst) {
         return None;
@@ -83,7 +67,7 @@ pub async fn pick_with(opts: PickOpts, cx: &mut AsyncApp) -> Option<Picked> {
     let _picking = Picking;
     let mon = util::focused_monitor()?;
     let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
-    let windows = if opts.snap { windows_on(&mon) } else { Vec::new() };
+    let windows = if snap { windows_on(&mon) } else { Vec::new() };
     // The last area, if it was on this monitor.
     let previous = previous_area()
         .filter(|(name, _)| *name == mon.name)
@@ -115,9 +99,9 @@ pub async fn pick_with(opts: PickOpts, cx: &mut AsyncApp) -> Option<Picked> {
                     scale,
                     screen,
                     windows,
-                    snap: opts.snap,
-                    color: opts.color,
-                    adjust: opts.adjust,
+                    snap,
+                    color,
+                    adjust: false,
                     previous,
                     aspect: 0,
                     typing: None,
@@ -154,7 +138,7 @@ pub fn previous_area() -> Option<(String, (i32, i32, i32, i32))> {
     (area.2 > 0 && area.3 > 0).then(|| (v["monitor"].as_str().unwrap_or_default().to_owned(), area))
 }
 
-fn remember(monitor: &str, (x, y, w, h): (i32, i32, i32, i32)) {
+pub fn remember(monitor: &str, (x, y, w, h): (i32, i32, i32, i32)) {
     let _ = std::fs::create_dir_all(util::config_dir());
     let _ = std::fs::write(previous_file(), serde_json::json!({ "monitor": monitor, "area": [x, y, w, h] }).to_string());
 }
@@ -217,10 +201,10 @@ fn windows_on(mon: &Mon) -> Vec<Rect> {
 const ASPECTS: [(&str, Option<f32>); 5] = [("picker.free", None), ("1:1", Some(1.)), ("4:3", Some(4. / 3.)), ("16:9", Some(16. / 9.)), ("9:16", Some(9. / 16.))];
 
 /// The selection's edges a handle moves.
-const LEFT: u8 = 1;
-const RIGHT: u8 = 2;
-const TOP: u8 = 4;
-const BOTTOM: u8 = 8;
+pub(crate) const LEFT: u8 = 1;
+pub(crate) const RIGHT: u8 = 2;
+pub(crate) const TOP: u8 = 4;
+pub(crate) const BOTTOM: u8 = 8;
 
 /// How near a handle the pointer has to be to grab it.
 const HANDLE_REACH: f32 = 10.;
@@ -279,7 +263,7 @@ fn inside(r: Rect, (x, y): (f32, f32)) -> bool {
 }
 
 /// The eight handles: which edges each moves and where it sits.
-fn handles(r: Rect) -> [(u8, (f32, f32)); 8] {
+pub(crate) fn handles(r: Rect) -> [(u8, (f32, f32)); 8] {
     let (x0, y0, x1, y1, mx, my) = (r.0, r.1, r.0 + r.2, r.1 + r.3, r.0 + r.2 / 2., r.1 + r.3 / 2.);
     [
         (LEFT | TOP, (x0, y0)),
@@ -293,7 +277,7 @@ fn handles(r: Rect) -> [(u8, (f32, f32)); 8] {
     ]
 }
 
-fn resize_cursor(edges: u8) -> CursorStyle {
+pub(crate) fn resize_cursor(edges: u8) -> CursorStyle {
     match edges {
         LEFT | RIGHT => CursorStyle::ResizeLeftRight,
         TOP | BOTTOM => CursorStyle::ResizeUpDown,
