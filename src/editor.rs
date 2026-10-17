@@ -20,7 +20,7 @@ use gpui::{
     point, px, rgba, size,
 };
 use image::RgbaImage;
-use crate::ui::{ButtonLike, Divider, IconButtonShape, Switch, ToggleState, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, Divider, IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{fill, outline};
@@ -71,8 +71,15 @@ const COMPACT_TOOLBAR: f32 = 1000.;
 /// Wide enough for the "Hide sensitive" label next to its icon.
 const WIDE_TOOLBAR: f32 = 1600.;
 /// Width of the background panel.
-const PANEL: f32 = 300. * kit::SCALE;
-use crate::studio_editor::{CARD_PAD, CARD_RADIUS};
+const PANEL: f32 = 264.;
+/// The background sidebar's tiles: a swatch, its gap and ring, and the
+/// space between; five fit across. Plain colours are dots.
+const TILE: f32 = 36.;
+const TILE_RADIUS: f32 = 10.;
+const TILE_GAP: f32 = 4.;
+const DOT: f32 = 22.;
+/// Gradients shown before "Show more".
+const GRADIENT_ROWS: usize = 10;
 /// Slider ranges, as fractions of the picture's longer side.
 const MAX_PAD: f32 = 0.2;
 const MAX_ROUND: f32 = 0.05;
@@ -87,6 +94,8 @@ enum Backdrop {
     Wallpaper(PathBuf),
     /// Nothing behind the picture: a PNG with transparency around it.
     Transparent,
+    /// The screenshot itself, blurred, like CleanShot's.
+    Blurred,
 }
 
 /// The background the picture is put on, like CleanShot's background tool.
@@ -114,6 +123,7 @@ impl Frame {
         let backdrop = match &self.backdrop {
             Backdrop::None => serde_json::json!("none"),
             Backdrop::Transparent => serde_json::json!("transparent"),
+            Backdrop::Blurred => serde_json::json!("blurred"),
             Backdrop::Gradient(i) => serde_json::json!({ "gradient": i }),
             Backdrop::Wallpaper(path) => serde_json::json!({ "wallpaper": path.display().to_string() }),
         };
@@ -129,6 +139,8 @@ impl Frame {
             Backdrop::Wallpaper(path)
         } else if b.as_str() == Some("transparent") {
             Backdrop::Transparent
+        } else if b.as_str() == Some("blurred") {
+            Backdrop::Blurred
         } else {
             Backdrop::None
         };
@@ -577,6 +589,8 @@ enum Drag {
 enum Export {
     Copy,
     Save,
+    /// Save to a file picked in the system's dialog.
+    SaveAs(PathBuf),
 }
 
 /// What Cancel goes back to, and the tool to return to after cropping.
@@ -591,11 +605,13 @@ enum CropMenu {
     Aspect,
     Scale,
     Zoom,
+    /// Save's other ways: as a new file, as a project.
+    Save,
 }
 
 /// A dropdown choice: its text, whether it's the current one, and what
 /// picking it does.
-type MenuPick = Rc<dyn Fn(&mut Editor, &mut Context<Editor>)>;
+type MenuPick = Rc<dyn Fn(&mut Editor, &mut Window, &mut Context<Editor>)>;
 type MenuItem = (String, bool, MenuPick);
 
 /// Image sizes in the crop mode's menu.
@@ -677,6 +693,10 @@ pub struct Editor {
     side_scroll: gpui::ScrollHandle,
     side_grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     walls: Vec<(PathBuf, Arc<Image>)>,
+    /// The shown picture blurred, for the "Blurred" background's preview.
+    blurred: Option<Arc<Image>>,
+    /// All the gradients are shown, not just the first rows.
+    more_gradients: bool,
     /// The picture's largest on-screen size; `disp` shrinks from it to make
     /// room for the background.
     natural: (f32, f32),
@@ -763,6 +783,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                     editor.source = decoded;
                     // A reopened drawing may be on a turned picture.
                     editor.sync_view(cx);
+                    editor.refresh_blurred(cx);
                     // A reopened drawing's hidden areas.
                     for i in 0..editor.doc.shapes.len() {
                         editor.refresh_patch(i, cx);
@@ -826,6 +847,8 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 side_grab: Default::default(),
                 panel: false,
                 walls: Vec::new(),
+                blurred: None,
+                more_gradients: false,
                 natural: disp,
                 natural_taken: disp,
                 real_taken: natural,
@@ -914,6 +937,7 @@ impl Editor {
         self.image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
         self.source = Some(Arc::new(turned));
         self.shown = view;
+        self.refresh_blurred(cx);
         self.edges = None;
         if self.cropping.is_some() {
             self.find_edges(cx);
@@ -921,6 +945,27 @@ impl Editor {
         for i in 0..self.doc.shapes.len() {
             self.refresh_patch(i, cx);
         }
+    }
+
+    /// The "Blurred" background's preview, made off the UI thread.
+    fn refresh_blurred(&mut self, cx: &mut Context<Self>) {
+        let Some(src) = self.source.clone() else { return };
+        cx.spawn(async move |this, cx| {
+            let png = cx
+                .background_executor()
+                .spawn(async move {
+                    let h = (320. * src.height() as f32 / src.width().max(1) as f32).round().max(1.) as u32;
+                    let mut png = Vec::new();
+                    blurred_pixels(&src, 320, h).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+                    Some(png)
+                })
+                .await;
+            let _ = this.update(cx, |editor, cx| {
+                editor.blurred = png.map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png)));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Pick a tool; the crop tool is a mode of its own, and leaving it for
@@ -1724,7 +1769,11 @@ impl Editor {
         };
         let doc = self.doc.clone();
         let frame = self.frame.clone();
-        let path = self.path.clone();
+        let (path, copy) = match how {
+            Export::SaveAs(path) => (path, false),
+            Export::Save => (self.path.clone(), false),
+            Export::Copy => (self.path.clone(), true),
+        };
         let base = self.base.clone();
         let bundle = self.bundle.clone();
         window.remove_window();
@@ -1736,15 +1785,15 @@ impl Editor {
             let Some(png) = png else {
                 return util::notify(t("common.couldnt_save"), &path.display().to_string());
             };
-            match how {
-                Export::Save => {
+            match copy {
+                false => {
                     if let Err(e) = std::fs::write(&path, &png) {
                         return util::notify(t("common.couldnt_save"), &e.to_string());
                     }
                     util::copy_image(&path);
                     let _ = cx.update(|cx| cards::show(path.clone(), cx));
                 }
-                Export::Copy => {
+                true => {
                     let tmp = util::runtime_dir().join("kadr-annotated.png");
                     if std::fs::write(&tmp, &png).is_ok() {
                         util::copy_image(&tmp);
@@ -1754,10 +1803,7 @@ impl Editor {
             // Keep the drawing editable for the next `kadr edit` of the file.
             cx.background_executor()
                 .spawn(async move {
-                    let output = match how {
-                        Export::Save => png,
-                        Export::Copy => std::fs::read(&path).unwrap_or_default(),
-                    };
+                    let output = if copy { std::fs::read(&path).unwrap_or_default() } else { png };
                     if let Some(bundle) = bundle
                         && let Err(e) = project::save_bundle(&bundle, &output, &base, &doc, &frame)
                     {
@@ -1766,6 +1812,59 @@ impl Editor {
                     let _ = project::save(&path, &output, &base, &doc, &frame);
                 })
                 .await;
+        })
+        .detach();
+    }
+
+    /// Save to a file picked in the system's dialog, next to the screenshot
+    /// by default.
+    fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_text();
+        let dir = self.path.parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| crate::settings::Settings::load().screenshot_dir());
+        let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let picked = cx.prompt_for_new_path(&dir, name.as_deref());
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = picked.await else { return };
+            let _ = this.update_in(cx, |editor, window, cx| editor.export(Export::SaveAs(path), window, cx));
+        })
+        .detach();
+    }
+
+    /// Pin the annotated picture above the windows; the editor stays.
+    fn pin(&mut self, cx: &mut Context<Self>) {
+        self.finish_text();
+        let Some(src) = self.source.clone() else {
+            return util::notify("kadr", t("editor.image_still_loading_try_again"));
+        };
+        let (doc, frame) = (self.doc.clone(), self.frame.clone());
+        let name = format!("kadr-pin-{}-{}.png", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis()));
+        let out = util::runtime_dir().join(name);
+        let hold = kit::hold(cx);
+        cx.spawn(async move |_, cx| {
+            let _hold = hold;
+            let png = cx.background_executor().spawn(async move { compose(&src, &doc, &frame) }).await;
+            if let Some(png) = png
+                && std::fs::write(&out, png).is_ok()
+            {
+                let _ = cx.update(|cx| crate::pin::open(out, cx));
+            }
+        })
+        .detach();
+    }
+
+    /// A picture from a file, put on top like a dropped one.
+    fn pick_picture(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: true, prompt: Some(t("editor.choose_picture").into()) });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let _ = this.update(cx, |editor, cx| {
+                for path in paths {
+                    if let Some(picture) = std::fs::read(&path).ok().and_then(|bytes| Picture::decode(&bytes)) {
+                        editor.add_picture(picture);
+                    }
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -1824,18 +1923,25 @@ impl Editor {
             return self.render_crop_bar(width, cx);
         }
         let tool_button = |tool: Tool, cx: &mut Context<Self>| {
+            let on = self.tool == tool;
+            let icon = tool.icon().size(IconSize::Tool);
             ButtonLike::new(SharedString::from(format!("tool-{}", tool.key())))
-                .style(if self.tool == tool { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                .style(if on { ButtonStyle::Accent } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
-                .toggle_state(self.tool == tool)
-                .child(div().px_1().child(tool.icon().size(IconSize::Tool)))
+                .square()
+                .child(if on { icon.color(Color::Custom(gpui::white())) } else { icon })
                 .tooltip(Tooltip::text(format!("{} ({})", tool.label(), tool.key().to_uppercase())))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.set_tool(tool, cx);
                     cx.notify();
                 }))
         };
-        let groups: Vec<_> = Tool::GROUPS.iter().map(|group| h_flex().gap_0p5().children(group.iter().map(|&t| tool_button(t, cx)))).collect();
+        // The crop is a mode of its own, beside the background at the left.
+        let groups: Vec<_> = Tool::GROUPS
+            .iter()
+            .filter(|group| !group.contains(&Tool::Crop))
+            .map(|group| h_flex().gap_0p5().children(group.iter().map(|&t| tool_button(t, cx))))
+            .collect();
 
         let ring = cx.theme().colors().text;
         let current = self.current_color();
@@ -1912,22 +2018,29 @@ impl Editor {
             .child(div().w(px(18.)).flex().justify_center().child(div().size(px(dot_size)).rounded_full().bg(current)))
             .child(self.slider(Knob::Weight, self.weight, String::new(), cx))
             .tooltip(Tooltip::text(t("common.size")));
-        let background = ButtonLike::new("background")
-            .style(if self.panel { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-            .size(ButtonSize::Large)
-            .toggle_state(self.panel)
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .px_1()
-                    .child(Icon::from_path("icons/kadr/frame.svg").size(IconSize::Small).color(if self.frame.on() { Color::Accent } else { Color::Default }))
-                    .child(Label::new(t("common.background"))),
-            )
-            .tooltip(Tooltip::text(t("editor.background_padding_corners_shadow_format")))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.panel = !this.panel;
+        // The modes, like CleanShot's: crop, a picture on top, the background.
+        let mode = |id: &'static str, icon: Icon, on: bool, tip: &'static str| {
+            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().toggle_state(on).child(icon).tooltip(Tooltip::text(tip))
+        };
+        let modes = h_flex()
+            .gap_0p5()
+            .child(mode("mode-crop", Icon::from_path("icons/kadr/crop.svg").size(IconSize::Tool), false, t("editor.crop_tip")).on_click(cx.listener(|this, _, _, cx| {
+                this.set_tool(Tool::Crop, cx);
                 cx.notify();
-            }));
+            })))
+            .child(mode("mode-picture", Icon::from_path("icons/image_plus.svg").size(IconSize::Tool), false, t("editor.add_picture")).on_click(cx.listener(|this, _, _, cx| this.pick_picture(cx))))
+            .child(
+                mode(
+                    "mode-background",
+                    Icon::from_path("icons/kadr/frame.svg").size(IconSize::Tool).color(if self.frame.on() { Color::Accent } else { Color::Default }),
+                    self.panel,
+                    t("editor.background_padding_corners_shadow_format"),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.panel = !this.panel;
+                    cx.notify();
+                })),
+            );
 
         let history = h_flex()
             .gap_0p5()
@@ -1954,8 +2067,8 @@ impl Editor {
                         cx.notify();
                     })),
             );
-        // Groups apart with space, not lines.
-        let tools = h_flex().gap(px(24.)).children(groups);
+        // One pill, its groups apart with a little space.
+        let tools = h_flex().p(px(2.)).gap(px(6.)).rounded(px(11.)).rounded_smoothing(crate::ui::SMOOTHING).bg(cx.theme().colors().element_background).children(groups);
         // Solid or outline, for boxes and ellipses.
         let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
             || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
@@ -2077,11 +2190,10 @@ impl Editor {
                         .children(text_options)
                         .children(fill_toggle)
                         .child(palette)
-                        .child(weights)
-                        .child(background),
+                        .child(weights),
                 )
             });
-            h_flex().flex_1().justify_end().child(
+            h_flex().child(
                 div()
                     .relative()
                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -2104,25 +2216,33 @@ impl Editor {
                     .children(menu),
             )
         } else {
-            h_flex()
-                .flex_1()
-                .justify_end()
-                .gap_0p5()
-                .children(hide_options)
-                .children(text_options)
-                .children(fill_toggle)
-                .child(palette)
-                .child(weights)
-                .child(Divider::vertical().h_5().mx_1())
-                .child(background)
+            h_flex().gap_0p5().children(hide_options).children(text_options).children(fill_toggle).child(palette).child(weights)
         };
 
+        // The window's controls (or room for them), the modes and history at
+        // the left; the tools and their style in the middle.
+        let left = h_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .gap_1()
+            .children(kit::window_controls(false, cx))
+            .child(modes)
+            .child(div().w(px(6.)))
+            .child(history)
+            .child(kit::drags_window(div().flex_1().h_full()));
+        let right = h_flex().flex_1().min_w_0().h_full().justify_end().child(kit::drags_window(div().flex_1().h_full())).children(kit::window_controls(true, cx));
+        self.top_bar(width, cx).child(left).child(h_flex().flex_none().gap_3().child(tools).child(style)).child(right).into_any_element()
+    }
+
+    /// The bar along the window's top, for the editing and the crop modes.
+    fn top_bar(&self, width: f32, cx: &mut Context<Self>) -> Div {
         h_flex()
             .w(px(width))
-            .justify_between()
+            .h(px(42.))
             .gap_2()
             // An even inset keeps corner buttons concentric with the window.
-            .p_1()
+            .px_1()
             .bg(cx.theme().colors().title_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
@@ -2130,11 +2250,14 @@ impl Editor {
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
             .rounded_smoothing(crate::ui::SMOOTHING)
-            // The tools stay in the middle: the sides take equal room.
-            .child(history.flex_1())
-            .child(tools.flex_none())
-            .child(style)
-            .into_any_element()
+    }
+
+    /// The zoom as a dropdown: fit, or a real size.
+    fn zoom_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let percent = |k: f32| format!("{}%", (k * 100.).round());
+        let mut zooms: Vec<MenuItem> = vec![(t("editor.fit").into(), self.zoom == 1., Rc::new(|this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.zoom = 1.) as MenuPick)];
+        zooms.extend([0.5f32, 1., 2.].map(|k| (percent(k), false, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.zoom_to_real(k)) as MenuPick)));
+        self.crop_dropdown(CropMenu::Zoom, percent(self.disp.0 / self.real.0), t("editor.zoom"), zooms, true, cx)
     }
 
     /// CleanShot-like bottom bar.
@@ -2142,7 +2265,6 @@ impl Editor {
         if self.cropping.is_some() {
             return self.render_crop_footer(width, cx);
         }
-        let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         // Drag the annotated picture out, rendered at the moment the drag starts.
         let drag_state = self.source.clone().map(|src| (src, self.doc.clone(), self.frame.clone(), self.path.clone()));
         let drag_out = div()
@@ -2172,43 +2294,53 @@ impl Editor {
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(out, false)])))
             });
 
-        let zoom = h_flex()
+        let action = |id: &'static str, icon: Icon, tip: String| ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().child(icon).tooltip(Tooltip::text(tip));
+        let actions = h_flex()
+            .gap_0p5()
+            .child(action("ocr", Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Medium), t("editor.copy_text_tip").into()).on_click(cx.listener(|this, _, _, cx| this.read_text(cx))))
+            .child(action("pin", Icon::new(IconName::Pin).size(IconSize::Medium), t("editor.pin").into()).on_click(cx.listener(|this, _, _, cx| this.pin(cx))))
+            .child(action("save-project", Icon::from_path("icons/kadr/project.svg").size(IconSize::Medium), t("bundle.save_project_tip").into()).on_click(cx.listener(|this, _, _, cx| this.save_project(cx))))
             .child(
-                IconButton::new("zoom-out", IconName::Dash)
-                    .shape(IconButtonShape::Square)
-                    .size(ButtonSize::Large)
-                    .icon_size(IconSize::XSmall)
-                    .tooltip(Tooltip::text(t("editor.zoom_out_ctrl")))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.zoom_by(0.8);
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("zoom-fit", format!("{}%", (self.disp.0 / self.real.0 * 100.).round()))
-                    .style(ButtonStyle::Subtle)
-                    .size(ButtonSize::Large)
-                    .label_size(LabelSize::Small)
-                    .tooltip(Tooltip::text(tr!("editor.fit_window_ctrl_0", name, self.size_label())))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.zoom = 1.;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                IconButton::new("zoom-in", IconName::Plus)
-                    .shape(IconButtonShape::Square)
-                    .size(ButtonSize::Large)
-                    .icon_size(IconSize::XSmall)
-                    .tooltip(Tooltip::text(t("editor.zoom_in_ctrl_ctrl_wheel")))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.zoom_by(1.25);
-                        cx.notify();
-                    })),
+                action("copy", Icon::from_path("icons/copy.svg").size(IconSize::Medium), format!("{} (Ctrl+C)", t("common.copy")))
+                    .on_click(cx.listener(|this, _, window, cx| this.export(Export::Copy, window, cx))),
             );
 
-        // Cancel on the left, drag-out in the middle, zoom and the results
-        // on the right.
+        // Save, with its other ways in a menu off the chevron.
+        let open = self.crop_menu == Some(CropMenu::Save);
+        let saves: Vec<MenuItem> = vec![
+            (t("common.save").into(), false, Rc::new(|this: &mut Editor, window: &mut Window, cx: &mut Context<Editor>| this.export(Export::Save, window, cx)) as MenuPick),
+            (t("editor.save_as").into(), false, Rc::new(|this: &mut Editor, window: &mut Window, cx: &mut Context<Editor>| this.save_as(window, cx)) as MenuPick),
+            (t("editor.save_project").into(), false, Rc::new(|this: &mut Editor, _: &mut Window, cx: &mut Context<Editor>| this.save_project(cx)) as MenuPick),
+        ];
+        let menu = open.then(|| self.menu_popup(saves, true, true, cx));
+        let save = self
+            .menu_anchor(CropMenu::Save, cx)
+            .child(
+                h_flex()
+                    .gap(px(1.))
+                    .child(
+                        Button::new("save", t("common.save"))
+                            .style(ButtonStyle::Accent)
+                            .size(ButtonSize::Large)
+                            .when(width >= COMPACT_TOOLBAR, |b| b.key_binding(kit::keys("ctrl-s")))
+                            .on_click(cx.listener(|this, _, window, cx| this.export(Export::Save, window, cx))),
+                    )
+                    .child(
+                        ButtonLike::new("save-more")
+                            .style(ButtonStyle::Accent)
+                            .size(ButtonSize::Large)
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Custom(gpui::white())))
+                            .tooltip(Tooltip::text(t("editor.save_options")))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.crop_menu = if this.crop_menu == Some(CropMenu::Save) { None } else { Some(CropMenu::Save) };
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .children(menu);
+
+        // Zoom (and undoing a crop or a reopened drawing) at the left, the
+        // drag-out in the middle, the results at the right.
         h_flex()
             .w(px(width))
             .gap_2()
@@ -2221,14 +2353,9 @@ impl Editor {
             .child(
                 h_flex()
                     .flex_1()
+                    .min_w_0()
                     .gap_1()
-                    .child(
-                        Button::new("cancel", t("common.cancel"))
-                            .style(ButtonStyle::Subtle)
-                            .size(ButtonSize::Large)
-                            .key_binding(kit::keys("escape"))
-                            .on_click(|_, window, _| window.remove_window()),
-                    )
+                    .child(self.zoom_menu(cx))
                     .when(self.doc.crop.is_some(), |row| {
                         row.child(
                             Button::new("uncrop", t("editor.uncrop")).style(ButtonStyle::Subtle).size(ButtonSize::Large).color(Color::Muted).on_click(cx.listener(|this, _, _, cx| {
@@ -2254,58 +2381,20 @@ impl Editor {
                     }),
             )
             .child(drag_out.flex_none())
-            .child(
-                h_flex()
-                    .flex_1()
-                    .justify_end()
-                    .gap_1()
-                    .when(width >= COMPACT_TOOLBAR, |row| row.child(zoom))
-                    .child(
-                        Button::new("ocr", t("editor.copy_text"))
-                            .style(ButtonStyle::Subtle)
-                            .size(ButtonSize::Large)
-                            .start_icon(Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Small))
-                            .tooltip(Tooltip::text(t("editor.copy_text_tip")))
-                            .on_click(cx.listener(|this, _, _, cx| this.read_text(cx))),
-                    )
-                    .child(
-                        Button::new("save-project", t("bundle.project"))
-                            .style(ButtonStyle::Subtle)
-                            .size(ButtonSize::Large)
-                            .start_icon(Icon::from_path("icons/kadr/project.svg").size(IconSize::Small))
-                            .tooltip(Tooltip::text(t("bundle.save_project_tip")))
-                            .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
-                    )
-                    .child(div().w(px(8.)))
-                    .child(
-                        Button::new("copy", t("common.copy"))
-                            .style(ButtonStyle::Filled)
-                            .size(ButtonSize::Large)
-                            .key_binding(kit::keys("ctrl-c"))
-                            .on_click(cx.listener(|this, _, window, cx| this.export(Export::Copy, window, cx))),
-                    )
-                    .child(
-                        Button::new("save", t("common.save"))
-                            .style(ButtonStyle::Accent)
-                            .size(ButtonSize::Large)
-                            .key_binding(kit::keys("ctrl-s"))
-                            .on_click(cx.listener(|this, _, window, cx| this.export(Export::Save, window, cx))),
-                    ),
-            )
+            .child(h_flex().flex_1().min_w_0().justify_end().gap_2().child(actions).child(save))
             .into_any_element()
     }
 
-    /// A dropdown of the crop mode: a button with the current choice, and
-    /// the choices under it (or over it, in the footer).
-    fn crop_dropdown(&self, which: CropMenu, label: String, tip: &'static str, items: Vec<MenuItem>, up: bool, cx: &mut Context<Self>) -> AnyElement {
-        let open = self.crop_menu == Some(which);
+    /// A dropdown's open list: the choices, under its button (or over it,
+    /// in the footer), from its left edge or its right one.
+    fn menu_popup(&self, items: Vec<MenuItem>, up: bool, right: bool, cx: &mut Context<Self>) -> AnyElement {
         let hover = cx.theme().colors().element_hover;
         let rows: Vec<_> = items
             .into_iter()
             .enumerate()
             .map(|(i, (text, on, pick))| {
                 h_flex()
-                    .id(SharedString::from(format!("crop-menu-{i}")))
+                    .id(SharedString::from(format!("menu-row-{i}")))
                     .w_full()
                     .gap_1p5()
                     .px_2()
@@ -2315,21 +2404,47 @@ impl Editor {
                     .hover(move |d| d.bg(hover))
                     .child(div().w(px(14.)).children(on.then(|| Icon::new(IconName::Check).size(IconSize::XSmall))))
                     .child(Label::new(text).size(LabelSize::Small))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        pick(this, cx);
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.crop_menu = None;
+                        pick(this, window, cx);
                         cx.notify();
                     }))
             })
             .collect();
-        div()
-            .relative()
-            .on_mouse_down_out(cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                if this.crop_menu == Some(which) && !this.crop_menu_bounds.get().contains(&e.position) {
-                    this.crop_menu = None;
-                    cx.notify();
-                }
-            }))
+        gpui::deferred(
+            v_flex()
+                .id("dropdown-menu")
+                .occlude()
+                .absolute()
+                .when(up, |d| d.bottom(px(38.)))
+                .when(!up, |d| d.top(px(38.)))
+                .when(right, |d| d.right_0())
+                .when(!right, |d| d.left_0())
+                .min_w(px(150.))
+                .p_1()
+                .elevation_3(cx)
+                .children(rows)
+                .child(crate::ui::track_bounds(&self.crop_menu_bounds)),
+        )
+        .into_any_element()
+    }
+
+    /// Closes `which` on a click outside it and its list.
+    fn menu_anchor(&self, which: CropMenu, cx: &mut Context<Self>) -> Div {
+        div().relative().on_mouse_down_out(cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+            if this.crop_menu == Some(which) && !this.crop_menu_bounds.get().contains(&e.position) {
+                this.crop_menu = None;
+                cx.notify();
+            }
+        }))
+    }
+
+    /// A dropdown: a button with the current choice, and the choices under
+    /// it (or over it, in the footer).
+    fn crop_dropdown(&self, which: CropMenu, label: String, tip: &'static str, items: Vec<MenuItem>, up: bool, cx: &mut Context<Self>) -> AnyElement {
+        let open = self.crop_menu == Some(which);
+        let menu = open.then(|| self.menu_popup(items, up, false, cx));
+        self.menu_anchor(which, cx)
             .child(
                 ButtonLike::new(SharedString::from(format!("crop-dropdown-{}", which as u8)))
                     .style(if open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
@@ -2342,22 +2457,7 @@ impl Editor {
                         cx.notify();
                     })),
             )
-            .when(open, |d| {
-                d.child(gpui::deferred(
-                    v_flex()
-                        .id("crop-menu")
-                        .occlude()
-                        .absolute()
-                        .when(up, |d| d.bottom(px(38.)))
-                        .when(!up, |d| d.top(px(38.)))
-                        .left_0()
-                        .min_w(px(150.))
-                        .p_1()
-                        .elevation_3(cx)
-                        .children(rows)
-                        .child(crate::ui::track_bounds(&self.crop_menu_bounds)),
-                ))
-            })
+            .children(menu)
             .into_any_element()
     }
 
@@ -2381,7 +2481,7 @@ impl Editor {
             }));
         let aspects: Vec<MenuItem> = crop::ASPECTS
             .iter()
-            .map(|&a| (a.label(), self.aspect == a, Rc::new(move |this: &mut Editor, _: &mut Context<Editor>| this.pick_aspect(a)) as MenuPick))
+            .map(|&a| (a.label(), self.aspect == a, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.pick_aspect(a)) as MenuPick))
             .collect();
         let aspect = self.crop_dropdown(CropMenu::Aspect, self.aspect.label(), t("editor.aspect_ratio"), aspects, false, cx);
 
@@ -2436,7 +2536,7 @@ impl Editor {
         let sized = |k: f32| format!("{}×{} px", (ow * k).round().max(1.), (oh * k).round().max(1.));
         let scales: Vec<MenuItem> = SCALES
             .iter()
-            .map(|&k| (format!("{}% · {}", (k * 100.).round(), sized(k)), (self.doc.scale - k).abs() < 1e-3, Rc::new(move |this: &mut Editor, _: &mut Context<Editor>| this.pick_scale(k)) as MenuPick))
+            .map(|&k| (format!("{}% · {}", (k * 100.).round(), sized(k)), (self.doc.scale - k).abs() < 1e-3, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.pick_scale(k)) as MenuPick))
             .collect();
         let scale = self.crop_dropdown(CropMenu::Scale, sized(self.doc.scale), t("editor.image_size_tip"), scales, false, cx);
 
@@ -2446,6 +2546,7 @@ impl Editor {
             .flex_1()
             .min_w_0()
             .gap_1()
+            .children(kit::window_controls(false, cx))
             .child(leave)
             .child(aspect)
             .when(!tight, |row| row.child(field("crop-width", false, cw, cx)).child(swap).child(field("crop-height", true, ch, cx)))
@@ -2477,20 +2578,9 @@ impl Editor {
                         this.apply_crop();
                         cx.notify();
                     })),
-            );
-        h_flex()
-            .w(px(width))
-            .justify_between()
-            .gap_2()
-            .p_1()
-            .bg(cx.theme().colors().title_bar_background)
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .when(!self.windowed, |d| d.rounded_t(px(kit::WINDOW_RADIUS - 1.)))
-            .rounded_smoothing(crate::ui::SMOOTHING)
-            .child(left)
-            .child(right)
-            .into_any_element()
+            )
+            .children(kit::window_controls(true, cx));
+        self.top_bar(width, cx).justify_between().child(left).child(right).into_any_element()
     }
 
     /// The crop mode's bottom bar: zoom, snapping, and going back to the
@@ -2498,10 +2588,7 @@ impl Editor {
     fn render_crop_footer(&self, width: f32, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
         let (accent, edge) = (colors.text_accent, colors.border);
-        let percent = |k: f32| format!("{}%", (k * 100.).round());
-        let mut zooms: Vec<MenuItem> = vec![(t("editor.fit").into(), self.zoom == 1., Rc::new(|this: &mut Editor, _: &mut Context<Editor>| this.zoom = 1.) as MenuPick)];
-        zooms.extend([0.5f32, 1., 2.].map(|k| (percent(k), false, Rc::new(move |this: &mut Editor, _: &mut Context<Editor>| this.zoom_to_real(k)) as MenuPick)));
-        let zoom = self.crop_dropdown(CropMenu::Zoom, percent(self.disp.0 / self.real.0), t("editor.zoom"), zooms, true, cx);
+        let zoom = self.zoom_menu(cx);
 
         let on = self.snap;
         let check = div()
@@ -2597,70 +2684,122 @@ impl Editor {
             .into_any_element()
     }
 
-    /// The background tool, like CleanShot's: what's behind the picture, its
-    /// margins, corners, shadow and the output's shape.
+    /// The background tool as a sidebar, like CleanShot's: presets, then
+    /// what's behind the picture (nothing, gradients, wallpapers, the
+    /// screenshot blurred, plain colours), then its margins, corners, shadow
+    /// and the output's shape.
     fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        let (card_bg, track_bg, thumb_bg, ring, edge, panel_bg, divider) =
-            (colors.element_background, colors.element_hover, colors.element_selected, colors.text, colors.border_variant, colors.editor_background, colors.border_variant);
-        // The same language as the studio's sidebar: soft cards, a label and
-        // its control on one line, segmented choices.
-        let card = || v_flex().w_full().p(px(CARD_PAD)).gap_3().rounded(px(CARD_RADIUS)).rounded_smoothing(crate::ui::SMOOTHING).bg(card_bg);
-        let row = |text: &'static str, control: AnyElement| {
-            h_flex().w_full().gap_2().child(div().w(px(70.)).flex_none().child(Label::new(text).size(LabelSize::Small).color(Color::Muted))).child(div().flex_1().min_w_0().child(control))
+        let colors = cx.theme().colors().clone();
+        let (accent, edge, field_bg, track_bg, thumb_bg) = (colors.text_accent, colors.border_variant, colors.element_background, colors.element_hover, colors.element_selected);
+        let clear = gpui::transparent_black();
+        let heading = |text: &'static str| Label::new(text).size(LabelSize::Small).color(Color::Muted);
+        // A square tile with an accent ring when chosen; the ring, a gap and
+        // the swatch keep their corners concentric.
+        let tile = |id: SharedString, on: bool| {
+            div().id(id).flex_none().p(px(2.)).rounded(px(TILE_RADIUS)).border_2().border_color(if on { accent } else { clear }).cursor_pointer()
         };
-        let swatch = |id: SharedString, selected: bool| {
-            div().id(id).flex().items_center().justify_center().rounded(px(9.)).border_2().border_color(if selected { ring } else { gpui::transparent_black() }).cursor_pointer()
+        let swatch = || div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).overflow_hidden().border_1().border_color(edge);
+        let grid = || h_flex().w_full().flex_wrap().gap(px(TILE_GAP));
+        let pick = |backdrop: Backdrop| {
+            cx.listener(move |this: &mut Editor, _: &gpui::ClickEvent, _: &mut Window, cx: &mut Context<Editor>| {
+                this.frame.backdrop = backdrop.clone();
+                cx.notify();
+            })
         };
 
-        // Transparent, then the colours and gradients.
-        let mut tiles = vec![swatch("transparent".into(), self.frame.backdrop == Backdrop::Transparent)
-            .size(px(32.))
-            .child(checker_tile(24., 6.))
-            .tooltip(Tooltip::text(t("editor.transparent")))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.frame.backdrop = Backdrop::Transparent;
-                cx.notify();
-            }))
-            .into_any_element()];
-        tiles.extend(self.backdrops().into_iter().enumerate().map(|(i, (c0, c1))| {
-            swatch(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
-                .size(px(32.))
-                .child(div().size(px(24.)).rounded(px(6.)).border_1().border_color(edge).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.frame.backdrop = Backdrop::Gradient(i);
+        let none_on = self.frame.backdrop == Backdrop::None;
+        let none = div()
+            .id("backdrop-none")
+            .w_full()
+            .h(px(34.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(9.))
+            .rounded_smoothing(crate::ui::SMOOTHING)
+            .bg(field_bg)
+            .border_2()
+            .border_color(if none_on { accent } else { clear })
+            .cursor_pointer()
+            .hover(|d| d.bg(track_bg))
+            .child(Label::new(t("editor.none")).size(LabelSize::Small))
+            .on_click(pick(Backdrop::None));
+
+        let all = self.backdrops();
+        let gradients: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 != all[i].1).collect();
+        let plains: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 == all[i].1).collect();
+        let more = gradients.len() > GRADIENT_ROWS;
+        let shown = if self.more_gradients { gradients.len() } else { gradients.len().min(GRADIENT_ROWS) };
+        let gradient_tiles = gradients[..shown].iter().map(|&i| {
+            let (c0, c1) = all[i];
+            tile(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
+                .child(swatch().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                .on_click(pick(Backdrop::Gradient(i)))
+        })
+        .collect::<Vec<_>>();
+        let toggle_more = more.then(|| {
+            Button::new("more-gradients", t(if self.more_gradients { "editor.show_less" } else { "editor.show_more" }))
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.more_gradients = !this.more_gradients;
                     cx.notify();
                 }))
-                .into_any_element()
-        }));
+        });
+
         // Wallpapers, and a tile for one's own picture.
         let mut walls: Vec<AnyElement> = self
             .walls
             .iter()
             .enumerate()
             .map(|(i, (path, thumb))| {
-                let path = path.clone();
-                swatch(SharedString::from(format!("wall-{i}")), self.frame.backdrop == Backdrop::Wallpaper(path.clone()))
-                    .w(px(52.))
-                    .h(px(36.))
-                    .child(img(thumb.clone()).w(px(44.)).h(px(28.)).rounded(px(5.)).object_fit(ObjectFit::Cover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.frame.backdrop = Backdrop::Wallpaper(path.clone());
-                        cx.notify();
-                    }))
+                tile(SharedString::from(format!("wall-{i}")), self.frame.backdrop == Backdrop::Wallpaper(path.clone()))
+                    .child(swatch().child(img(thumb.clone()).size_full().object_fit(ObjectFit::Cover)))
+                    .on_click(pick(Backdrop::Wallpaper(path.clone())))
                     .into_any_element()
             })
             .collect();
         let own = matches!(&self.frame.backdrop, Backdrop::Wallpaper(p) if !self.walls.iter().any(|(w, _)| w == p));
         walls.push(
-            swatch("own-wallpaper".into(), own)
-                .w(px(52.))
-                .h(px(36.))
-                .child(div().w(px(44.)).h(px(28.)).rounded(px(5.)).border_1().border_color(edge).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
+            tile("own-wallpaper".into(), own)
+                .child(
+                    div()
+                        .size(px(TILE))
+                        .rounded(px(TILE_RADIUS - 4.))
+                        .border_1()
+                        .border_dashed()
+                        .border_color(colors.border)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)),
+                )
                 .tooltip(Tooltip::text(t("common.your_own_image")))
                 .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
                 .into_any_element(),
         );
+
+        let blurred = tile("backdrop-blurred".into(), self.frame.backdrop == Backdrop::Blurred)
+            .child(swatch().bg(field_bg).children(self.blurred.clone().map(|b| img(b).size_full().object_fit(ObjectFit::Cover))))
+            .tooltip(Tooltip::text(t("editor.blurred_tip")))
+            .on_click(pick(Backdrop::Blurred));
+
+        // Plain colours as dots, transparency first.
+        let dot = |id: SharedString, on: bool| {
+            div().id(id).flex_none().p(px(2.)).rounded_full().border_2().border_color(if on { accent } else { clear }).cursor_pointer()
+        };
+        let mut plain: Vec<AnyElement> = vec![dot("transparent".into(), self.frame.backdrop == Backdrop::Transparent)
+            .child(div().size(px(DOT)).rounded_full().overflow_hidden().border_1().border_color(edge).child(checker_tile(DOT, 5.)))
+            .tooltip(Tooltip::text(t("editor.transparent")))
+            .on_click(pick(Backdrop::Transparent))
+            .into_any_element()];
+        plain.extend(plains.iter().map(|&i| {
+            dot(SharedString::from(format!("plain-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
+                .child(div().size(px(DOT)).rounded_full().border_1().border_color(edge).bg(all[i].0))
+                .on_click(pick(Backdrop::Gradient(i)))
+                .into_any_element()
+        }));
 
         // The output's shape, as a segmented control.
         let aspects: Vec<AnyElement> = ASPECTS
@@ -2671,7 +2810,7 @@ impl Editor {
                 div()
                     .id(SharedString::from(format!("aspect-{i}")))
                     .flex_grow(1.)
-                    .px_2()
+                    .px_1()
                     .h(px(24.))
                     .flex()
                     .items_center()
@@ -2691,66 +2830,54 @@ impl Editor {
                     .into_any_element()
             })
             .collect();
+        let slider = |text: &'static str, control: AnyElement| v_flex().w_full().gap_1().child(heading(text)).child(control);
         let padding = self.slider(Knob::Padding, self.frame.padding / MAX_PAD, format!("{}%", (self.frame.padding * 100.).round()), cx);
         let radius = self.slider(Knob::Radius, self.frame.radius / MAX_ROUND, format!("{}", (self.frame.radius / MAX_ROUND * 100.).round()), cx);
         let shadow = self.slider(Knob::Shadow, self.frame.shadow, format!("{}%", (self.frame.shadow * 100.).round()), cx);
-        let size = self.source.as_ref().map(|_| {
+        let size = self.source.as_ref().filter(|_| self.frame.on()).map(|_| {
             let (l, t, r, b) = self.extent();
             let ((ow, oh), _) = self.frame.layout(r - l, b - t);
-            format!("{ow}×{oh}")
+            tr!("editor.output_size", ow, oh)
         });
 
+        let section = || v_flex().w_full().gap_1p5();
         let content = v_flex()
             .id("background-panel")
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.side_scroll)
-            .gap_2()
+            .gap_4()
             .p_3()
-            .child(crate::presets::render(&self.presets, &self.frame.to_json(), cx))
+            .child(v_flex().w_full().gap_2().child(crate::presets::render(&self.presets, &self.frame.to_json(), cx)).child(none))
+            .child(section().child(h_flex().w_full().justify_between().child(heading(t("editor.gradients"))).children(toggle_more)).child(grid().children(gradient_tiles)))
+            .child(section().child(heading(t("editor.wallpapers"))).child(grid().children(walls)))
+            .child(section().child(heading(t("editor.blurred"))).child(grid().child(blurred)))
+            .child(section().child(heading(t("editor.plain_color"))).child(h_flex().w_full().flex_wrap().gap(px(2.)).children(plain)))
             .child(
-                card().child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .child(Label::new(t("common.background")).size(LabelSize::Small))
-                        .child(Switch::new("frame-on", ToggleState::from(self.frame.on())).on_click(cx.listener(|this, state: &ToggleState, _, cx| {
-                            this.frame.backdrop = if *state == ToggleState::Selected { Backdrop::Gradient(0) } else { Backdrop::None };
-                            cx.notify();
-                        }))),
-                ),
+                v_flex()
+                    .w_full()
+                    .gap_3()
+                    .pt_1()
+                    .child(slider(t("studio.row_padding"), padding))
+                    .child(slider(t("studio.row_corners"), radius))
+                    .child(slider(t("studio.row_shadow"), shadow)),
             )
             .child(
-                card()
-                    .child(h_flex().w_full().gap(px(2.)).children(aspects))
-                    .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(tiles))
-                    .child(h_flex().flex_wrap().gap(px(2.)).ml(px(-4.)).children(walls))
-                    .child(row(t("studio.row_padding"), padding))
-                    .child(row(t("studio.row_corners"), radius))
-                    .child(row(t("studio.row_shadow"), shadow))
-                    .children(size.filter(|_| self.frame.on()).map(|s| {
-                        h_flex().justify_end().child(Label::new(s).size(LabelSize::XSmall).color(Color::Muted))
-                    })),
+                section()
+                    .child(heading(t("editor.aspect_ratio")))
+                    .child(h_flex().w_full().p(px(2.)).gap(px(2.)).rounded(px(8.)).bg(field_bg).children(aspects))
+                    .children(size.map(|s| Label::new(s).size(LabelSize::XSmall).color(Color::Muted))),
             );
         div()
             .relative()
             .flex_none()
             .w(px(PANEL))
             .h(px(height))
-            .bg(panel_bg)
-            .border_l_1()
-            .border_color(divider)
+            .bg(colors.panel_background)
+            .border_r_1()
+            .border_color(edge)
             .child(content)
             .child(crate::ui::scrollbar(&self.side_scroll, &self.side_grab, cx))
-    }
-
-    /// Output size after cropping, as shown in the footer.
-    fn size_label(&self) -> String {
-        let (l, t, r, b) = self.extent();
-        match self.doc.crop {
-            Some(_) => tr!("editor.cropped", r - l, b - t),
-            None => format!("{}×{}", r - l, b - t),
-        }
     }
 
     /// Picture with blur patches, vector shapes, text and counters, then the
@@ -2970,6 +3097,10 @@ impl Editor {
                 Some(div().absolute().inset_0().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))).into_any_element())
             }
             Backdrop::Wallpaper(path) => Some(img(path.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Cover).into_any_element()),
+            Backdrop::Blurred => Some(match &self.blurred {
+                Some(blurred) => img(blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Cover).into_any_element(),
+                None => div().absolute().inset_0().bg(cx.theme().colors().element_background).into_any_element(),
+            }),
         };
         let backdrop = backdrop.map(|fill| {
             div()
@@ -3047,6 +3178,8 @@ impl Render for Editor {
             .flex_1()
             .min_h_0()
             .child(measure)
+            // The background sidebar at the left, like CleanShot's.
+            .when(self.panel, |row| row.child(self.render_panel(self.stage_h.get(), cx)))
             .child(
                 div()
                     .id("stage")
@@ -3070,7 +3203,7 @@ impl Render for Editor {
                     // zoomed canvas is bigger, so all of it can be scrolled to.
                     .child(div().flex_none().min_w(relative(1.)).min_h(relative(1.)).flex().p(px(24.)).child(div().m_auto().child(self.render_canvas(cx)))),
             )
-            .when(self.panel, |row| row.child(self.render_panel(self.stage_h.get(), cx)));
+            ;
         let border = cx.theme().colors().border;
         let bars = |el: Div| el.child(self.render_toolbar(width, cx)).child(stage).child(self.render_footer(width, cx));
         let content = if self.windowed {
@@ -3296,7 +3429,10 @@ fn save_frame_presets(presets: &[(String, serde_json::Value)]) {
 
 /// The backdrop picture at `w`×`h`: the wallpaper cropped to fill, or the
 /// gradient.
-fn backdrop_pixels(backdrop: &Backdrop, w: u32, h: u32) -> RgbaImage {
+fn backdrop_pixels(backdrop: &Backdrop, picture: &RgbaImage, w: u32, h: u32) -> RgbaImage {
+    if *backdrop == Backdrop::Blurred {
+        return blurred_pixels(picture, w, h);
+    }
     if let Backdrop::Wallpaper(path) = backdrop
         && let Ok(img) = image::open(path)
     {
@@ -3315,6 +3451,21 @@ fn backdrop_pixels(backdrop: &Backdrop, w: u32, h: u32) -> RgbaImage {
     })
 }
 
+/// `picture` blurred into a `w`×`h` fill: shrunk a lot, softened, grown
+/// back, which is quick even for big outputs.
+fn blurred_pixels(picture: &RgbaImage, w: u32, h: u32) -> RgbaImage {
+    use image::imageops::{FilterType, blur, resize};
+    let (w, h) = (w.max(1), h.max(1));
+    let k = (w.max(h) as f32 / 48.).max(1.);
+    let (sw, sh) = (((w as f32 / k).round() as u32).max(2), ((h as f32 / k).round() as u32).max(2));
+    let small = image::DynamicImage::ImageRgba8(picture.clone()).resize_to_fill(sw, sh, FilterType::Triangle).to_rgba8();
+    let mut out = resize(&blur(&small, 1.6), w, h, FilterType::CatmullRom);
+    for p in out.pixels_mut() {
+        p.0[3] = 255;
+    }
+    out
+}
+
 /// The picture with rounded corners and a soft shadow on its background,
 /// like the studio render does for recordings.
 /// `img` on the backdrop: the `inner` part (the picture, in `img` pixels)
@@ -3328,7 +3479,7 @@ fn framed(img: &RgbaImage, drawn: &RgbaImage, inner: (f32, f32, f32, f32), frame
     let blur = (w.max(h) * frame.padding * 0.45).max(w.max(h) * 0.02);
     let strength = frame.shadow.clamp(0., 1.);
     let clear = frame.backdrop == Backdrop::Transparent;
-    let mut out = if clear { RgbaImage::new(ow as u32, oh as u32) } else { backdrop_pixels(&frame.backdrop, ow as u32, oh as u32) };
+    let mut out = if clear { RgbaImage::new(ow as u32, oh as u32) } else { backdrop_pixels(&frame.backdrop, img, ow as u32, oh as u32) };
     // Signed distance to a rounded rectangle centered at (cx, cy).
     let sdf = |x: f32, y: f32, cx: f32, cy: f32| {
         let qx = (x - cx).abs() - (w / 2. - radius);

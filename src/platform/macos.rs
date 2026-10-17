@@ -154,3 +154,13 @@ pub fn install_desktop() -> std::io::Result<()> {
 }
 
 pub fn ensure_desktop() {}
+
+/// The traffic lights over the top bar's left end.
+pub fn window_controls() -> super::WindowControls {
+    super::WindowControls::Left(76.)
+}
+
+/// A transparent title bar over kadr's own top bar, or none at all.
+pub fn titlebar() -> Option<gpui::TitlebarOptions> {
+    Some(gpui::TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(14.))) })
+}

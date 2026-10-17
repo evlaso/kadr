@@ -143,6 +143,22 @@ pub fn monitors() -> Vec<Mon> {
 }
 
 /// Let the desktop show through the window's unpainted parts.
+/// Tiling managers (Hyprland, sway, i3, niri, river) want no buttons; other
+/// desktops get kadr's own close button, since kadr's windows have no title
+/// bar there.
+pub fn window_controls() -> super::WindowControls {
+    let env = |k: &str| std::env::var_os(k).is_some();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase();
+    let tiling = env("HYPRLAND_INSTANCE_SIGNATURE") || env("SWAYSOCK") || env("I3SOCK") || env("NIRI_SOCKET")
+        || ["hyprland", "sway", "i3", "niri", "river"].iter().any(|t| desktop.contains(t));
+    if tiling { super::WindowControls::None } else { super::WindowControls::Own }
+}
+
+/// kadr draws its own window chrome.
+pub fn titlebar() -> Option<gpui::TitlebarOptions> {
+    None
+}
+
 pub fn transparent(options: &mut WindowOptions) {
     options.linux_window_background = gpui::LinuxWindowBackground::Transparent;
 }

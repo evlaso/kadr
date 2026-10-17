@@ -145,3 +145,13 @@ pub fn install_desktop() -> std::io::Result<()> {
 }
 
 pub fn ensure_desktop() {}
+
+/// Three caption buttons at the right, 46 px each, as Windows has them.
+pub fn window_controls() -> super::WindowControls {
+    super::WindowControls::Right(138.)
+}
+
+/// A transparent title bar over kadr's own top bar, or none at all.
+pub fn titlebar() -> Option<gpui::TitlebarOptions> {
+    None
+}

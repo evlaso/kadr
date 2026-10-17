@@ -11,7 +11,8 @@ Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI C
 - **Screenshot editor:**
   - arrows (bendable) and lines, rectangles and ellipses (outlined or filled), pencil, highlighter;
   - text (plain, on a plate or outlined), step numbers, pixelation, spotlight, crop;
-  - a background (gradient, solid colour, wallpaper or transparent), padding, rounding, shadow and an output format;
+  - a background in a sidebar, like CleanShot's (gradient, solid colour, wallpaper, the screenshot blurred or transparent), padding, rounding, shadow and an output format;
+  - Save, Save as…, a `.kadr` project, Copy, pin on top and text recognition from the bottom bar;
   - presets: keep a look with “+”, pick, rename or delete it from a dropdown (the studio has the same);
   - pictures on top: drop a file into the editor or paste with Ctrl+V;
   - one size slider for every tool, zoomable canvas.

@@ -29,6 +29,23 @@ pub enum Signal {
     Pause,
 }
 
+/// Where a window's own controls live, so its top bar can leave room.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub enum WindowControls {
+    /// The system draws them at the left (macOS's traffic lights); keep this
+    /// much room.
+    Left(f32),
+    /// Minimise, maximise and close at the right, this wide (Windows); kadr
+    /// draws them over the system's hit areas.
+    Right(f32),
+    /// A floating desktop that leaves kadr's windows bare: kadr draws a close
+    /// button at the right.
+    Own,
+    /// A tiling window manager: no controls, Esc and the manager's keys close.
+    None,
+}
+
 /// "Not on this system yet", shown once as a notification.
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 pub fn unsupported(what: &str) {

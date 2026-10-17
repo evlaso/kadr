@@ -97,5 +97,22 @@ pub fn backdrops() -> Vec<(Hsla, Hsla)> {
     let c = annotation_colors();
     let mut all = vec![(c[4], c[5]), (c[1], c[0]), (c[3], c[4]), (gpui::hsla(0., 0., 0.22, 1.), gpui::hsla(0., 0., 0.08, 1.))];
     all.extend([0xFFFFFF, 0x000000, 0xE5E5EA, 0x8E8E93, 0x007AFF, 0x34C759, 0xFFCC00, 0xFF3B30, 0xAF52DE].map(|hex| (from_hex(hex), from_hex(hex))));
+    // More gradients, after the plain colours so saved indices keep meaning
+    // what they did.
+    all.extend(
+        [
+            (0xFF5F6D, 0xFFC371),
+            (0x7F7FD5, 0x91EAE4),
+            (0x654EA3, 0xEAAFC8),
+            (0x00C6FF, 0x0072FF),
+            (0xF7797D, 0xC471ED),
+            (0x11998E, 0x38EF7D),
+            (0xFC466B, 0x3F5EFB),
+            (0x0F2027, 0x2C5364),
+            (0xEECDA3, 0xEF629F),
+            (0x8E2DE2, 0x4A00E0),
+        ]
+        .map(|(a, b)| (from_hex(a), from_hex(b))),
+    );
     all
 }

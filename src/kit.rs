@@ -37,7 +37,7 @@ macro_rules! assets {
     };
 }
 assets![
-    // Zed's icon set, under the paths `ui::IconName` resolves to.
+    // General icons (Lucide), under the paths `ui::IconName` resolves to.
     "icons/close.svg" => "../data/icons/ui/close.svg",
     "icons/image.svg" => "../data/icons/ui/image.svg",
     "icons/pencil.svg" => "../data/icons/ui/pencil.svg",
@@ -66,6 +66,9 @@ assets![
     "icons/keyboard.svg" => "../data/icons/ui/keyboard.svg",
     "icons/circle.svg" => "../data/icons/ui/circle.svg",
     "icons/settings.svg" => "../data/icons/ui/settings.svg",
+    "icons/copy.svg" => "../data/icons/ui/copy.svg",
+    "icons/image_plus.svg" => "../data/icons/ui/image_plus.svg",
+    "icons/window_max.svg" => "../data/icons/ui/window_max.svg",
     // Editor tools Zed's set lacks, drawn in the same style.
     "icons/kadr/rect.svg" => "../data/icons/editor/rect.svg",
     "icons/kadr/ellipse.svg" => "../data/icons/editor/ellipse.svg",
@@ -156,6 +159,74 @@ pub fn keys(source: &str) -> KeyBinding {
 /// Root of every overlay: Zed's UI font and text color.
 pub fn root(cx: &App) -> Div {
     div().size_full().font_family(UI_FONT).text_size(LabelSize::Default.rems()).text_color(cx.theme().colors().text)
+}
+
+/// One end of a window's top bar: room for the system's controls at the
+/// left (macOS), or kadr's own at the right (Windows; a close button on
+/// floating Linux desktops). Nothing on tiling window managers.
+pub fn window_controls(right: bool, cx: &App) -> Option<AnyElement> {
+    use crate::platform::WindowControls as W;
+    use crate::ui::{ButtonSize, Icon, IconButton, IconName, Tooltip};
+    use gpui::WindowControlArea;
+    match (crate::platform::window_controls(), right) {
+        (W::Left(w), false) => Some(div().flex_none().w(px(w)).into_any_element()),
+        (W::Own, true) => Some(
+            IconButton::new("window-close", IconName::Close)
+                .size(ButtonSize::Large)
+                .tooltip(Tooltip::text(t("common.close")))
+                .on_click(|_, window, _| window.remove_window())
+                .into_any_element(),
+        ),
+        (W::Right(w), true) => {
+            let colors = cx.theme().colors();
+            let (hover, danger) = (colors.ghost_element_hover, cx.theme().status().error);
+            // Over the system's hit areas, so snapping and the rest still work.
+            let button = |id: &'static str, icon: Icon, area: WindowControlArea, close: bool| {
+                div()
+                    .id(id)
+                    .w(px(w / 3.))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .window_control_area(area)
+                    .when(close, |d| d.hover(move |s| s.bg(danger)))
+                    .when(!close, |d| d.hover(move |s| s.bg(hover)))
+                    .child(icon)
+                    .on_click(move |_, window, _| match area {
+                        WindowControlArea::Min => window.minimize_window(),
+                        WindowControlArea::Max => window.zoom_window(),
+                        _ => window.remove_window(),
+                    })
+            };
+            Some(
+                div()
+                    .flex()
+                    .flex_none()
+                    .self_stretch()
+                    .child(button("window-min", Icon::new(IconName::Dash).size(crate::ui::IconSize::Small), WindowControlArea::Min, false))
+                    .child(button("window-max", Icon::from_path("icons/window_max.svg").size(crate::ui::IconSize::XSmall), WindowControlArea::Max, false))
+                    .child(button("window-close", Icon::new(IconName::Close).size(crate::ui::IconSize::Small), WindowControlArea::Close, true))
+                    .into_any_element(),
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Empty stretches of a top bar move the window, where it has no title bar
+/// of its own; tiling managers place windows themselves.
+pub fn drags_window(el: Div) -> Div {
+    if crate::platform::window_controls() == crate::platform::WindowControls::None {
+        return el;
+    }
+    el.on_mouse_down(gpui::MouseButton::Left, |e, window, _| {
+        if e.click_count == 2 {
+            window.zoom_window();
+        } else {
+            window.start_window_move();
+        }
+    })
 }
 
 /// Element bounds gathered during prepaint become the window's input region,
@@ -270,7 +341,7 @@ pub fn open_window<V: Render + 'static>(
 ) -> Option<WindowHandle<V>> {
     let display = mon.and_then(|m| m.display(cx));
     let options = WindowOptions {
-        titlebar: None,
+        titlebar: crate::platform::titlebar(),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display, gpui::size(px(size.0), px(size.1)), cx))),
         app_id: Some(app_id.into()),
         display_id: display,
