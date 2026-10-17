@@ -960,8 +960,77 @@ fn smoothstep(a: f64, b: f64, x: f64) -> f64 {
 }
 
 pub fn output_path(video: &Path, format: Format) -> PathBuf {
-    let stem = video.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    video.with_file_name(format!("{stem}-studio.{}", if format == Format::Gif { "gif" } else { "mp4" }))
+    // From a `.kadr`: next to the project file, not in kadr's cache.
+    let named = crate::bundle::origin_of(video).unwrap_or_else(|| video.to_path_buf());
+    let stem = named.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    named.with_file_name(format!("{stem}-studio.{}", if format == Format::Gif { "gif" } else { "mp4" }))
+}
+
+/// The pieces of a recording's edit kept beside kadr's cache, by the name
+/// they have inside a `.kadr`.
+fn sidecars(video: &Path) -> [(&'static str, PathBuf); 4] {
+    let with = |suffix: &str| {
+        let mut p = track::path_for(video).into_os_string();
+        p.push(suffix);
+        PathBuf::from(p)
+    };
+    [("track.json", track::path_for(video)), ("studio.json", with(".studio")), ("camera.mkv", with(".camera.mkv")), ("camera.json", with(".camera.json"))]
+}
+
+/// Pack a recording with its whole edit (`project`, saved first) into the
+/// `.kadr` at `target`. Slow for long videos: run it off the UI thread.
+pub fn save_bundle(video: &Path, project: &Project, target: &Path) -> std::io::Result<()> {
+    project.save(video);
+    let ext = |p: &Path| p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "bin".into());
+    let mut files = vec![(format!("video.{}", ext(video)), video.to_path_buf())];
+    files.extend(sidecars(video).into_iter().filter(|(_, p)| p.exists()).map(|(n, p)| (n.to_owned(), p)));
+    if let Some(wall) = project.wallpaper.as_ref().filter(|w| w.exists()) {
+        files.push((format!("wallpaper.{}", ext(wall)), wall.clone()));
+    }
+    crate::bundle::pack(target, crate::bundle::Kind::Studio, &files)
+}
+
+/// The recording in an unpacked `.kadr` (from `kadr_file`), its edit put
+/// where the studio looks for it.
+pub fn from_bundle(kadr_file: &Path, unpacked: &crate::bundle::Unpacked) -> std::io::Result<PathBuf> {
+    let dir = &unpacked.dir;
+    let files: Vec<PathBuf> = std::fs::read_dir(dir)?.flatten().map(|e| e.path()).collect();
+    let named = |prefix: &str| files.iter().find(|p| p.file_stem().is_some_and(|s| s == prefix)).cloned();
+    // A name of its own (the folder is per project file), since the studio
+    // keys its files by the video's name.
+    let stem = kadr_file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let tag = dir.file_name().map(|n| n.to_string_lossy().chars().take(8).collect::<String>()).unwrap_or_default();
+    let ext_of = |p: &Path| p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".into());
+    if !unpacked.fresh
+        && let Some(video) = files.iter().find(|p| p.file_stem().is_some_and(|s| s.to_string_lossy() == format!("{stem}-{tag}")))
+    {
+        return Ok(video.clone());
+    }
+    let source = named("video").ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "no video inside"))?;
+    let video = dir.join(format!("{stem}-{tag}.{}", ext_of(&source)));
+    std::fs::rename(&source, &video)?;
+    let wallpaper = named("wallpaper");
+    for (name, to) in sidecars(&video) {
+        let from = dir.join(name);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if !from.exists() {
+            let _ = std::fs::remove_file(&to);
+            continue;
+        }
+        if name == "studio.json" {
+            // The wallpaper travels inside; point the edit at that copy.
+            let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&from)?).unwrap_or_default();
+            if let (Some(wall), Some(o)) = (&wallpaper, v.as_object_mut()) {
+                o.insert("wallpaper".into(), json!(wall.display().to_string()));
+            }
+            std::fs::write(&to, v.to_string())?;
+        } else if std::fs::rename(&from, &to).is_err() {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(video)
 }
 
 fn preview_path(video: &Path) -> PathBuf {
@@ -1479,6 +1548,45 @@ mod overlays {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_recording_and_its_edit_round_trip_through_a_kadr_file() {
+        let tmp = std::env::temp_dir().join(format!("kadr-studio-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        // SAFETY: only this test reads XDG_CACHE_HOME in this module's tests.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", tmp.join("cache")) };
+        let video = tmp.join(format!("rec-{}.mp4", std::process::id()));
+        std::fs::write(&video, vec![5u8; 3000]).unwrap();
+        let wall = tmp.join("wall.png");
+        std::fs::write(&wall, b"wall").unwrap();
+        let track = track::path_for(&video);
+        std::fs::create_dir_all(track.parent().unwrap()).unwrap();
+        std::fs::write(&track, br#"{"clicks":[]}"#).unwrap();
+        std::fs::write(camera_file(&video), b"cam").unwrap();
+        let mut project = Project::load(&video, &Track::default(), &Probe { w: 100., h: 100., fps: "60/1".into(), duration: 10., audio: false });
+        project.wallpaper = Some(wall.clone());
+        project.radius = 0.25;
+        let target = tmp.join("Demo.kadr");
+        save_bundle(&video, &project, &target).unwrap();
+
+        let u = crate::bundle::unpack_into(&target, &tmp.join("opened")).unwrap();
+        assert_eq!(u.kind, crate::bundle::Kind::Studio);
+        let back = from_bundle(&target, &u).unwrap();
+        assert_ne!(back, video);
+        assert_eq!(std::fs::read(&back).unwrap(), vec![5u8; 3000]);
+        assert_eq!(std::fs::read(track::path_for(&back)).unwrap(), br#"{"clicks":[]}"#);
+        assert_eq!(std::fs::read(camera_file(&back)).unwrap(), b"cam");
+        let restored = Project::load(&back, &Track::default(), &Probe { w: 100., h: 100., fps: "60/1".into(), duration: 10., audio: false });
+        assert_eq!(restored.radius, 0.25);
+        let wall_back = restored.wallpaper.expect("the wallpaper came along");
+        assert!(wall_back.starts_with(&u.dir) && std::fs::read(wall_back).unwrap() == b"wall");
+        assert_eq!(output_path(&back, Format::Mp4), target.canonicalize().unwrap().with_file_name("Demo-studio.mp4"));
+        // Opened again unchanged: the same video, nothing unpacked twice.
+        let again = crate::bundle::unpack_into(&target, &tmp.join("opened")).unwrap();
+        assert_eq!(from_bundle(&target, &again).unwrap(), back);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     fn probe() -> Probe {
         Probe { w: 1920., h: 1080., fps: "30".into(), duration: 10., audio: false }

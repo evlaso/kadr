@@ -31,7 +31,8 @@ Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI C
   - text recognition (English and Russian);
   - history of captures: search, filters, drag out;
   - settings with search, including hotkeys, theme, language, storage use and automatic clean-up of old captures;
-  - a tray icon.
+  - a tray icon;
+  - project files: “Project” in the editor or the studio saves a `.kadr` file with the whole edit (the original picture or recording, every shape, zoom and cut), to open again later or on another computer. kadr registers the file type on its first run (`kadr install-desktop` does it by hand), so `.kadr` files open in kadr from the file manager.
 
 ## Install
 
@@ -64,12 +65,14 @@ kadr shot scroll                                   scrolling screenshot
 kadr record                                        recording bar (again to stop)
 kadr record region|fullscreen [--studio] …         start recording at once
 kadr record previous                               recording bar for the last area
-kadr edit <image>                                  screenshot editor
-kadr studio <video>                                studio
+kadr edit <image|project.kadr>                     screenshot editor
+kadr studio <video|project.kadr>                   studio
+kadr open <project.kadr>                           a project, in the editor or the studio
 kadr text [image]                                  recognize text
 kadr history                                       history
 kadr settings                                      settings
 kadr tray                                          tray icon
+kadr install-desktop                               .kadr file type, icon and menu entry
 ```
 
 `kadr --help` lists all of them.

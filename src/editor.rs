@@ -573,6 +573,9 @@ pub struct Editor {
     base: Arc<Vec<u8>>,
     /// Opened with the drawing from an earlier save.
     restored: bool,
+    /// The `.kadr` this session keeps the drawing in: the one it was opened
+    /// from, or the one "Save project" wrote. Saving writes it again.
+    bundle: Option<PathBuf>,
     /// Pointer shape over a handle or a shape, while no button is held.
     hover: Option<CursorStyle>,
     text_style: TextStyle,
@@ -611,14 +614,25 @@ pub struct Editor {
     focus: FocusHandle,
 }
 
-/// Open a screenshot for annotation.
+/// Open a screenshot for annotation, or a `.kadr` project made here.
 pub fn open(path: PathBuf, cx: &mut App) {
-    let Ok(bytes) = std::fs::read(&path) else {
-        return util::notify(t("common.couldnt_open_image"), &path.display().to_string());
+    // A project file: its drawing on its picture; saving writes the result
+    // next to it and the project again.
+    let (path, bytes, mut restored, bundle) = if crate::bundle::is_bundle(&path) {
+        let unpacked = crate::bundle::unpack(&path).ok().filter(|u| u.kind == crate::bundle::Kind::Shot);
+        let Some(restored) = unpacked.and_then(|u| project::load_unpacked(&u.dir)) else {
+            return util::notify(t("bundle.couldnt_open"), &path.display().to_string());
+        };
+        (path.with_extension("png"), Vec::new(), Some(restored), Some(path))
+    } else {
+        let Ok(bytes) = std::fs::read(&path) else {
+            return util::notify(t("common.couldnt_open_image"), &path.display().to_string());
+        };
+        // Saved from the editor before: the drawing comes back, on the
+        // picture it was drawn on.
+        let restored = project::load(&path, &bytes);
+        (path, bytes, restored, None)
     };
-    // Saved from the editor before: the drawing comes back, on the picture
-    // it was drawn on.
-    let mut restored = project::load(&path, &bytes);
     let bytes = restored.as_mut().map(|r| std::mem::take(&mut r.base)).unwrap_or(bytes);
     let base = Arc::new(bytes.clone());
     let Some((w, h)) = cards::png_size(&bytes) else {
@@ -701,6 +715,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 redacting: false,
                 base,
                 restored: reopened,
+                bundle,
                 hover: None,
                 text_style: TextStyle::Plain,
                 zoom: 1.,
@@ -1366,6 +1381,7 @@ impl Editor {
         let frame = self.frame.clone();
         let path = self.path.clone();
         let base = self.base.clone();
+        let bundle = self.bundle.clone();
         window.remove_window();
         let hold = kit::hold(cx);
         cx.spawn(async move |_, cx| {
@@ -1397,9 +1413,42 @@ impl Editor {
                         Export::Save => png,
                         Export::Copy => std::fs::read(&path).unwrap_or_default(),
                     };
+                    if let Some(bundle) = bundle
+                        && let Err(e) = project::save_bundle(&bundle, &output, &base, &doc, &frame)
+                    {
+                        util::notify(t("bundle.couldnt_save"), &e.to_string());
+                    }
                     let _ = project::save(&path, &output, &base, &doc, &frame);
                 })
                 .await;
+        })
+        .detach();
+    }
+
+    /// Keep the whole edit as a `.kadr` file, in the screenshots folder (or
+    /// the one this session came from); the editor stays open.
+    fn save_project(&mut self, cx: &mut Context<Self>) {
+        self.finish_text();
+        let Some(src) = self.source.clone() else {
+            return util::notify("kadr", t("editor.image_still_loading_try_again"));
+        };
+        let target = self.bundle.clone().unwrap_or_else(|| crate::bundle::target_for(&self.path, &crate::settings::Settings::load().screenshot_dir()));
+        self.bundle = Some(target.clone());
+        let (doc, frame, base) = (self.doc.clone(), self.frame.clone(), self.base.clone());
+        let hold = kit::hold(cx);
+        cx.spawn(async move |_, cx| {
+            let _hold = hold;
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let png = compose(&src, &doc, &frame).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
+                    project::save_bundle(&target, &png, &base, &doc, &frame).map(|_| target)
+                })
+                .await;
+            match result {
+                Ok(target) => util::notify(t("bundle.project_saved"), &target.display().to_string()),
+                Err(e) => util::notify(t("bundle.couldnt_save"), &e.to_string()),
+            }
         })
         .detach();
     }
@@ -1867,6 +1916,14 @@ impl Editor {
                             .start_icon(Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Small))
                             .tooltip(Tooltip::text(t("editor.copy_text_tip")))
                             .on_click(cx.listener(|this, _, _, cx| this.read_text(cx))),
+                    )
+                    .child(
+                        Button::new("save-project", t("bundle.project"))
+                            .style(ButtonStyle::Subtle)
+                            .size(ButtonSize::Large)
+                            .start_icon(Icon::from_path("icons/kadr/project.svg").size(IconSize::Small))
+                            .tooltip(Tooltip::text(t("bundle.save_project_tip")))
+                            .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
                     )
                     .child(div().w(px(8.)))
                     .child(

@@ -606,3 +606,30 @@ mod cursor_theme {
         }
     }
 }
+
+/// `.kadr` files as their own type with an icon, opening in kadr: the
+/// shared-mime-info package, a desktop entry and icons under
+/// ~/.local/share, then the caches rebuilt and kadr made their default.
+pub fn install_desktop() -> std::io::Result<()> {
+    let data = xdg("XDG_DATA_HOME", ".local/share");
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kadr"));
+    crate::bundle::install_desktop(&data, &exe)?;
+    let run = |args: &[&str]| {
+        let _ = std::process::Command::new(args[0]).args(&args[1..]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    };
+    run(&["update-mime-database", &data.join("mime").to_string_lossy()]);
+    run(&["update-desktop-database", &data.join("applications").to_string_lossy()]);
+    run(&["gtk-update-icon-cache", "-q", "-t", &data.join("icons/hicolor").to_string_lossy()]);
+    run(&["xdg-mime", "default", "kadr.desktop", crate::bundle::MIME_TYPE]);
+    Ok(())
+}
+
+/// The desktop integration, once: when kadr runs and it isn't there yet.
+pub fn ensure_desktop() {
+    let data = xdg("XDG_DATA_HOME", ".local/share");
+    if !data.join("mime/packages/kadr.xml").exists() {
+        std::thread::spawn(|| {
+            let _ = install_desktop();
+        });
+    }
+}

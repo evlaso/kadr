@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5A9BD3"/>
+      <stop offset="1" stop-color="#3B74AB"/>
+    </linearGradient>
+  </defs>
+  <path d="M30 8h50l26 26v80a8 8 0 0 1-8 8H30a8 8 0 0 1-8-8V16a8 8 0 0 1 8-8z" fill="#F4F4F2" stroke="#000" stroke-opacity=".12" stroke-width="1.5"/>
+  <path d="M80 8v18a8 8 0 0 0 8 8h18z" fill="#DCDBD6"/>
+  <rect x="38" y="40" width="52" height="52" rx="13" fill="url(#bg)"/>
+  <path fill="#fff" fill-rule="evenodd" d="M48 50h12v4.5h-7.5V62H48zm20 0h12v12h-4.5v-7.5H68zM48 70h4.5v7.5H60V82H48zm27.5 0H80v12H68v-4.5h7.5z"/>
+  <text x="64" y="110" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="600" letter-spacing="1.5" fill="#A8A7A1">KADR</text>
+</svg>
