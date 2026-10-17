@@ -2965,7 +2965,7 @@ fn on_color(c: Hsla) -> Hsla {
 
 pub(crate) fn font() -> &'static FontRef<'static> {
     static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
-    FONT.get_or_init(|| FontRef::try_from_slice(include_bytes!("../data/zed/fonts/IBMPlexSans-SemiBold.ttf")).expect("bundled font"))
+    FONT.get_or_init(|| FontRef::try_from_slice(include_bytes!("../data/fonts/IBMPlexSans-SemiBold.ttf")).expect("bundled font"))
 }
 
 /// ab_glyph scales by the font's whole height (ascender to descender), GPUI
