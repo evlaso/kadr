@@ -135,3 +135,8 @@ impl CursorShapes {
 pub fn theme_cursor(_shape: &str, _arrow_height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
     None
 }
+
+/// Windows' corner radius in logical pixels, for window shots.
+pub fn window_rounding() -> f32 {
+    10.
+}

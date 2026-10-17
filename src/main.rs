@@ -44,7 +44,8 @@ const USAGE: &str = "kadr — screenshots and screen recording with a quick-acce
 
 Usage:
   kadr capture                                   every mode on one bar
-  kadr shot [smart|region|windows|fullscreen|timer]  take a screenshot (smart by default)
+  kadr shot [smart|region|windows|fullscreen|timer|previous]
+                                                 take a screenshot (smart by default; previous: the last area)
   kadr shot scroll [\"X,Y WxH\"]                  scrolling screenshot (again to finish)
   kadr open <file>                               show the thumbnail for an existing image
   kadr pin <file>                                pin an image on top of windows
@@ -53,6 +54,7 @@ Usage:
   kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
                                                  start recording at once (again to stop)
   kadr record area \"X,Y WxH\"                   the recording bar for a given area
+  kadr record previous                           the recording bar for the last area picked
   kadr record stop                               stop recording
   kadr studio <video> [--render]                 studio: zooms, background, clicks and keys (--render exports at once)
   kadr edit <image>                              editor: arrows, text, highlighter, blur…
@@ -64,7 +66,7 @@ Usage:
   kadr text [image]                              recognize text (in an area or an image) and copy it
 ";
 
-const MODES: [&str; 5] = ["smart", "region", "windows", "fullscreen", "timer"];
+const MODES: [&str; 6] = ["smart", "region", "windows", "fullscreen", "timer", "previous"];
 
 enum Command {
     Shot(String),
@@ -75,6 +77,7 @@ enum Command {
     Record(Option<String>, Option<record::Opts>),
     RecordStop,
     RecordArea(String),
+    RecordPrevious,
     Studio(PathBuf, bool),
     Edit(PathBuf),
     Text(Option<PathBuf>),
@@ -139,6 +142,7 @@ impl Command {
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),
+                Some("previous") => Ok(Command::RecordPrevious),
                 Some("area") => args.get(2).cloned().map(Command::RecordArea).ok_or_else(|| t("cli.give_area_x_y_wxh").to_string()),
                 Some(mode @ ("region" | "fullscreen")) => {
                     let mut opts = record::Opts::default();
@@ -173,6 +177,7 @@ impl Command {
             Command::Record(mode, opts) => record::command(mode, opts, cx),
             Command::RecordStop => record::command_stop(cx),
             Command::RecordArea(area) => record::command_area(&area, cx),
+            Command::RecordPrevious => record::command_previous(cx),
             Command::Studio(path, false) => studio_editor::open(path, cx),
             Command::Studio(path, true) => studio::render(path, cx),
             Command::Edit(path) => editor::open(path, cx),

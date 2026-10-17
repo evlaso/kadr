@@ -207,6 +207,15 @@ fn set_hardware_cursors(value: i64) {
     let _ = std::process::Command::new("hyprctl").args(["eval", &script]).stdout(std::process::Stdio::null()).status();
 }
 
+/// Windows' corner radius in logical pixels (Hyprland's rounding), for
+/// window shots.
+pub fn window_rounding() -> f32 {
+    hypr("j/getoption decoration:rounding")
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|v| v["int"].as_f64())
+        .unwrap_or(0.) as f32
+}
+
 /// The monitor as it is now, in physical pixels (grim, without the cursor).
 pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     let out = std::process::Command::new("grim").args(["-o", &mon.name, "-t", "ppm", "-"]).output().ok()?;

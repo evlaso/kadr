@@ -230,6 +230,7 @@ pub enum IconName {
     Stop,
     Trash,
     Undo,
+    Restart,
 }
 
 impl IconName {
@@ -262,6 +263,7 @@ impl IconName {
             IconName::Stop => "icons/stop.svg",
             IconName::Trash => "icons/trash.svg",
             IconName::Undo => "icons/undo.svg",
+            IconName::Restart => "icons/kadr/restart.svg",
         }
     }
 }

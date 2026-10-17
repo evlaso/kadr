@@ -7,7 +7,7 @@ Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI C
 ## What it does
 
 - **One bar for everything** (`kadr capture`): area, fullscreen, window, scrolling, self-timer, text recognition and recording behind a single hotkey.
-- **Screenshots** of an area, a window or the screen, and long scrolling ones (`kadr shot scroll`: pick an area and scroll, kadr stitches it). After a capture a thumbnail shows in the corner: copy, edit, pin on top, recognize text, drag the file into a chat. A click without selecting copies the color under the pointer.
+- **Screenshots** of an area, a window or the screen, and long scrolling ones (`kadr shot scroll`: pick an area and scroll, kadr stitches it). After a capture a thumbnail shows in the corner: copy, edit, pin on top, recognize text, drag the file into a chat. A click without selecting copies the color under the pointer. A window comes with rounded corners and a soft shadow on a transparent background. The selection can be kept and adjusted: handles, arrow keys, an aspect ratio (A) or a typed size; P or `kadr shot previous` takes the last area again.
 - **Screenshot editor:**
   - arrows (bendable) and lines, rectangles and ellipses (outlined or filled), pencil, highlighter;
   - text (plain, on a plate or outlined), step numbers, pixelation, spotlight, crop;
@@ -16,7 +16,7 @@ Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI C
   - pictures on top: drop a file into the editor or paste with Ctrl+V;
   - one size slider for every tool, zoomable canvas.
 - **Screen recording:**
-  - a bar by the selected area: microphone (with a level meter), system audio, camera, logged shortcuts, a countdown;
+  - a bar by the selected area: microphone (with a level meter), system audio, camera, logged shortcuts, a countdown; the area is adjusted with handles before recording, and a take can be started over from the recording controls;
   - a camera bubble you set up before recording: drag it (it snaps to corners and edges), resize it, round it;
   - studio mode: the system cursor stays out of the video, kadr draws its own, large and smooth; the camera is recorded separately.
 - **Studio** (video editor):
@@ -58,10 +58,12 @@ o.launch_on_start("kadr tray")
 
 ```
 kadr capture                                       every mode on one bar
-kadr shot [smart|region|windows|fullscreen|timer]  screenshot
+kadr shot [smart|region|windows|fullscreen|timer|previous]
+                                                   screenshot (previous: the last area again)
 kadr shot scroll                                   scrolling screenshot
 kadr record                                        recording bar (again to stop)
 kadr record region|fullscreen [--studio] …         start recording at once
+kadr record previous                               recording bar for the last area
 kadr edit <image>                                  screenshot editor
 kadr studio <video>                                studio
 kadr text [image]                                  recognize text

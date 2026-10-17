@@ -1,5 +1,5 @@
 //! `kadr capture`: every mode on one bar, like CleanShot's all-in-one, so
-//! one hotkey is enough. Pick with a click, the arrows and Enter, or 1–7;
+//! one hotkey is enough. Pick with a click, the arrows and Enter, or 1–8;
 //! Esc or a click outside closes it.
 
 use gpui::{App, Context, FocusHandle, Global, KeyDownEvent, MouseButton, Window, WindowHandle, div, px};
@@ -16,8 +16,9 @@ struct Mode {
     args: &'static [&'static str],
 }
 
-const MODES: [Mode; 7] = [
+const MODES: [Mode; 8] = [
     Mode { icon: "icons/kadr/area.svg", label: "capture_bar.area", args: &["shot", "region"] },
+    Mode { icon: "icons/kadr/previous_area.svg", label: "capture_bar.previous", args: &["shot", "previous"] },
     Mode { icon: "icons/screen.svg", label: "common.fullscreen", args: &["shot", "fullscreen"] },
     Mode { icon: "icons/kadr/window.svg", label: "common.window", args: &["shot", "windows"] },
     Mode { icon: "icons/kadr/scroll.svg", label: "capture_bar.scrolling", args: &["shot", "scroll"] },
@@ -27,7 +28,7 @@ const MODES: [Mode; 7] = [
 ];
 
 /// Groups end after these: screenshots, then text, then recording.
-const BREAKS: [usize; 2] = [4, 5];
+const BREAKS: [usize; 2] = [5, 6];
 
 #[derive(Default)]
 struct Open(Option<WindowHandle<Launcher>>);
@@ -110,7 +111,7 @@ impl Render for Launcher {
                 bar = bar.child(Divider::vertical().h(px(44.)).mx_1());
             }
         }
-        let hint = Label::new(t("capture_bar.1_7_enter_esc_close")).size(LabelSize::Small).color(Color::Muted);
+        let hint = Label::new(t("capture_bar.keys_enter_esc_close")).size(LabelSize::Small).color(Color::Muted);
         kit::root(cx)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
