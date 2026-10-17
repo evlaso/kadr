@@ -639,7 +639,6 @@ impl Render for Picker {
         let editable = self.editable();
         let hovered = if selection.is_none() && self.snap && self.drag.is_none() { self.hovered_window() } else { None };
         let lit = selection.or(hovered);
-        let ghost = self.previous.filter(|_| selection.is_none() && self.drag.is_none());
         // Guides and the magnifier while aiming, not while adjusting.
         let aiming = !editable || matches!(self.drag, Some(Drag::Resize { .. }));
         let cursor = self.cursor;
@@ -662,10 +661,6 @@ impl Render for Picker {
                         window.paint_quad(outline(at(x - 1., y - 1., w + 2., h + 2.), color, gpui::BorderStyle::Solid));
                     }
                     None => window.paint_quad(fill(at(0., 0., sw, sh), shade)),
-                }
-                // The last area, to bring back with P.
-                if let Some((x, y, w, h)) = ghost {
-                    window.paint_quad(outline(at(x, y, w, h), gpui::hsla(0., 0., 1., 0.55), gpui::BorderStyle::Dashed));
                 }
                 if let (Some(sel), true) = (selection, editable) {
                     for (_, (hx, hy)) in handles(sel) {
