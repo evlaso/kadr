@@ -22,7 +22,8 @@ pub struct Size {
 pub struct Usage {
     pub screenshots: Size,
     pub recordings: Size,
-    /// Click logs, studio projects and previews kadr keeps for recordings.
+    /// Click logs, studio projects and previews kadr keeps for recordings,
+    /// and what keeps edited screenshots editable.
     pub cache: Size,
 }
 
@@ -77,6 +78,7 @@ pub fn usage(settings: &Settings) -> Usage {
         }
     }
     walk(&util::cache_dir(), &mut u.cache);
+    walk(&crate::editor::projects_dir(), &mut u.cache);
     u
 }
 
@@ -96,6 +98,10 @@ pub fn clean(settings: &Settings, days: u32) -> Size {
             }
         }
     }
+    // Editable drawings of screenshots that were deleted.
+    let (bytes, files) = crate::editor::prune_projects();
+    freed.bytes += bytes;
+    freed.files += files;
     // Click logs and studio projects whose recording was deleted.
     let tracks = util::cache_dir().join("tracks");
     if let Ok(entries) = std::fs::read_dir(&tracks) {

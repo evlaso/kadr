@@ -150,3 +150,82 @@ pub async fn download_russian() -> Result<(), String> {
         }
     }
 }
+
+/// A recognised word and its box, in the picture's pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Word {
+    pub text: String,
+    /// Block, paragraph and line: words with the same one share a line.
+    pub line: (u32, u32, u32),
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Every word Tesseract finds in `png`, with its box. None when Tesseract
+/// couldn't run.
+pub async fn words(png: &Path) -> Option<Vec<Word>> {
+    // Small pictures read better at twice the size, as in `recognize`; the
+    // boxes are scaled back.
+    let small = std::fs::read(png).ok().and_then(|b| crate::cards::png_size(&b)).is_some_and(|(w, h)| w.max(h) <= 2000);
+    let upscaled = util::runtime_dir().join(format!("kadr-words-2x-{}.png", std::process::id()));
+    let scaled = small
+        && util::output::<&OsStr>(&["ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-i".as_ref(), png.as_os_str(), "-vf".as_ref(), "scale=iw*2:-1:flags=lanczos".as_ref(), upscaled.as_os_str()])
+            .await
+            .is_some_and(|(ok, _)| ok);
+    let input = if scaled { upscaled.as_path() } else { png };
+    let langs = languages();
+    let dir = tessdata_dir();
+    let mut argv: Vec<&OsStr> = vec!["tesseract".as_ref()];
+    if let Some(dir) = &dir {
+        argv.extend(["--tessdata-dir".as_ref(), dir.as_os_str()]);
+    }
+    argv.push(input.as_os_str());
+    let flags = ["stdout", "--oem", "1", "--psm", "3", "-l", &langs, "tsv"];
+    argv.extend(flags.iter().map(OsStr::new));
+    let result = util::output(&argv).await;
+    let _ = std::fs::remove_file(&upscaled);
+    let (ok, tsv) = result?;
+    ok.then(|| parse_tsv(&tsv, if scaled { 0.5 } else { 1. }))
+}
+
+/// Words from Tesseract's TSV output, their boxes multiplied by `scale`.
+pub(crate) fn parse_tsv(tsv: &str, scale: f32) -> Vec<Word> {
+    tsv.lines()
+        .skip(1)
+        .filter_map(|row| {
+            let cols: Vec<&str> = row.split('\t').collect();
+            // level page block par line word left top width height conf text
+            if cols.len() < 12 || cols[0] != "5" {
+                return None;
+            }
+            let text = cols[11..].join("\t").trim().to_owned();
+            if text.is_empty() {
+                return None;
+            }
+            let n = |i: usize| cols[i].parse::<f32>().ok();
+            let id = |i: usize| cols[i].parse::<u32>().ok();
+            Some(Word { text, line: (id(2)?, id(3)?, id(4)?), left: n(6)? * scale, top: n(7)? * scale, width: n(8)? * scale, height: n(9)? * scale })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod word_tests {
+    use super::*;
+
+    #[test]
+    fn reads_word_boxes_from_tsv() {
+        let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
+                   4\t1\t1\t1\t1\t0\t10\t20\t300\t30\t-1\t\n\
+                   5\t1\t1\t1\t1\t1\t10\t20\t100\t30\t96.5\tmail\n\
+                   5\t1\t1\t1\t1\t2\t120\t20\t190\t30\t91\tme@example.com\n\
+                   5\t1\t1\t1\t2\t1\t10\t60\t40\t30\t-1\t \n";
+        let words = parse_tsv(tsv, 0.5);
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[1].text, "me@example.com");
+        assert_eq!((words[1].left, words[1].top, words[1].width, words[1].height), (60., 10., 95., 15.));
+        assert_eq!(words[0].line, words[1].line);
+    }
+}

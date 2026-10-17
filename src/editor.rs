@@ -27,6 +27,11 @@ use crate::ui::{fill, outline};
 use crate::{cards, ocr, palette, studio_editor, util};
 use crate::i18n::t;
 
+mod project;
+mod redact;
+pub(crate) use project::prune as prune_projects;
+pub(crate) use project::root as projects_dir;
+
 /// A point in image pixels.
 type P = (f32, f32);
 
@@ -191,9 +196,9 @@ impl Tool {
     const ALL: [Tool; 12] = [
         Tool::Select,
         Tool::Arrow,
+        Tool::Line,
         Tool::Rect,
         Tool::Ellipse,
-        Tool::Line,
         Tool::Pen,
         Tool::Marker,
         Tool::Text,
@@ -201,6 +206,17 @@ impl Tool {
         Tool::Blur,
         Tool::Spotlight,
         Tool::Crop,
+    ];
+
+    /// The toolbar's groups, set apart with space: selecting, shapes,
+    /// freehand, words, hiding and highlighting, cropping.
+    const GROUPS: [&'static [Tool]; 6] = [
+        &[Tool::Select],
+        &[Tool::Arrow, Tool::Line, Tool::Rect, Tool::Ellipse],
+        &[Tool::Pen, Tool::Marker],
+        &[Tool::Text, Tool::Counter],
+        &[Tool::Blur, Tool::Spotlight],
+        &[Tool::Crop],
     ];
 
     fn icon(self) -> Icon {
@@ -231,7 +247,7 @@ impl Tool {
             Tool::Marker => t("editor.highlighter"),
             Tool::Text => t("common.text"),
             Tool::Counter => t("editor.step_numbers"),
-            Tool::Blur => t("editor.hide_pixelate"),
+            Tool::Blur => t("editor.hide_tool"),
             Tool::Spotlight => t("editor.spotlight_dim_everything_around"),
             Tool::Crop => t("common.trim"),
         }
@@ -266,12 +282,20 @@ enum Kind {
     Marker(Vec<P>),
     Text(String),
     Counter(u32),
-    /// The pixelated patch, once computed for the current position.
-    Blur(Option<Arc<Image>>),
+    /// Hidden by pixelating or blurring; the patch, once computed for the
+    /// current position.
+    Blur(Hide, Option<Arc<Image>>),
     /// Everything outside the a–b box is dimmed.
     Spotlight,
     /// Another picture dropped or pasted on top, filling the a–b box.
     Picture(Picture),
+}
+
+/// How the hide tool covers what's under it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hide {
+    Pixelate,
+    Blur,
 }
 
 /// A picture laid over the screenshot: its pixels for the export, and the
@@ -368,7 +392,7 @@ impl Shape {
                 let w = self.size / 2.;
                 (l - w, t - w, r + w, b + w)
             }
-            Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight | Kind::Picture(_) => rect(self.a, self.b),
+            Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight | Kind::Picture(_) => rect(self.a, self.b),
         }
     }
 
@@ -389,7 +413,7 @@ impl Shape {
         let (a, b) = (self.a, self.b);
         let mid = ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
         match self.kind {
-            Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
+            Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
             // Ends, then the middle that bends it.
             Kind::Line | Kind::Arrow => vec![a, b, self.bend.unwrap_or(mid)],
             // Text, counters and freehand scale from their box's corners.
@@ -435,20 +459,20 @@ impl Shape {
 
     fn set_handle(&mut self, handle: usize, p: P) {
         match (&self.kind, handle) {
-            (Kind::Line | Kind::Arrow, 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 0) => self.a = p,
+            (Kind::Line | Kind::Arrow, 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 0) => self.a = p,
             (Kind::Line | Kind::Arrow, 2) => {
                 // Back to straight when the middle is dragged onto the line.
                 let mid = ((self.a.0 + self.b.0) / 2., (self.a.1 + self.b.1) / 2.);
                 let len = (self.b.0 - self.a.0).hypot(self.b.1 - self.a.1);
                 self.bend = (segment_distance(p, self.a, self.b) > len * 0.02 || (p.0 - mid.0).hypot(p.1 - mid.1) > len * 0.3).then_some(p);
             }
-            (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 2) => self.b = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 1) => (self.b.0, self.a.1) = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 3) => (self.a.0, self.b.1) = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 4) => self.a.1 = p.1,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 5) => self.b.0 = p.0,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 6) => self.b.1 = p.1,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight, 7) => self.a.0 = p.0,
+            (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 2) => self.b = p,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 1) => (self.b.0, self.a.1) = p,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 3) => (self.a.0, self.b.1) = p,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 4) => self.a.1 = p.1,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 5) => self.b.0 = p.0,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 6) => self.b.1 = p.1,
+            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 7) => self.a.0 = p.0,
             _ => {}
         }
         self.stale_patch();
@@ -472,9 +496,9 @@ impl Shape {
         curve(self.a, self.b, self.bend)
     }
 
-    /// A moved pixelation shows its outline until the new patch is ready.
+    /// A moved hidden area shows its outline until the new patch is ready.
     fn stale_patch(&mut self) {
-        if let Kind::Blur(patch) = &mut self.kind {
+        if let Kind::Blur(_, patch) = &mut self.kind {
             *patch = None;
         }
     }
@@ -485,7 +509,7 @@ impl Shape {
             Kind::Text(_) => sized(FONT_SIZES, weight),
             Kind::Counter(_) => sized(COUNTER_SIZES, weight),
             Kind::Marker(_) => sized(WIDTHS, weight) * 3.,
-            Kind::Blur(_) | Kind::Spotlight | Kind::Picture(_) => return,
+            Kind::Blur(..) | Kind::Spotlight | Kind::Picture(_) => return,
             _ => sized(WIDTHS, weight),
         } / s;
     }
@@ -538,6 +562,15 @@ pub struct Editor {
     weight: f32,
     /// Boxes and ellipses are drawn solid.
     fill: bool,
+    /// Pixelate or blur, for the hide tool.
+    hide: Hide,
+    /// "Hide sensitive" is reading the picture.
+    redacting: bool,
+    /// The picture as it was before any drawing (the original, or the one
+    /// kept with a reopened project), kept with the drawing on export.
+    base: Arc<Vec<u8>>,
+    /// Opened with the drawing from an earlier save.
+    restored: bool,
     /// Pointer shape over a handle or a shape, while no button is held.
     hover: Option<CursorStyle>,
     text_style: TextStyle,
@@ -581,6 +614,11 @@ pub fn open(path: PathBuf, cx: &mut App) {
     let Ok(bytes) = std::fs::read(&path) else {
         return util::notify(t("common.couldnt_open_image"), &path.display().to_string());
     };
+    // Saved from the editor before: the drawing comes back, on the picture
+    // it was drawn on.
+    let mut restored = project::load(&path, &bytes);
+    let bytes = restored.as_mut().map(|r| std::mem::take(&mut r.base)).unwrap_or(bytes);
+    let base = Arc::new(bytes.clone());
     let Some((w, h)) = cards::png_size(&bytes) else {
         return util::notify(t("editor.editor_opens_png_only"), &path.display().to_string());
     };
@@ -620,6 +658,10 @@ pub fn open(path: PathBuf, cx: &mut App) {
                     .await;
                 let _ = this.update(cx, |editor: &mut Editor, cx| {
                     editor.source = decoded;
+                    // A reopened drawing's hidden areas.
+                    for i in 0..editor.doc.shapes.len() {
+                        editor.refresh_patch(i, cx);
+                    }
                     cx.notify();
                 });
                 let walls = studio_editor::wallpaper_thumbs().await;
@@ -629,13 +671,19 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 });
             })
             .detach();
+            let (doc, frame) = match restored {
+                Some(r) => (r.doc, Some(r.frame)),
+                None => (Doc { shapes: Vec::new(), crop: None }, None),
+            };
+            let reopened = frame.is_some();
+            let frame = frame.unwrap_or_else(Frame::last);
             Editor {
                 path,
                 image,
                 px: (w, h),
                 source: None,
                 disp,
-                doc: Doc { shapes: Vec::new(), crop: None },
+                doc,
                 history: Vec::new(),
                 future: Vec::new(),
                 draft: None,
@@ -647,15 +695,19 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 color: 0,
                 weight: WEIGHT,
                 fill: false,
+                hide: Hide::Pixelate,
+                redacting: false,
+                base,
+                restored: reopened,
                 hover: None,
                 text_style: TextStyle::Plain,
                 zoom: 1.,
                 real: natural,
-                frame: Frame::last(),
+                remembered: frame.to_json(),
+                frame,
                 presets: crate::presets::Presets::new(frame_presets(), save_frame_presets, cx),
                 side_scroll: gpui::ScrollHandle::new(),
                 side_grab: Default::default(),
-                remembered: Frame::last().to_json(),
                 panel: false,
                 walls: Vec::new(),
                 natural: disp,
@@ -778,17 +830,21 @@ impl Editor {
         Some((i, h))
     }
 
-    /// Compute the pixelation patch for a blur shape in the background.
+    /// Compute the patch for a hidden area in the background.
     fn refresh_patch(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(src) = self.source.clone() else { return };
-        let Some(shape) = self.doc.shapes.get(index).filter(|s| matches!(s.kind, Kind::Blur(_))) else { return };
-        let (a, b) = (shape.a, shape.b);
+        let Some((how, a, b)) = self.doc.shapes.get(index).and_then(|s| match s.kind {
+            Kind::Blur(how, _) => Some((how, s.a, s.b)),
+            _ => None,
+        }) else {
+            return;
+        };
         cx.spawn(async move |this, cx| {
-            let patch = cx.background_executor().spawn(async move { pixelate_png(&src, a, b) }).await;
+            let patch = cx.background_executor().spawn(async move { hide_png(&src, a, b, how) }).await;
             let _ = this.update(cx, |editor, cx| {
-                // Only if the shape is still where the patch was cut from.
-                if let Some(Shape { kind: Kind::Blur(slot), a: sa, b: sb, .. }) = editor.doc.shapes.get_mut(index)
-                    && (*sa, *sb) == (a, b)
+                // Only if the shape is still where and how the patch was made.
+                if let Some(Shape { kind: Kind::Blur(now, slot), a: sa, b: sb, .. }) = editor.doc.shapes.get_mut(index)
+                    && (*sa, *sb, *now) == (a, b, how)
                 {
                     *slot = patch.map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png)));
                 }
@@ -873,7 +929,7 @@ impl Editor {
             Tool::Line => Kind::Line,
             Tool::Pen => Kind::Pen(vec![p]),
             Tool::Marker => Kind::Marker(vec![p]),
-            Tool::Blur => Kind::Blur(None),
+            Tool::Blur => Kind::Blur(self.hide, None),
             Tool::Spotlight => Kind::Spotlight,
         };
         let width = if self.tool == Tool::Marker { sized(WIDTHS, self.weight) * 3. } else { sized(WIDTHS, self.weight) };
@@ -1199,6 +1255,70 @@ impl Editor {
         }
     }
 
+    /// Pixelate or blur; restyles the selected hidden area too.
+    fn pick_hide(&mut self, how: Hide, cx: &mut Context<Self>) {
+        self.hide = how;
+        if let Some(index) = self.selected
+            && let Kind::Blur(now, _) = self.doc.shapes[index].kind
+            && now != how
+        {
+            self.checkpoint();
+            self.doc.shapes[index].kind = Kind::Blur(how, None);
+            self.refresh_patch(index, cx);
+        }
+    }
+
+    /// Read the picture and hide e-mails, keys, card and phone numbers and
+    /// the like, each as an ordinary hidden area (one undo takes them all).
+    fn hide_sensitive(&mut self, cx: &mut Context<Self>) {
+        let Some(src) = self.source.clone() else { return };
+        if self.redacting {
+            return;
+        }
+        self.finish_text();
+        self.redacting = true;
+        cx.spawn(async move |this, cx| {
+            let png = util::runtime_dir().join(format!("kadr-redact-{}.png", std::process::id()));
+            let saved = {
+                let png = png.clone();
+                cx.background_executor().spawn(async move { src.save(&png).is_ok() }).await
+            };
+            let words = if saved { ocr::words(&png).await } else { None };
+            let _ = std::fs::remove_file(&png);
+            let _ = this.update(cx, |editor, cx| {
+                editor.redacting = false;
+                match words {
+                    None => util::notify(t("editor.couldnt_read_picture"), t("editor.tesseract_needed")),
+                    Some(words) => editor.cover(redact::sensitive(&words), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Hide each box (image pixels) the current way.
+    fn cover(&mut self, boxes: Vec<(f32, f32, f32, f32)>, cx: &mut Context<Self>) {
+        if boxes.is_empty() {
+            return util::notify("kadr", t("editor.nothing_sensitive_found"));
+        }
+        self.checkpoint();
+        let (color, size) = (self.current_color(), sized(WIDTHS, self.weight) / self.scale());
+        for (l, t, r, b) in boxes {
+            self.doc.shapes.push(Shape { kind: Kind::Blur(self.hide, None), a: (l, t), b: (r, b), color, size, filled: false, text: TextStyle::Plain, bend: None });
+            self.refresh_patch(self.doc.shapes.len() - 1, cx);
+        }
+        self.selected = None;
+    }
+
+    /// Back to the picture as it was before any drawing (undoable).
+    fn discard_edits(&mut self) {
+        self.finish_text();
+        self.checkpoint();
+        self.doc = Doc { shapes: Vec::new(), crop: None };
+        self.selected = None;
+    }
+
     /// Zoom the canvas by `factor`, between fitting and 4×.
     fn zoom_by(&mut self, factor: f32) {
         self.zoom = (self.zoom * factor).clamp(1., 8.);
@@ -1243,29 +1363,41 @@ impl Editor {
         let doc = self.doc.clone();
         let frame = self.frame.clone();
         let path = self.path.clone();
+        let base = self.base.clone();
         window.remove_window();
         let hold = kit::hold(cx);
         cx.spawn(async move |_, cx| {
             let _hold = hold;
-            let png = cx.background_executor().spawn(async move { compose(&src, &doc, &frame) }).await;
+            let (drawn, framed) = (doc.clone(), frame.clone());
+            let png = cx.background_executor().spawn(async move { compose(&src, &drawn, &framed) }).await;
             let Some(png) = png else {
                 return util::notify(t("common.couldnt_save"), &path.display().to_string());
             };
             match how {
                 Export::Save => {
-                    if let Err(e) = std::fs::write(&path, png) {
+                    if let Err(e) = std::fs::write(&path, &png) {
                         return util::notify(t("common.couldnt_save"), &e.to_string());
                     }
                     util::copy_image(&path);
-                    let _ = cx.update(|cx| cards::show(path, cx));
+                    let _ = cx.update(|cx| cards::show(path.clone(), cx));
                 }
                 Export::Copy => {
                     let tmp = util::runtime_dir().join("kadr-annotated.png");
-                    if std::fs::write(&tmp, png).is_ok() {
+                    if std::fs::write(&tmp, &png).is_ok() {
                         util::copy_image(&tmp);
                     }
                 }
             }
+            // Keep the drawing editable for the next `kadr edit` of the file.
+            cx.background_executor()
+                .spawn(async move {
+                    let output = match how {
+                        Export::Save => png,
+                        Export::Copy => std::fs::read(&path).unwrap_or_default(),
+                    };
+                    let _ = project::save(&path, &output, &base, &doc, &frame);
+                })
+                .await;
         })
         .detach();
     }
@@ -1297,7 +1429,7 @@ impl Editor {
                 .style(if self.tool == tool { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
                 .toggle_state(self.tool == tool)
-                .child(div().px_1().child(tool.icon().size(IconSize::Medium)))
+                .child(div().px_1().child(tool.icon().size(IconSize::Tool)))
                 .tooltip(Tooltip::text(format!("{} ({})", tool.label(), tool.key().to_uppercase())))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.finish_text();
@@ -1305,9 +1437,7 @@ impl Editor {
                     cx.notify();
                 }))
         };
-        let drawing: Vec<_> = Tool::ALL[1..11].iter().map(|&t| tool_button(t, cx)).collect();
-        let select = tool_button(Tool::Select, cx);
-        let crop = tool_button(Tool::Crop, cx);
+        let groups: Vec<_> = Tool::GROUPS.iter().map(|group| h_flex().gap_0p5().children(group.iter().map(|&t| tool_button(t, cx)))).collect();
 
         let ring = cx.theme().colors().text;
         let current = self.current_color();
@@ -1426,13 +1556,8 @@ impl Editor {
                         cx.notify();
                     })),
             );
-        let tools = h_flex()
-            .gap_0p5()
-            .child(select)
-            .child(Divider::vertical().h_5().mx_1())
-            .children(drawing)
-            .child(Divider::vertical().h_5().mx_1())
-            .child(crop);
+        // Groups apart with space, not lines.
+        let tools = h_flex().gap(px(12.)).children(groups);
         // Solid or outline, for boxes and ellipses.
         let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
             || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
@@ -1484,6 +1609,39 @@ impl Editor {
                 .child(option("text-outline", TextStyle::Outline, t("editor.outlined")))
                 .child(Divider::vertical().h_5().mx_1())
         });
+        // Pixelate or blur, and hiding what looks private, for the hide tool.
+        let hiding = self.tool == Tool::Blur || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
+        let hide_options = hiding.then(|| {
+            let option = |id: &'static str, how: Hide, icon: &'static str, tip: &'static str| {
+                ButtonLike::new(id)
+                    .style(if self.hide == how { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(self.hide == how)
+                    .child(div().px_1().child(Icon::from_path(icon).size(IconSize::Small)))
+                    .tooltip(Tooltip::text(tip))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.pick_hide(how, cx);
+                        cx.notify();
+                    }))
+            };
+            h_flex()
+                .gap_0p5()
+                .child(option("hide-pixelate", Hide::Pixelate, "icons/kadr/pixelate.svg", t("editor.pixelate")))
+                .child(option("hide-blur", Hide::Blur, "icons/kadr/blur.svg", t("editor.blur")))
+                .child(
+                    Button::new("hide-sensitive", if self.redacting { t("editor.looking") } else { t("editor.hide_sensitive") })
+                        .style(ButtonStyle::Subtle)
+                        .size(ButtonSize::Large)
+                        .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
+                        .disabled(self.redacting || self.source.is_none())
+                        .tooltip(Tooltip::text(t("editor.hide_sensitive_tip")))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.hide_sensitive(cx);
+                            cx.notify();
+                        })),
+                )
+                .child(Divider::vertical().h_5().mx_1())
+        });
         // A narrow window folds the style controls into a "⋯" menu, like
         // toolbars in the OS do.
         let compact = width < COMPACT_TOOLBAR;
@@ -1499,6 +1657,7 @@ impl Editor {
                         .gap_2()
                         .p_2()
                         .elevation_3(cx)
+                        .children(hide_options)
                         .children(text_options)
                         .children(fill_toggle)
                         .child(palette)
@@ -1533,6 +1692,7 @@ impl Editor {
                 .flex_1()
                 .justify_end()
                 .gap_0p5()
+                .children(hide_options)
                 .children(text_options)
                 .children(fill_toggle)
                 .child(palette)
@@ -1657,6 +1817,20 @@ impl Editor {
                                 cx.notify();
                             })),
                         )
+                    })
+                    // A reopened drawing can be dropped for the clean picture.
+                    .when(self.restored && (!self.doc.shapes.is_empty() || self.doc.crop.is_some()), |row| {
+                        row.child(
+                            Button::new("discard-edits", t("editor.start_over"))
+                                .style(ButtonStyle::Subtle)
+                                .size(ButtonSize::Large)
+                                .color(Color::Muted)
+                                .tooltip(Tooltip::text(t("editor.start_over_tip")))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.discard_edits();
+                                    cx.notify();
+                                })),
+                        )
                     }),
             )
             .child(drag_out.flex_none())
@@ -1667,10 +1841,11 @@ impl Editor {
                     .gap_1()
                     .when(width >= COMPACT_TOOLBAR, |row| row.child(zoom))
                     .child(
-                        IconButton::new("ocr", IconName::CaseSensitive)
-                            .shape(IconButtonShape::Square)
+                        Button::new("ocr", t("editor.copy_text"))
+                            .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
-                            .tooltip(Tooltip::text(t("common.recognize_text")))
+                            .start_icon(Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Small))
+                            .tooltip(Tooltip::text(t("editor.copy_text_tip")))
                             .on_click(cx.listener(|this, _, _, cx| this.read_text(cx))),
                     )
                     .child(div().w(px(8.)))
@@ -1898,7 +2073,7 @@ impl Editor {
 
         // Pixelation stays on the picture (it covers only what's there).
         let blurs = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
-            Kind::Blur(Some(patch)) => {
+            Kind::Blur(_, Some(patch)) => {
                 let (l, t, r, b) = rect(shape.a, shape.b);
                 let (l, t, r, b) = (l.max(0.).floor(), t.max(0.).floor(), r.min(pw).ceil(), b.min(ph).ceil());
                 Some(img(patch.clone()).absolute().left(px(l * s)).top(px(t * s)).w(px((r - l) * s)).h(px((b - t) * s)).object_fit(ObjectFit::Fill))
@@ -2082,7 +2257,10 @@ impl Editor {
                 }])
             })
             .child(img(self.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(radius)))
-            .children(blurs);
+            .children(blurs)
+            // A hairline edge, so a dark screenshot doesn't melt into the
+            // dark stage around it.
+            .when(!framed, |d| d.child(div().absolute().inset_0().rounded(px(radius)).border_1().border_color(cx.theme().colors().border)));
 
         // The background preview mirrors what Save produces: around the
         // result, which may reach past the picture.
@@ -2251,7 +2429,7 @@ fn constrain(d: &Shape, p: P, shift: bool) -> P {
     }
     let (dx, dy) = (p.0 - d.a.0, p.1 - d.a.1);
     match d.kind {
-        Kind::Rect | Kind::Ellipse | Kind::Blur(_) | Kind::Spotlight => {
+        Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight => {
             let m = dx.abs().max(dy.abs());
             (d.a.0 + m * dx.signum(), d.a.1 + m * dy.signum())
         }
@@ -2643,12 +2821,12 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             }
         }
         // While dragging, outline the area to be hidden.
-        Kind::Blur(None) => {
+        Kind::Blur(_, None) => {
             let mut outline = c;
             outline.alpha = 0.8;
             stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, outline, 1.5 / s);
         }
-        Kind::Blur(Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Spotlight | Kind::Picture(_) => {}
+        Kind::Blur(_, Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Spotlight | Kind::Picture(_) => {}
     }
 }
 
@@ -2710,15 +2888,17 @@ pub(crate) fn metrics(size: f32) -> Metrics {
     Metrics { ascent, descent, line: ((ascent - descent) * 1.2).ceil() }
 }
 
-/// Pixelate the a–b area of `src`; returns the patch as PNG bytes.
-fn pixelate_png(src: &RgbaImage, a: P, b: P) -> Option<Vec<u8>> {
-    let patch = pixelate(src, a, b)?;
+/// The hidden a–b area of `src` as PNG bytes, for the canvas.
+fn hide_png(src: &RgbaImage, a: P, b: P, how: Hide) -> Option<Vec<u8>> {
+    let patch = hide(src, a, b, how)?;
     let mut png = Vec::new();
     patch.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
     Some(png)
 }
 
-fn pixelate(src: &RgbaImage, a: P, b: P) -> Option<RgbaImage> {
+/// The a–b area of `src` pixelated or blurred, placed at the area's top
+/// left corner clamped to the picture. Screen and export share it.
+fn hide(src: &RgbaImage, a: P, b: P, how: Hide) -> Option<RgbaImage> {
     let (l, t, r, bt) = rect(a, b);
     let (x, y) = (l.floor().max(0.) as u32, t.floor().max(0.) as u32);
     let w = (r.ceil() as u32).min(src.width()).saturating_sub(x);
@@ -2726,22 +2906,37 @@ fn pixelate(src: &RgbaImage, a: P, b: P) -> Option<RgbaImage> {
     if w < 2 || h < 2 {
         return None;
     }
-    // Blocks scale with the screenshot so text stays unreadable at any size.
-    let block = (src.width().max(src.height()) / 120).clamp(8, 32);
-    let region = image::imageops::crop_imm(src, x, y, w, h).to_image();
-    let small = image::imageops::resize(&region, (w / block).max(1), (h / block).max(1), image::imageops::FilterType::Triangle);
-    Some(image::imageops::resize(&small, w, h, image::imageops::FilterType::Nearest))
+    // Blocks and blur scale with the screenshot so text stays unreadable at any size.
+    let long = src.width().max(src.height());
+    match how {
+        Hide::Pixelate => {
+            let block = (long / 120).clamp(8, 32);
+            let region = image::imageops::crop_imm(src, x, y, w, h).to_image();
+            let small = image::imageops::resize(&region, (w / block).max(1), (h / block).max(1), image::imageops::FilterType::Triangle);
+            Some(image::imageops::resize(&small, w, h, image::imageops::FilterType::Nearest))
+        }
+        Hide::Blur => {
+            // Blurred with what's around it, so the edges don't sharpen up.
+            let sigma = (long as f32 / 140.).clamp(6., 24.);
+            let reach = (sigma * 2.).ceil() as u32;
+            let (bx, by) = (x.saturating_sub(reach), y.saturating_sub(reach));
+            let (bw, bh) = ((x + w + reach).min(src.width()) - bx, (y + h + reach).min(src.height()) - by);
+            let region = image::imageops::crop_imm(src, bx, by, bw, bh).to_image();
+            let blurred = image::imageops::fast_blur(&region, sigma);
+            Some(image::imageops::crop_imm(&blurred, x - bx, y - by, w, h).to_image())
+        }
+    }
 }
 
 /// Draw everything onto the original at full resolution.
 fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
     use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
-    // Pixelation edits the pixels themselves, beneath every other shape.
+    // Hiding edits the pixels themselves, beneath every other shape.
     let mut base = src.clone();
     for shape in shapes {
-        if let Kind::Blur(_) = shape.kind
-            && let Some(patch) = pixelate(src, shape.a, shape.b)
+        if let Kind::Blur(how, _) = shape.kind
+            && let Some(patch) = hide(src, shape.a, shape.b, how)
         {
             let (l, t, _, _) = rect(shape.a, shape.b);
             image::imageops::replace(&mut base, &patch, l.floor().max(0.) as i64, t.floor().max(0.) as i64);
@@ -2880,7 +3075,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
                     draw_line(&mut pm, line, (a.0, baseline), size, ink);
                 }
             }
-            Kind::Blur(_) | Kind::Spotlight | Kind::Picture(_) => {}
+            Kind::Blur(..) | Kind::Spotlight | Kind::Picture(_) => {}
         }
     }
     let mut data = pm.take();
@@ -3051,6 +3246,32 @@ mod tests {
         let out = rasterize(&src, &[shape]).unwrap();
         assert_eq!(out.get_pixel(30, 30).0, [200, 0, 0, 255]);
         assert_eq!(out.get_pixel(45, 30).0, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn hiding_pixelates_or_blurs_the_same_on_screen_and_in_the_export() {
+        // Fine stripes: text-like detail both ways must wash out.
+        let src = RgbaImage::from_fn(400, 300, |x, _| if x % 4 < 2 { image::Rgba([0, 0, 0, 255]) } else { image::Rgba([255, 255, 255, 255]) });
+        let spread = |img: &RgbaImage, (x0, y0, x1, y1): (u32, u32, u32, u32)| {
+            let values: Vec<u8> = (y0..y1).flat_map(|y| (x0..x1).map(move |x| (x, y))).map(|(x, y)| img.get_pixel(x, y).0[0]).collect();
+            values.iter().max().unwrap() - values.iter().min().unwrap()
+        };
+        for how in [Hide::Pixelate, Hide::Blur] {
+            let patch = hide(&src, (100., 50.), (300., 250.), how).unwrap();
+            assert_eq!(patch.dimensions(), (200, 200));
+            let shape = Shape { kind: Kind::Blur(how, None), a: (100., 50.), b: (300., 250.), color: red(), size: 2., filled: false, text: TextStyle::Plain, bend: None };
+            let out = rasterize(&src, &[shape]).unwrap();
+            // The export holds exactly the canvas's patch.
+            for (x, y) in [(0, 0), (57, 91), (199, 199)] {
+                assert_eq!(out.get_pixel(100 + x, 50 + y), patch.get_pixel(x, y));
+            }
+            assert_eq!(out.get_pixel(50, 50), src.get_pixel(50, 50), "outside stays sharp");
+            assert!(spread(&out, (140, 100, 260, 200)) < 60, "{} hides the stripes", if how == Hide::Blur { "blur" } else { "pixelate" });
+        }
+        // The blur is smooth: neighbours differ little, unlike blocks.
+        let blurred = hide(&src, (100., 50.), (300., 250.), Hide::Blur).unwrap();
+        let jumps = (1..200).map(|x| (blurred.get_pixel(x, 100).0[0] as i32 - blurred.get_pixel(x - 1, 100).0[0] as i32).abs()).max().unwrap();
+        assert!(jumps < 8, "blur has no steps: {jumps}");
     }
 
     #[test]

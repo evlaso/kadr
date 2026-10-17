@@ -273,6 +273,8 @@ pub enum IconSize {
     Small,
     /// Toolbar icons.
     Medium,
+    /// The editor's drawing tools, a step up from the other toolbars.
+    Tool,
     /// The capture bar's big mode icons.
     Large,
 }
@@ -283,6 +285,7 @@ impl IconSize {
             IconSize::XSmall => 12.,
             IconSize::Small => 14.,
             IconSize::Medium => 16.,
+            IconSize::Tool => 18.,
             IconSize::Large => 22.,
         })
     }
