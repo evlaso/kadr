@@ -464,7 +464,7 @@ impl Recorder {
                 finalize(&file).await;
                 // Studio recordings go straight to the editor, like CleanShot.
                 let studio = s.studio;
-                let _ = cx.update(|cx| if studio { crate::studio_editor::open(file, cx) } else { cards::show(file, cx) });
+                let _ = cx.update(|cx| if studio { crate::studio_editor::open(file, cx) } else { cards::after_capture(file, crate::storage::Capture::Recording, cx) });
             }
             // Let the session go (the cursor setting comes back) before
             // starting over in the same area.
@@ -532,7 +532,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     let settings = Settings::load();
     let dir = settings.video_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let file = dir.join(format!("screenrecording-{}.mp4", util::timestamp()));
+    let file = crate::storage::capture_path(&dir, crate::storage::Capture::Recording, "mp4");
 
     // In studio mode the camera is recorded on its own, so the studio can
     // shape, size and place it; otherwise it's a window on screen.

@@ -223,7 +223,7 @@ pub fn start(area: Option<String>, cx: &mut App) {
         let settings = Settings::load();
         let dir = settings.screenshot_dir();
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("screenshot-{}.png", util::timestamp()));
+        let path = crate::storage::capture_path(&dir, crate::storage::Capture::Screenshot, "png");
         if let Err(e) = picture.save(&path) {
             return util::notify(t("common.couldnt_save"), &e.to_string());
         }
