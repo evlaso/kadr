@@ -222,9 +222,8 @@ const RIGHT: u8 = 2;
 const TOP: u8 = 4;
 const BOTTOM: u8 = 8;
 
-/// How near a handle the pointer has to be to grab it, and its drawn size.
+/// How near a handle the pointer has to be to grab it.
 const HANDLE_REACH: f32 = 10.;
-const HANDLE: f32 = 9.;
 
 #[derive(Clone, Copy)]
 enum Drag {
@@ -670,8 +669,7 @@ impl Render for Picker {
                 }
                 if let (Some(sel), true) = (selection, editable) {
                     for (_, (hx, hy)) in handles(sel) {
-                        let b = at(hx - HANDLE / 2., hy - HANDLE / 2., HANDLE, HANDLE);
-                        window.paint_quad(quad(b, px(HANDLE / 2.), gpui::white(), px(1.), gpui::hsla(0., 0., 0., 0.35), gpui::BorderStyle::Solid));
+                        crate::ui::paint_knob(window, point(o.x + px(hx), o.y + px(hy)), accent);
                     }
                 }
                 if let Some((cx0, cy0)) = guides {

@@ -2221,26 +2221,19 @@ impl Editor {
                     }
                     window.paint_quad(outline(area(l, t, r, bt), gpui::white(), BorderStyle::Dashed));
                     for &h in &crop_knobs {
-                        let c = pt(h);
-                        let disc = |r: f32| Bounds::new(point(c.x - px(r), c.y - px(r)), size(px(2. * r), px(2. * r)));
-                        window.paint_quad(fill(disc(8.), rgba(0x00000033)).corner_radii(px(8.)));
-                        window.paint_quad(crate::ui::quad(disc(6.), px(6.), gpui::white(), px(1.5), accent, BorderStyle::Solid));
+                        crate::ui::paint_knob(window, pt(h), accent);
                     }
                 } else if grown {
                     window.paint_quad(outline(area(el, et, er, eb), gpui::hsla(0., 0., 1., 0.45), BorderStyle::Dashed));
                 }
-                // Like CleanShot: shapes that resize show only round knobs;
-                // the rest (pen, text, counters) get a thin solid frame.
-                if let Some(((l, t, r, b), handles, framed)) = selection {
-                    if framed {
-                        let line = gpui::Hsla { alpha: 0.7, ..accent };
-                        window.paint_quad(crate::ui::quad(area(l, t, r, b), px(2.), gpui::transparent_black(), px(1.), line, BorderStyle::Solid));
+                // Like CleanShot: a thin accent frame round anything boxy,
+                // lines and arrows only their knobs.
+                if let Some(((l, t, r, b), handles, _)) = selection {
+                    if handles.len() >= 4 {
+                        window.paint_quad(crate::ui::quad(area(l, t, r, b), px(0.), gpui::transparent_black(), px(1.5), accent, BorderStyle::Solid));
                     }
                     for h in handles {
-                        let c = pt(h);
-                        let disc = |r: f32| Bounds::new(point(c.x - px(r), c.y - px(r)), size(px(2. * r), px(2. * r)));
-                        window.paint_quad(fill(disc(8.), rgba(0x00000033)).corner_radii(px(8.)));
-                        window.paint_quad(crate::ui::quad(disc(6.), px(6.), gpui::white(), px(1.5), accent, BorderStyle::Solid));
+                        crate::ui::paint_knob(window, pt(h), accent);
                     }
                 }
             },
