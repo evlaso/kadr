@@ -116,3 +116,22 @@ pub fn grab_monitor(_mon: &Mon) -> Option<image::RgbaImage> {
 pub fn prefers_dark() -> Option<bool> {
     None
 }
+
+/// Which shape the pointer has while recording; not ported yet, so the
+/// studio draws the arrow throughout.
+pub struct CursorShapes;
+
+impl CursorShapes {
+    pub fn start() -> Option<Self> {
+        None
+    }
+
+    pub fn current(&self) -> Option<(&'static str, f64)> {
+        None
+    }
+}
+
+/// The user's own cursor for a shape; not ported yet, so kadr's own are drawn.
+pub fn theme_cursor(_shape: &str, _arrow_height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
+    None
+}

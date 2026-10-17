@@ -2,6 +2,7 @@
 mod i18n;
 mod capture;
 mod cards;
+mod cursors;
 mod editor;
 mod history;
 mod launcher;

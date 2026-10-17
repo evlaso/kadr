@@ -82,6 +82,10 @@ pub struct StudioEditor {
     camera: Camera,
     /// The drawn cursor over time (recordings without the system cursor).
     cursor: Vec<(f64, f64, f64)>,
+    /// How it tilts and grows along that path: (t, angle, scale).
+    cursor_motion: Vec<(f64, f64, f64)>,
+    /// Its shape changes, timed to that path.
+    cursor_shapes: Vec<(f64, String)>,
     thumbs: Vec<Arc<Image>>,
     walls: Vec<(PathBuf, Arc<Image>)>,
     /// Saved looks, by name.
@@ -150,6 +154,8 @@ pub fn open(video: PathBuf, cx: &mut App) {
                     window.focus(&focus, cx);
                     let camera = Camera::new(&track, &probe, &project.segments);
                     let cursor = if track.cursor_hidden { studio::cursor_path(&track, &probe, project.cursor_smooth) } else { Vec::new() };
+                    let cursor_motion = studio::cursor_motion(&cursor, &track, &probe);
+                    let cursor_shapes = studio::cursor_shapes(&track, &cursor, &probe);
                     let playhead = project.trim.0;
                     let video_path = video.clone();
                     let cam_file = Some(studio::camera_file(&video_path)).filter(|f| f.exists());
@@ -171,6 +177,8 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         project,
                         camera,
                         cursor,
+                        cursor_motion,
+                        cursor_shapes,
                         thumbs,
                         walls,
                         presets: crate::presets::Presets::new(studio::presets(), studio::save_presets, cx),
@@ -268,6 +276,8 @@ impl StudioEditor {
         self.camera = Camera::new(&self.track, &self.probe, &self.project.segments);
         if self.track.cursor_hidden {
             self.cursor = studio::cursor_path(&self.track, &self.probe, self.project.cursor_smooth);
+            self.cursor_motion = studio::cursor_motion(&self.cursor, &self.track, &self.probe);
+            self.cursor_shapes = studio::cursor_shapes(&self.track, &self.cursor, &self.probe);
         }
         self.project.save(&self.video);
         // The next recording starts with this look.
@@ -938,10 +948,10 @@ impl StudioEditor {
         }
         let i = ((self.playhead * CURSOR_RATE).round() as usize).min(self.cursor.len() - 1);
         let (_, x, y) = self.cursor[i];
-        // It grows with speed here too (the tilt shows in the export).
-        let grow = if self.project.cursor_motion { studio::cursor_motion(&self.cursor[i.saturating_sub(12)..=i], &self.probe).last().map_or(1., |m| m.2) } else { 1. };
+        // It tilts, grows and bounces on clicks here as in the export.
+        let (angle, grow) = self.cursor_motion.get(i).filter(|_| self.project.cursor_motion).map_or((0., 1.), |m| (m.1, m.2));
         let height = studio::cursor_height(&self.track, &self.probe, self.project.cursor_size);
-        let (png, (hx, hy), (w, h)) = studio::cursor_image(self.project.cursor_style, height)?;
+        let (png, (hx, hy), (w, h)) = studio::cursor_image(self.project.cursor_style, studio::shape_at(&self.cursor_shapes, self.playhead), height, angle)?;
         let (hx, hy, w, h) = (hx * grow, hy * grow, w as f64 * grow, h as f64 * grow);
         let image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
         Some(
@@ -958,7 +968,7 @@ impl StudioEditor {
     fn render_timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let status = cx.theme().status();
-        let (accent, lane_bg, text, tick) = (colors.text_accent, colors.element_background, colors.text, colors.border);
+        let (text, tick) = (colors.text, colors.border);
         let line = colors.border_variant;
         let zoom_blue = crate::ui::from_hex(0x0A84FF);
         let (handle_color, cut_color) = (status.warning, status.error);
@@ -1024,15 +1034,6 @@ impl StudioEditor {
                             for dx in [0., 3.] {
                                 window.paint_quad(crate::ui::quad(Bounds::new(point(x + px(dx), lane_top + px(LANE / 2. - 7.)), size(px(1.5), px(14.))), px(1.), grip, px(0.), grip, BorderStyle::Solid));
                             }
-                        }
-                    }
-                    // Ease-in/out ramps either side, faint.
-                    let mut ramp = accent;
-                    ramp.alpha = 0.12;
-                    for (a, b) in [(s - studio::RAMP, s), (e, e + studio::RAMP)] {
-                        let (a, b) = (a.max(0.), b.min(d));
-                        if b > a {
-                            window.paint_quad(fill(Bounds::new(point(at(a), lane_top + px(8.)), size(at(b) - at(a), px(LANE - 16.))), ramp));
                         }
                     }
                 }
@@ -1102,8 +1103,6 @@ impl StudioEditor {
                         .right_0()
                         .top(px(lane_y))
                         .h(px(LANE))
-                        .rounded_md()
-                        .bg(lane_bg)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1476,7 +1475,13 @@ impl StudioEditor {
             .child(row(t("studio.row_shadow"), self.slider(Knob::Shadow, self.project.shadow, format!("{}%", (self.project.shadow * 100.).round()), cx).into_any_element()))
             .child(row(t("studio.row_blur"), pick(&blur_names, self.project.motion_blur, "blur", |p, i| p.motion_blur = i, cx)));
 
-        // The drawn cursor: only recordings made in studio mode have one to change.
+        // The drawn cursor: only recordings made in studio mode have one to
+        // change; others say how to get one.
+        let baked = (!self.track.cursor_hidden).then(|| {
+            card()
+                .child(Label::new(t("studio.cursor")).size(LabelSize::Small))
+                .child(Label::new(t("studio.change_cursors_size_smoothness_record")).size(LabelSize::XSmall).color(Color::Muted))
+        });
         let cursor = self.track.cursor_hidden.then(|| {
             let styles: Vec<&'static str> = CURSOR_STYLES.to_vec();
             card()
@@ -1618,6 +1623,7 @@ impl StudioEditor {
             .child(context)
             .child(look)
             .children(cursor)
+            .children(baked)
             .children(camera)
             .child(overlays)
             .child(export);

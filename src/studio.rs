@@ -584,24 +584,119 @@ pub fn cursor_path(track: &Track, p: &Probe, smooth: f64) -> Vec<(f64, f64, f64)
 
 /// How the drawn cursor tilts and grows along its path, as (t, angle in
 /// radians, scale): it leans toward where it's going and swells with speed,
-/// both eased so they settle rather than snap.
-pub fn cursor_motion(path: &[(f64, f64, f64)], p: &Probe) -> Vec<(f64, f64, f64)> {
+/// both eased so they settle rather than snap, and it dips and springs back
+/// on every click.
+pub fn cursor_motion(path: &[(f64, f64, f64)], track: &Track, p: &Probe) -> Vec<(f64, f64, f64)> {
     let (mut angle, mut scale) = (0., 1.);
     // About 90 ms to follow a change.
     let follow = 1. - (-1. / (CURSOR_RATE * 0.09)).exp();
+    let mut clicks: Vec<f64> = track.clicks.iter().map(|c| c.0).collect();
+    clicks.sort_by(f64::total_cmp);
     let mut out = Vec::with_capacity(path.len());
     for (i, &(t, x, y)) in path.iter().enumerate() {
         let (px0, py0) = if i > 0 { (path[i - 1].1, path[i - 1].2) } else { (x, y) };
         // Speed in screen heights per second, so it means the same at any size.
         let (vx, vy) = ((x - px0) * CURSOR_RATE / p.h.max(1.), (y - py0) * CURSOR_RATE / p.h.max(1.));
         let speed = vx.hypot(vy);
-        let target_angle = (vx * 0.35).clamp(-0.32, 0.32);
-        let target_scale = 1. + 0.3 * (speed / 1.2).min(1.);
+        let target_angle = (vx * 0.5).clamp(-0.38, 0.38);
+        let target_scale = 1. + 0.4 * (speed / 0.8).min(1.);
         angle += (target_angle - angle) * follow;
         scale += (target_scale - scale) * follow;
-        out.push((t, angle, scale));
+        let last_click = clicks.partition_point(|&c| c <= t).checked_sub(1).map(|j| clicks[j]);
+        let press = last_click.map_or(1., |c| click_bounce(t - c));
+        out.push((t, angle, scale * press));
     }
     out
+}
+
+/// The cursor's size on a click `dt` seconds ago: a quick press down to 3/4,
+/// then a springy return with a slight overshoot.
+fn click_bounce(dt: f64) -> f64 {
+    const DOWN: f64 = 0.07;
+    match dt {
+        dt if !(0. ..0.6).contains(&dt) => 1.,
+        dt if dt < DOWN => 1. - 0.25 * dt / DOWN,
+        dt => 1. - 0.25 * (-(dt - DOWN) * 9.).exp() * ((dt - DOWN) * 14.).cos(),
+    }
+}
+
+/// When the drawn cursor takes each shape. The pointer changed shape at a
+/// spot; the smoothed cursor gets there a little later, so the change waits
+/// for it (the hand shows up on the button, not before it).
+pub fn cursor_shapes(track: &Track, path: &[(f64, f64, f64)], p: &Probe) -> Vec<(f64, String)> {
+    let (rx, ry, rw, rh) = track.rect;
+    let (sx, sy) = (p.w / rw.max(1.0), p.h / rh.max(1.0));
+    let mut out: Vec<(f64, String)> = Vec::new();
+    for (t, shape) in &track.shapes {
+        let mut at = *t;
+        if let Some((x, y)) = track.cursor_at(*t).map(|(x, y)| ((x - rx) * sx, (y - ry) * sy)) {
+            let from = ((t * CURSOR_RATE).round() as usize).min(path.len());
+            let to = ((t + 0.8) * CURSOR_RATE).round() as usize;
+            let near = path[from..to.min(path.len())].iter().min_by(|a, b| (a.1 - x).hypot(a.2 - y).total_cmp(&(b.1 - x).hypot(b.2 - y)));
+            at = near.map_or(at, |n| n.0);
+        }
+        // Keep the order; a change overtaken by the next one is dropped.
+        while out.last().is_some_and(|l| l.0 >= at) {
+            out.pop();
+        }
+        if out.last().is_none_or(|l| l.1 != *shape) {
+            out.push((at, shape.clone()));
+        }
+    }
+    out
+}
+
+/// The shape at time t in a `cursor_shapes` list (the arrow before any).
+pub fn shape_at(shapes: &[(f64, String)], t: f64) -> &str {
+    let i = shapes.partition_point(|s| s.0 <= t);
+    i.checked_sub(1).map_or("arrow", |j| shapes[j].1.as_str())
+}
+
+/// The drawn cursor's shapes over time for ffmpeg's concat demuxer: one
+/// picture per shape, all on one square with the hotspot in the middle, so
+/// the shape can change without the cursor jumping. Returns the list file
+/// and the square's side.
+fn cursor_frames(track: &Track, path: &[(f64, f64, f64)], p: &Probe, project: &Project, tmp: &Path) -> Option<(PathBuf, u32)> {
+    use std::fmt::Write as _;
+    let height = cursor_height(track, p, project.cursor_size);
+    let shapes = cursor_shapes(track, path, p);
+    // Changes in order, merged, starting at 0.
+    let mut changes: Vec<(f64, &str)> = vec![(0., shape_at(&shapes, 0.))];
+    for (t, shape) in &shapes {
+        if *t > 0. && *t < p.duration && changes.last().is_some_and(|l| l.1 != shape) {
+            changes.push((*t, shape));
+        }
+    }
+    let mut used: Vec<&str> = changes.iter().map(|c| c.1).collect();
+    used.sort();
+    used.dedup();
+    let pictures: Vec<(&str, image::RgbaImage, (f64, f64))> = used
+        .iter()
+        .filter_map(|&shape| {
+            let (png, hot, _) = cursor_image(project.cursor_style, shape, height, 0.)?;
+            Some((shape, image::load_from_memory(&png).ok()?.to_rgba8(), hot))
+        })
+        .collect();
+    let reach = pictures.iter().map(|(_, img, (hx, hy))| hx.max(img.width() as f64 - hx).max(*hy).max(img.height() as f64 - hy)).fold(1., f64::max);
+    let side = (2. * reach).ceil() as u32 / 2 * 2 + 2;
+    let mut files = std::collections::HashMap::new();
+    for (i, (shape, img, (hx, hy))) in pictures.iter().enumerate() {
+        let mut square = image::RgbaImage::new(side, side);
+        image::imageops::overlay(&mut square, img, (side as f64 / 2. - hx).round() as i64, (side as f64 / 2. - hy).round() as i64);
+        let file = tmp.join(format!("cursor-{i}.png"));
+        square.save(&file).ok()?;
+        files.insert(*shape, file);
+    }
+    let mut list = String::from("ffconcat version 1.0\n");
+    for (i, (t, shape)) in changes.iter().enumerate() {
+        let end = changes.get(i + 1).map_or(p.duration + 1., |n| n.0);
+        let _ = writeln!(list, "file '{}'\nduration {:.3}", files.get(shape)?.display(), end - t);
+    }
+    // The demuxer needs the last picture again to honour its duration.
+    let _ = writeln!(list, "file '{}'", files.get(changes.last()?.1)?.display());
+    let file = tmp.join("cursor.ffconcat");
+    std::fs::write(&file, list).ok()?;
+    Some((file, side))
 }
 
 /// The drawn cursor's height in video pixels.
@@ -609,9 +704,27 @@ pub fn cursor_height(track: &Track, p: &Probe, size: f64) -> f64 {
     CURSOR_BASE * size * p.h / track.rect.3.max(1.)
 }
 
-/// The cursor picture as PNG, with its hotspot and size in pixels.
-pub fn cursor_image(style: usize, height: f64) -> Option<(Vec<u8>, (f64, f64), (u32, u32))> {
-    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
+/// The cursor picture as PNG, with its hotspot and size in pixels, turned
+/// clockwise by `angle` radians around the hotspot. `shape` is a `cursors`
+/// name; the dot style looks the same for all.
+pub fn cursor_image(style: usize, shape: &str, height: f64, angle: f64) -> Option<(Vec<u8>, (f64, f64), (u32, u32))> {
+    let (pm, hot) = cursor_pixmap(style, shape, height)?;
+    if angle.abs() < 1e-3 {
+        return Some((pm.encode_png().ok()?, hot, (pm.width(), pm.height())));
+    }
+    // A square around the hotspot, big enough for the picture at any angle.
+    let (w, h) = (pm.width() as f64, pm.height() as f64);
+    let reach = hot.0.max(w - hot.0).hypot(hot.1.max(h - hot.1));
+    let side = (2. * reach).ceil() as u32 + 2;
+    let half = side as f32 / 2.;
+    let mut turned = tiny_skia::Pixmap::new(side, side)?;
+    let transform = tiny_skia::Transform::from_rotate_at(angle.to_degrees() as f32, half, half).pre_translate(half - hot.0 as f32, half - hot.1 as f32);
+    turned.draw_pixmap(0, 0, pm.as_ref(), &tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() }, transform, None);
+    Some((turned.encode_png().ok()?, (half as f64, half as f64), (side, side)))
+}
+
+fn cursor_pixmap(style: usize, shape: &str, height: f64) -> Option<(tiny_skia::Pixmap, (f64, f64))> {
+    use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
     let h = height.max(8.) as f32;
     let pad = (h * 0.2).ceil();
     let paint = |r: u8, g: u8, b: u8, a: u8| {
@@ -631,29 +744,10 @@ pub fn cursor_image(style: usize, height: f64) -> Option<(Vec<u8>, (f64, f64), (
         pm.fill_path(&circle(r)?, &paint(24, 24, 28, 190), FillRule::Winding, Transform::identity(), None);
         let rim = Stroke { width: (h * 0.06).max(1.5), ..Stroke::default() };
         pm.stroke_path(&circle(r)?, &paint(255, 255, 255, 235), &rim, Transform::identity(), None);
-        return Some((pm.encode_png().ok()?, (c as f64, c as f64), (size, size)));
+        return Some((pm, (c as f64, c as f64)));
     }
-    // The classic arrow, tip at the hotspot: white with a dark rim and shadow.
-    let shape = [(0., 0.), (0., 0.8), (0.19, 0.62), (0.33, 0.95), (0.46, 0.89), (0.32, 0.57), (0.57, 0.57)];
-    let (w, hh) = ((0.6 * h + 2. * pad).ceil() as u32, (h + 2. * pad).ceil() as u32);
-    let mut pm = Pixmap::new(w, hh)?;
-    let path = |dx: f32, dy: f32| {
-        let mut b = PathBuilder::new();
-        for (i, &(x, y)) in shape.iter().enumerate() {
-            let (x, y) = (pad + dx + x * h, pad + dy + y * h);
-            if i == 0 { b.move_to(x, y) } else { b.line_to(x, y) }
-        }
-        b.close();
-        b.finish()
-    };
-    let rim = Stroke { width: (h * 0.09).max(1.5), line_join: LineJoin::Round, line_cap: LineCap::Round, ..Stroke::default() };
-    let shadow = path(h * 0.03, h * 0.07)?;
-    pm.fill_path(&shadow, &paint(0, 0, 0, 60), FillRule::Winding, Transform::identity(), None);
-    pm.stroke_path(&shadow, &paint(0, 0, 0, 60), &rim, Transform::identity(), None);
-    let arrow = path(0., 0.)?;
-    pm.stroke_path(&arrow, &paint(20, 20, 22, 255), &rim, Transform::identity(), None);
-    pm.fill_path(&arrow, &paint(255, 255, 255, 255), FillRule::Winding, Transform::identity(), None);
-    Some((pm.encode_png().ok()?, (pad as f64, pad as f64), (w, hh)))
+    // A macOS-like picture of the pointer's shape, the arrow `h` tall.
+    crate::cursors::render(shape, h)
 }
 
 fn ease(x: f64) -> f64 {
@@ -1005,13 +1099,11 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     // shortcut pills on the finished frame. Inputs 0 and 1 are the video and
     // the backdrop; the overlays follow.
     let cursor = if track.cursor_hidden && project.cursor {
-        let (png, hot, _) = cursor_image(project.cursor_style, cursor_height(&track, &p, project.cursor_size)).ok_or(t("studio.couldnt_draw_cursor"))?;
-        let file = tmp.join("cursor.png");
-        std::fs::write(&file, png).map_err(|e| e.to_string())?;
         let path = cursor_path(&track, &p, project.cursor_smooth);
-        let motion = project.cursor_motion.then(|| cursor_motion(&path, &p));
-        let size = image::image_dimensions(&file).map(|(w, h)| (w as f64, h as f64)).unwrap_or((32., 32.));
-        Some(overlays::Cursor { png: file, hot, size, path, motion, trail: project.motion_blur > 0 })
+        let (list, side) = cursor_frames(&track, &path, &p, project, &tmp).ok_or(t("studio.couldnt_draw_cursor"))?;
+        let motion = project.cursor_motion.then(|| cursor_motion(&path, &track, &p));
+        let half = side as f64 / 2.;
+        Some(overlays::Cursor { list, hot: (half, half), size: (side as f64, side as f64), path, motion, trail: project.motion_blur > 0 })
     } else {
         None
     };
@@ -1192,7 +1284,8 @@ mod overlays {
     /// The drawn cursor: its picture, hotspot and size, its path in video
     /// pixels, how it tilts and grows, and whether it leaves a blur trail.
     pub struct Cursor {
-        pub png: std::path::PathBuf,
+        /// Its pictures over time, as a concat list (see `cursor_frames`).
+        pub list: std::path::PathBuf,
         pub hot: (f64, f64),
         pub size: (f64, f64),
         pub path: Vec<(f64, f64, f64)>,
@@ -1257,19 +1350,20 @@ mod overlays {
                 let ys: Vec<(f64, f64)> = c.path.iter().map(|&(t, _, y)| (t + lag, y)).collect();
                 (super::expr(&super::simplify(&xs, 0.6), 1), super::expr(&super::simplify(&ys, 0.6), 1))
             };
-            o.inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), p.fps.clone().into(), "-i".into(), c.png.clone().into()]);
+            let fps = &p.fps;
+            o.inputs.extend(["-f".into(), "concat".into(), "-safe".into(), "0".into(), "-i".into(), c.list.clone().into()]);
             let shape = match &c.motion {
                 Some(motion) => {
                     let angles: Vec<(f64, f64)> = motion.iter().map(|&(t, a, _)| (t, a)).collect();
                     let scales: Vec<(f64, f64)> = motion.iter().map(|&(t, _, s)| (t, s)).collect();
                     let (ae, se) = (super::expr(&super::simplify(&angles, 0.004), 4), super::expr(&super::simplify(&scales, 0.004), 4));
                     format!(
-                        "format=rgba,scale=w='trunc({w0}*({se})/2)*2':h='trunc({h0}*({se})/2)*2':eval=frame,\
+                        "fps={fps},format=rgba,scale=w='trunc({w0}*({se})/2)*2':h='trunc({h0}*({se})/2)*2':eval=frame,\
                          pad=w={boxed}:h={boxed}:x='{half}-{hx}*iw/{w0}':y='{half}-{hy}*ih/{h0}':color=black@0:eval=frame,\
                          rotate=a='{ae}':ow={boxed}:oh={boxed}:c=none"
                     )
                 }
-                None => format!("format=rgba,pad=w={boxed}:h={boxed}:x={:.1}:y={:.1}:color=black@0", half - hx, half - hy),
+                None => format!("fps={fps},format=rgba,pad=w={boxed}:h={boxed}:x={:.1}:y={:.1}:color=black@0", half - hx, half - hy),
             };
             let from = o.src.clone();
             if c.trail {

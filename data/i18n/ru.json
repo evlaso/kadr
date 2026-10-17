@@ -281,7 +281,7 @@
  "studio.couldnt_build_video": "Не удалось собрать видео",
  "studio.couldnt_draw_cursor": "не получилось нарисовать курсор",
  "studio.cursor": "Курсор",
- "studio.cursor_motion": "Наклон и рост в движении",
+ "studio.cursor_motion": "Наклон, рост и отклик на клик",
  "studio.cursor_recorded_separately": "Записан отдельно, его можно менять",
  "studio.custom": "Своя: {}",
  "studio.cut": "Вырезать",

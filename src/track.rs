@@ -45,6 +45,8 @@ pub struct Track {
     pub keystrokes: Vec<(f64, String)>,
     /// Recorded without the system cursor: the studio draws one.
     pub cursor_hidden: bool,
+    /// (t, shape) whenever the pointer's shape changed, as `cursors` names.
+    pub shapes: Vec<(f64, String)>,
 }
 
 impl Track {
@@ -70,6 +72,12 @@ impl Track {
                 .filter_map(|k| Some((k[0].as_f64()?, k[1].as_str()?.to_owned())))
                 .collect(),
             cursor_hidden: v["cursor_hidden"].as_bool().unwrap_or(false),
+            shapes: v["shapes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|k| Some((k[0].as_f64()?, crate::cursors::known(k[1].as_str()?).to_owned())))
+                .collect(),
         })
     }
 
@@ -95,8 +103,9 @@ pub struct Tracker {
 
 impl Tracker {
     /// Samples at ~60 Hz on the entity's context. `clock` returns seconds of
-    /// recorded video so far, or None while paused.
-    pub fn start<T: 'static>(cx: &mut Context<T>, show_keys: bool, clock: impl Fn(&T) -> Option<f64> + 'static) -> Tracker {
+    /// recorded video so far, or None while paused. With `shapes` it also
+    /// notes the pointer's shape, for the cursor the studio draws.
+    pub fn start<T: 'static>(cx: &mut Context<T>, show_keys: bool, shapes: bool, clock: impl Fn(&T) -> Option<f64> + 'static) -> Tracker {
         let log = input_log();
         let _ = std::fs::write(&log, b"");
         if show_keys {
@@ -104,6 +113,7 @@ impl Tracker {
         }
         let data = Rc::new(RefCell::new(Track::default()));
         let shared = data.clone();
+        let watch = shapes.then(crate::platform::CursorShapes::start).flatten();
         let task = cx.spawn(async move |this, cx| {
             let offset = Cell::new(0u64);
             let mut last_key = f64::NEG_INFINITY;
@@ -118,6 +128,13 @@ impl Tracker {
                     let moved = d.cursor.last().is_none_or(|l| l.1 != x || l.2 != y || t - l.0 > 0.5);
                     if moved {
                         d.cursor.push((t, x, y));
+                    }
+                }
+                // Stamped with when it was seen, not when it's read here.
+                if let Some((shape, ago)) = watch.as_ref().and_then(|w| w.current()) {
+                    if d.shapes.last().is_none_or(|l| l.1 != shape) {
+                        let seen = (t - ago).max(d.shapes.last().map_or(0., |l| l.0)).max(0.);
+                        d.shapes.push((seen, shape.to_owned()));
                     }
                 }
                 for line in read_new(&log, &offset).lines() {
@@ -172,6 +189,7 @@ impl Tracker {
             "keys": d.keys.iter().map(|&t| r(t)).collect::<Vec<_>>(),
             "keystrokes": d.keystrokes.iter().map(|(t, k)| json!([r(*t), k])).collect::<Vec<_>>(),
             "cursor_hidden": cursor_hidden,
+            "shapes": d.shapes.iter().map(|(t, s)| json!([r(*t), s])).collect::<Vec<_>>(),
         });
         let path = path_for(video);
         if let Some(dir) = path.parent() {
@@ -223,6 +241,13 @@ pub fn trim(original: &Path, trimmed: &Path, start: f64, end: f64) {
         for k in list.iter_mut() {
             k[0] = json!(k[0].as_f64().unwrap_or(0.) - start);
         }
+    }
+    if let Some(list) = v["shapes"].as_array_mut() {
+        // The shape the pointer had at `start` carries on from 0.
+        let before = list.iter().rposition(|k| k[0].as_f64().is_some_and(|t| t <= start));
+        let mut kept: Vec<serde_json::Value> = before.map(|i| json!([0., list[i][1].clone()])).into_iter().collect();
+        kept.extend(list.iter().filter(|k| k[0].as_f64().is_some_and(|t| t > start && t <= end)).map(|k| json!([k[0].as_f64().unwrap_or(0.) - start, k[1].clone()])));
+        *list = kept;
     }
     if let Some(keys) = v["keys"].as_array_mut() {
         keys.retain(|t| t.as_f64().is_some_and(keep));

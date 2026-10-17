@@ -78,7 +78,7 @@ impl Opts {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        let get = |k: &str| v[k].as_bool().unwrap_or(false);
+        let get = |k: &str| v[k].as_bool().unwrap_or(k == "studio");
         let mic_device = v["mic_device"].as_str().unwrap_or_default().to_owned();
         let countdown = v["countdown"].as_u64().map(|n| n as u32).filter(|n| COUNTDOWNS.contains(n)).unwrap_or(3);
         Opts { mic: get("mic"), mic_device, audio: get("audio"), webcam: get("webcam"), keys: get("keys"), studio: get("studio"), countdown }
@@ -361,7 +361,7 @@ impl Recorder {
             windows.extend(open_frame(&target, cx));
         }
         windows.extend(self.open_indicator(&target, clock.clone(), cx));
-        let tracker = Tracker::start(cx, keys, |rec: &Recorder| rec.clock());
+        let tracker = Tracker::start(cx, keys, studio, |rec: &Recorder| rec.clock());
         self.state = State::Recording(Session {
             gsr: pid,
             file,

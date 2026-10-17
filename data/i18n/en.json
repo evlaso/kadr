@@ -281,7 +281,7 @@
  "studio.couldnt_build_video": "Couldn’t build the video",
  "studio.couldnt_draw_cursor": "couldn’t draw the cursor",
  "studio.cursor": "Cursor",
- "studio.cursor_motion": "Tilt and grow when moving",
+ "studio.cursor_motion": "Tilt, grow and bounce on clicks",
  "studio.cursor_recorded_separately": "Recorded separately, so it can be changed",
  "studio.custom": "Custom: {}",
  "studio.cut": "Cut",
