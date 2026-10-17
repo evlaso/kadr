@@ -2067,8 +2067,9 @@ impl Editor {
                         cx.notify();
                     })),
             );
-        // One pill, its groups apart with a little space.
-        let tools = h_flex().p(px(2.)).gap(px(6.)).rounded(px(11.)).rounded_smoothing(crate::ui::SMOOTHING).bg(cx.theme().colors().element_background).children(groups);
+        // Bare icons like CleanShot's, only the chosen one filled; the
+        // groups apart with a little space.
+        let tools = h_flex().gap(px(6.)).children(groups);
         // Solid or outline, for boxes and ellipses.
         let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
             || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
@@ -2220,7 +2221,7 @@ impl Editor {
         };
 
         // The window's controls (or room for them), the modes and history at
-        // the left; the tools and their style in the middle.
+        // the left; the tools in the middle; their style at the right.
         let left = h_flex()
             .flex_1()
             .min_w_0()
@@ -2231,8 +2232,15 @@ impl Editor {
             .child(div().w(px(6.)))
             .child(history)
             .child(kit::drags_window(div().flex_1().h_full()));
-        let right = h_flex().flex_1().min_w_0().h_full().justify_end().child(kit::drags_window(div().flex_1().h_full())).children(kit::window_controls(true, cx));
-        self.top_bar(width, cx).child(left).child(h_flex().flex_none().gap_3().child(tools).child(style)).child(right).into_any_element()
+        let right = h_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .justify_end()
+            .child(kit::drags_window(div().flex_1().h_full()))
+            .child(h_flex().pr_2().child(style))
+            .children(kit::window_controls(true, cx));
+        self.top_bar(width, cx).child(left).child(h_flex().flex_none().child(tools)).child(right).into_any_element()
     }
 
     /// The bar along the window's top, for the editing and the crop modes.
