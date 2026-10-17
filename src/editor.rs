@@ -1436,13 +1436,22 @@ impl Editor {
             }
             Some(Drag::Draw) => {
                 if let Some(shape) = self.draft.take() {
-                    let tiny = (shape.a.0 - shape.b.0).abs() < 3. && (shape.a.1 - shape.b.1).abs() < 3.;
-                    let freehand = matches!(shape.kind, Kind::Pen(ref p) | Kind::Marker(ref p) if p.len() > 1);
-                    if !tiny || freehand {
+                    // A click, or a stroke that barely moved, draws nothing.
+                    let tiny = match &shape.kind {
+                        Kind::Pen(_) | Kind::Marker(_) => {
+                            let (l, t, r, b) = shape.bounds();
+                            let pad = shape.size;
+                            r - l - pad < 3. && b - t - pad < 3.
+                        }
+                        _ => (shape.a.0 - shape.b.0).abs() < 3. && (shape.a.1 - shape.b.1).abs() < 3.,
+                    };
+                    // Like CleanShot, what's just drawn isn't selected: the
+                    // next stroke starts right away.
+                    if !tiny {
                         self.checkpoint();
                         self.doc.shapes.push(shape);
                         let index = self.doc.shapes.len() - 1;
-                        self.selected = Some(index);
+                        self.selected = None;
                         self.refresh_patch(index, cx);
                     }
                 }
