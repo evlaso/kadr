@@ -286,6 +286,7 @@ mod tests {
                 Shape { kind: Kind::Text("hi".into()), a: (5., 5.), b: (5., 5.), color: red, size: 20., filled: false, text: TextStyle::Outline, bend: None },
             ],
             crop: Some(((0., 0.), (10., 10.))),
+            ..Doc::default()
         };
         let target = tmp.join("Shot.kadr");
         save_bundle(&target, b"result", b"original", &doc, &Frame::default()).unwrap();
