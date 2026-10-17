@@ -48,7 +48,9 @@ pub(super) fn load(path: &Path, bytes: &[u8]) -> Option<Restored> {
     let base = std::fs::read(dir.join("base.png")).ok()?;
     let shapes = v["shapes"].as_array()?.iter().filter_map(|s| shape_from_json(s, &dir)).collect();
     let crop = v["crop"].as_array().and_then(|c| Some((point(c.first()?)?, point(c.get(1)?)?)));
-    Some(Restored { base, doc: Doc { shapes, crop }, frame: Frame::from_json(&v["frame"]) })
+    let view = super::crop::Orientation { turns: v["view"]["turns"].as_u64().unwrap_or(0) as u8 % 4, mirrored: v["view"]["mirrored"].as_bool().unwrap_or(false) };
+    let scale = v["scale"].as_f64().map_or(1., |s| (s as f32).clamp(0.05, 1.));
+    Some(Restored { base, doc: Doc { shapes, crop, view, scale }, frame: Frame::from_json(&v["frame"]) })
 }
 
 /// Keep `doc` and `frame` drawn over `base` for `path`, whose contents are
@@ -56,7 +58,7 @@ pub(super) fn load(path: &Path, bytes: &[u8]) -> Option<Restored> {
 pub(super) fn save(path: &Path, output: &[u8], base: &[u8], doc: &Doc, frame: &Frame) -> std::io::Result<()> {
     let dir = dir_for(path);
     let _ = std::fs::remove_dir_all(&dir);
-    if doc.shapes.is_empty() && doc.crop.is_none() && !frame.on() {
+    if doc.shapes.is_empty() && doc.crop.is_none() && doc.view.is_upright() && doc.scale == 1. && !frame.on() {
         return Ok(());
     }
     std::fs::create_dir_all(&dir)?;
@@ -76,6 +78,8 @@ pub(super) fn save(path: &Path, output: &[u8], base: &[u8], doc: &Doc, frame: &F
         "output_hash": format!("{:016x}", fnv(output)),
         "frame": frame.to_json(),
         "crop": doc.crop.map(|(a, b)| json!([[a.0, a.1], [b.0, b.1]])),
+        "view": { "turns": doc.view.turns, "mirrored": doc.view.mirrored },
+        "scale": doc.scale,
         "shapes": shapes,
     });
     std::fs::write(dir.join("project.json"), serde_json::to_string(&v).unwrap_or_default())
@@ -221,7 +225,7 @@ mod tests {
         let file = tmp.join("shot.png");
         std::fs::write(&file, b"annotated").unwrap();
         let red = gpui::hsla(0., 1., 0.5, 1.);
-        let doc = Doc { shapes: vec![Shape { kind: Kind::Rect, a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None }], crop: Some(((0., 0.), (10., 10.))) };
+        let doc = Doc { shapes: vec![Shape { kind: Kind::Rect, a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None }], crop: Some(((0., 0.), (10., 10.))), ..Doc::default() };
         save(&file, b"annotated", b"original", &doc, &Frame::default()).unwrap();
         let back = load(&file, b"annotated").expect("the project is there");
         assert_eq!(back.base, b"original");
