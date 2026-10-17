@@ -35,7 +35,13 @@ pub fn copy_text(text: &str) {
 
 /// Put a file (not its contents) on the clipboard, for pasting into chats and file managers.
 pub fn copy_file(path: &Path) {
-    spawn(&["wl-copy", "--type", "text/uri-list", &format!("{}\r\n", file_uri(path))]);
+    copy_files(&[path]);
+}
+
+/// Several files at once, as one list.
+pub fn copy_files(paths: &[&Path]) {
+    let list: String = paths.iter().map(|p| format!("{}\r\n", file_uri(p))).collect();
+    spawn(&["wl-copy", "--type", "text/uri-list", &list]);
 }
 
 pub fn notify(title: &str, body: &str) {

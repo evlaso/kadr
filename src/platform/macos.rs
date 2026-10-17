@@ -36,6 +36,13 @@ pub fn copy_file(path: &Path) {
     spawn(&["osascript", "-e", &script]);
 }
 
+/// Several files: only the first for now.
+pub fn copy_files(paths: &[&Path]) {
+    if let Some(path) = paths.first() {
+        copy_file(path);
+    }
+}
+
 pub fn notify(title: &str, body: &str) {
     let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     spawn(&["osascript", "-e", &format!("display notification \"{}\" with title \"{}\"", quote(body), quote(title))]);

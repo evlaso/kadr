@@ -81,8 +81,12 @@ pub struct History {
     items: Vec<Item>,
     query: String,
     filter: Filter,
-    /// Index into `visible()`.
+    /// Index into `visible()`: the current tile, and where a Shift-click
+    /// range starts.
     selected: usize,
+    /// Tiles picked with Ctrl or Shift (indices into `items`); the actions
+    /// work on all of them. Empty: just the current one.
+    picked: std::collections::BTreeSet<usize>,
     /// Items per row and their width, from the last layout.
     columns: usize,
     item_width: f32,
@@ -95,9 +99,12 @@ pub struct History {
 /// Files kadr and Omarchy save, newest first.
 fn scan() -> Vec<Item> {
     let settings = crate::settings::Settings::load();
-    let mut items: Vec<Item> = [(settings.screenshot_dir(), "screenshot-"), (settings.video_dir(), "screenrecording-")]
+    let mut dirs = vec![settings.screenshot_dir(), settings.video_dir()];
+    dirs.dedup();
+    let template = &settings.name_template;
+    let mut items: Vec<Item> = dirs
         .into_iter()
-        .flat_map(|(dir, prefix)| {
+        .flat_map(|dir| {
             std::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(move |entry| {
                 let path = entry.path();
                 let name = path.file_name()?.to_string_lossy().into_owned();
@@ -108,7 +115,7 @@ fn scan() -> Vec<Item> {
                     "mp4" | "mkv" | "webm" | "mov" => Kind::Video,
                     _ => return None,
                 };
-                if !name.starts_with(prefix) {
+                if !crate::storage::is_capture(&path, template) {
                     return None;
                 }
                 let modified = entry.metadata().ok()?.modified().ok()?;
@@ -205,7 +212,7 @@ pub fn open(cx: &mut App) {
                 }
             })
             .detach();
-            History { items, query: String::new(), filter: Filter::All, selected: 0, columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus }
+            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus }
         })
     });
 }
@@ -223,6 +230,36 @@ impl History {
 
     fn current(&self) -> Option<usize> {
         self.visible().get(self.selected).copied()
+    }
+
+    /// What the actions work on: the picked tiles, or the current one.
+    fn targets(&self) -> Vec<usize> {
+        if self.picked.is_empty() { self.current().into_iter().collect() } else { self.picked.iter().copied().collect() }
+    }
+
+    /// A click: Ctrl adds or takes away a tile, Shift picks the range from
+    /// the current one; a plain click picks just that one.
+    fn click(&mut self, position: usize, ctrl: bool, shift: bool) {
+        let visible = self.visible();
+        if shift {
+            let (a, b) = (self.selected.min(position), self.selected.max(position));
+            self.picked.extend(visible[a..=b.min(visible.len().saturating_sub(1))].iter().copied());
+        } else if ctrl {
+            // The current tile counts as picked once the picking starts.
+            if self.picked.is_empty()
+                && let Some(i) = self.current()
+            {
+                self.picked.insert(i);
+            }
+            let i = visible[position];
+            if !self.picked.remove(&i) {
+                self.picked.insert(i);
+            }
+            self.selected = position;
+        } else {
+            self.picked.clear();
+            self.selected = position;
+        }
     }
 
     fn select(&mut self, index: usize) {
@@ -250,22 +287,37 @@ impl History {
         }
     }
 
-    fn copy(&self, index: usize) {
-        if let Some(item) = self.items.get(index) {
-            match item.kind {
-                Kind::Shot => util::copy_image(&item.path),
-                _ => util::copy_file(&item.path),
-            }
+    /// One picture goes on the clipboard as a picture; anything else (or
+    /// several) as files.
+    fn copy(&self, indices: &[usize]) {
+        match indices {
+            [i] if self.items.get(*i).is_some_and(|it| it.kind == Kind::Shot) => util::copy_image(&self.items[*i].path),
+            _ => util::copy_files(&indices.iter().filter_map(|&i| self.items.get(i)).map(|it| it.path.as_path()).collect::<Vec<_>>()),
         }
     }
 
-    fn delete(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.items.len() {
-            util::trash(&self.items[index].path);
-            self.items.remove(index);
-            let count = self.visible().len();
-            self.selected = self.selected.min(count.saturating_sub(1));
-            cx.notify();
+    fn delete(&mut self, indices: &[usize], cx: &mut Context<Self>) {
+        let mut indices: Vec<usize> = indices.iter().copied().filter(|&i| i < self.items.len()).collect();
+        indices.sort_unstable();
+        // From the end, so the indices left stay right.
+        for &i in indices.iter().rev() {
+            util::trash(&self.items[i].path);
+            self.items.remove(i);
+        }
+        self.picked.clear();
+        let count = self.visible().len();
+        self.selected = self.selected.min(count.saturating_sub(1));
+        cx.notify();
+    }
+
+    fn pin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shots: Vec<PathBuf> = self.targets().into_iter().filter(|&i| self.items[i].kind == Kind::Shot).map(|i| self.items[i].path.clone()).collect();
+        if shots.is_empty() {
+            return;
+        }
+        window.remove_window();
+        for path in shots {
+            pin::open(path, cx);
         }
     }
 
@@ -278,7 +330,10 @@ impl History {
             ("escape", _) if !self.query.is_empty() => {
                 self.query.clear();
                 self.selected = 0;
+                self.picked.clear();
             }
+            ("escape", _) if !self.picked.is_empty() => self.picked.clear(),
+            ("a", true) => self.picked = self.visible().into_iter().collect(),
             ("escape", _) => return window.remove_window(),
             ("left", _) => self.select(self.selected.saturating_sub(1)),
             ("right", _) => self.select(self.selected + 1),
@@ -290,8 +345,9 @@ impl History {
                 }
             }
             ("c", true) => {
-                if let Some(i) = current {
-                    self.copy(i);
+                let targets = self.targets();
+                if !targets.is_empty() {
+                    self.copy(&targets);
                     return window.remove_window();
                 }
             }
@@ -299,15 +355,16 @@ impl History {
                 let i = Filter::ALL.iter().position(|(f, _)| *f == self.filter).unwrap_or(0);
                 self.filter = Filter::ALL[(i + 1) % Filter::ALL.len()].0;
                 self.selected = 0;
+                self.picked.clear();
             }
             ("delete", _) => {
-                if let Some(i) = current {
-                    self.delete(i, cx);
-                }
+                let targets = self.targets();
+                self.delete(&targets, cx);
             }
             ("backspace", _) => {
                 self.query.pop();
                 self.selected = 0;
+                self.picked.clear();
             }
             // Single-letter shortcuts only when not typing a search.
             ("e", false) if self.query.is_empty() => {
@@ -315,16 +372,12 @@ impl History {
                     return self.open_item(i, true, window, cx);
                 }
             }
-            ("p", false) if self.query.is_empty() => {
-                if let Some(i) = current.filter(|&i| self.items[i].kind == Kind::Shot) {
-                    window.remove_window();
-                    return pin::open(self.items[i].path.clone(), cx);
-                }
-            }
+            ("p", false) if self.query.is_empty() => return self.pin(window, cx),
             (_, false) => {
                 if let Some(ch) = k.key_char.as_deref().filter(|c| !c.chars().any(char::is_control)) {
                     self.query.push_str(ch);
                     self.selected = 0;
+                    self.picked.clear();
                 }
             }
             _ => {}
@@ -334,7 +387,7 @@ impl History {
 
     fn render_item(&self, index: usize, position: usize, cx: &mut Context<Self>) -> AnyElement {
         let item = &self.items[index];
-        let selected = position == self.selected;
+        let selected = if self.picked.is_empty() { position == self.selected } else { self.picked.contains(&index) };
         let colors = cx.theme().colors();
         let group: SharedString = format!("item-{index}").into();
         let path = item.path.clone();
@@ -372,7 +425,7 @@ impl History {
                     .justify_center()
                     .gap_1p5()
                     .child(wide("copy", t("common.copy")).tooltip(Tooltip::text(t("history.copy_ctrl_c"))).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
-                        this.copy(index);
+                        this.copy(&[index]);
                         window.remove_window();
                     })))
                     .when(item.kind != Kind::Gif, |col| {
@@ -386,7 +439,14 @@ impl History {
                 let path = path.clone();
                 move |_, _, _| util::open_folder(&path)
             })))
-            .child(div().absolute().bottom(px(INSET)).right(px(INSET)).child(corner("trash", IconName::Trash, t("history.delete_del")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(index, cx)))));
+            .child(div().absolute().bottom(px(INSET)).right(px(INSET)).child(corner("trash", IconName::Trash, t("history.delete_del")).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.delete(&[index], cx)))))
+            .when(item.kind == Kind::Shot, |d| {
+                d.child(div().absolute().bottom(px(INSET)).left(px(INSET)).child(corner("pin", IconName::Pin, t("history.pin_p")).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    let path = this.items[index].path.clone();
+                    window.remove_window();
+                    pin::open(path, cx);
+                }))))
+            });
 
         // A recording's length (or "GIF") on a frosted pill.
         let badge = match item.kind {
@@ -451,8 +511,9 @@ impl History {
                     .child(Label::new(kind).size(LabelSize::Small).color(Color::Muted))
             })
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, window, cx| {
-                this.selected = position;
-                if e.click_count == 2 {
+                let m = e.modifiers;
+                this.click(position, m.control || m.platform, m.shift);
+                if e.click_count == 2 && !(m.control || m.platform || m.shift) {
                     this.open_item(index, false, window, cx);
                 }
                 cx.notify();
@@ -572,8 +633,10 @@ impl Render for History {
                             .child(hint("e", t("history.editor_trim")))
                             .child(hint("ctrl-c", t("common.copy")))
                             .child(hint("delete", t("history.delete_selected")))
+                            .child(hint("p", t("history.pin")))
                             .child(hint("tab", t("history.filter")))
                             .child(div().flex_1())
+                            .when(self.picked.len() > 1, |bar| bar.child(Label::new(tr!("history.n_selected", self.picked.len())).size(LabelSize::Small).color(Color::Accent)))
                             .child(hint("escape", t("common.close"))),
                     ),
             )

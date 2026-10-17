@@ -1,7 +1,8 @@
 //! Text recognition, like CleanShot's "Capture Text": pick an area (or use
 //! a screenshot you already have), the text goes to the clipboard and a
 //! card like a screenshot's shows what was found. Tesseract does the reading, with
-//! every installed language that matters here.
+//! every installed language that matters here; QR codes are read too (with
+//! zbar, when it's installed), and links found either way can be opened.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -18,9 +19,10 @@ pub fn region(cx: &mut App) {
     cx.spawn(async move |cx| {
         let _hold = hold;
         let Some(png) = grab_region(cx).await else { return };
+        let codes = qr_codes(&png).await;
         let text = recognize(&png, Layout::Block).await;
         let _ = std::fs::remove_file(&png);
-        let _ = cx.update(|cx| done(text, cx));
+        let _ = cx.update(|cx| done(text, codes, cx));
     })
     .detach();
 }
@@ -30,8 +32,9 @@ pub fn image(path: PathBuf, cx: &mut App) {
     let hold = kit::hold(cx);
     cx.spawn(async move |cx| {
         let _hold = hold;
+        let codes = qr_codes(&path).await;
         let text = recognize(&path, Layout::Auto).await;
-        let _ = cx.update(|cx| done(text, cx));
+        let _ = cx.update(|cx| done(text, codes, cx));
     })
     .detach();
 }
@@ -117,11 +120,47 @@ async fn recognize(png: &Path, layout: Layout) -> Option<String> {
     (ok && !text.is_empty()).then_some(text)
 }
 
-fn done(text: Option<String>, cx: &mut App) {
+/// What QR codes (and bar codes) in the picture say; nothing without zbar.
+async fn qr_codes(png: &Path) -> Vec<String> {
+    let Some((_, out)) = util::output::<&OsStr>(&["zbarimg".as_ref(), "--quiet".as_ref(), "--raw".as_ref(), png.as_os_str()]).await else {
+        return Vec::new();
+    };
+    out.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect()
+}
+
+/// Web links in a text: http(s):// and www. ones, without the punctuation
+/// a sentence puts after them.
+pub fn links(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for word in text.split(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '«' | '»')) {
+        let word = word.trim_start_matches(['(', '[', '\'']).trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '\'']);
+        let lower = word.to_ascii_lowercase();
+        let link = if lower.starts_with("https://") || lower.starts_with("http://") {
+            word.to_owned()
+        } else if lower.starts_with("www.") && word.len() > 6 {
+            format!("https://{word}")
+        } else {
+            continue;
+        };
+        if link.len() > "https://".len() + 3 && !found.contains(&link) {
+            found.push(link);
+        }
+    }
+    found
+}
+
+/// QR codes first (they're what a picture with one is about), then the text.
+fn done(text: Option<String>, codes: Vec<String>, cx: &mut App) {
+    let text = match (codes.is_empty(), text) {
+        (true, text) => text,
+        (false, None) => Some(codes.join("\n")),
+        (false, Some(text)) => Some(format!("{}\n\n{text}", codes.join("\n"))),
+    };
     if let Some(text) = &text {
         crate::platform::copy_text(text);
     }
-    crate::cards::show_text(text, cx);
+    let link = text.as_deref().map(links).and_then(|l| l.into_iter().next());
+    crate::cards::show_text(text, link, cx);
 }
 
 /// Fetch Tesseract's official Russian model into kadr's own folder (no root
@@ -148,5 +187,16 @@ pub async fn download_russian() -> Result<(), String> {
             let _ = std::fs::remove_file(&out);
             Err(t("ocr.couldnt_download_model").into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_links_in_text() {
+        assert_eq!(links("see https://kadr.app/docs. Or (www.example.com), not www."), vec!["https://kadr.app/docs", "https://www.example.com"]);
+        assert!(links("no links here, just http:// alone").is_empty());
     }
 }

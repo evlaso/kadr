@@ -88,6 +88,14 @@ assets![
     "icons/kadr/skip_forward.svg" => "../data/icons/editor/skip_forward.svg",
     // Zed has no camera icon.
     "icons/kadr/camera.svg" => "../data/icons/kadr-camera-symbolic.svg",
+    // Settings sections, the pin's lock and links, in the same style.
+    "icons/kadr/record.svg" => "../data/icons/settings/record.svg",
+    "icons/kadr/studio.svg" => "../data/icons/settings/studio.svg",
+    "icons/kadr/storage.svg" => "../data/icons/settings/storage.svg",
+    "icons/kadr/info.svg" => "../data/icons/settings/info.svg",
+    "icons/kadr/lock.svg" => "../data/icons/settings/lock.svg",
+    "icons/kadr/unlock.svg" => "../data/icons/settings/unlock.svg",
+    "icons/kadr/link.svg" => "../data/icons/settings/link.svg",
 ];
 
 /// Icons are compiled into the binary.

@@ -34,6 +34,11 @@ pub fn copy_file(path: &Path) {
     powershell(&format!("Set-Clipboard -Path '{}'", path.display()));
 }
 
+pub fn copy_files(paths: &[&Path]) {
+    let list: Vec<String> = paths.iter().map(|p| format!("'{}'", p.display().to_string().replace('\'', "''"))).collect();
+    powershell(&format!("Set-Clipboard -Path {}", list.join(",")));
+}
+
 pub fn notify(title: &str, body: &str) {
     eprintln!("kadr: {title}: {body}");
 }

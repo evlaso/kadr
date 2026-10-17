@@ -18,6 +18,7 @@ use crate::ui::{Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::settings::{Settings, Side};
+use crate::storage::Capture;
 use crate::{editor, job, ocr, pin, studio_editor, track, trim, util};
 use crate::i18n::t;
 
@@ -63,6 +64,8 @@ struct Card {
     /// A text card (recognized text) instead of a file: the text, or None
     /// when nothing was found.
     text: Option<Option<String>>,
+    /// A link in that text (or a QR code), to open from the card.
+    link: Option<String>,
     /// A job still working on this video: its progress and title. The card
     /// shows the video blurred until the job hands over its result.
     job: Option<(Rc<job::Job>, &'static str)>,
@@ -85,7 +88,14 @@ pub struct CardStack {
     /// Whether the pointer is over this layer. GPUI keeps the last pointer
     /// position after it leaves, so hover on its own would stick.
     inside: bool,
+    /// A card being swiped toward the screen edge: its id, where the press
+    /// was, and how far it has moved. Swiped far enough, it goes away;
+    /// dragged the other way, it's a file drag as before.
+    swipe: Option<(usize, f32, f32)>,
 }
+
+/// How far a card has to be swiped to go away.
+const SWIPE_AWAY: f32 = CARD_WIDTH * 0.3;
 
 /// Show a card for a screenshot or recording.
 pub fn show(path: PathBuf, cx: &mut App) {
@@ -103,12 +113,58 @@ pub fn show(path: PathBuf, cx: &mut App) {
         };
         match loaded {
             Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(Card { id: 0, path, image: Some(image), text: None, job: None, height, video, deadline: Instant::now(), hovered: false }, cx));
+                let _ = cx.update(|cx| add(Card { id: 0, path, image: Some(image), text: None, link: None, job: None, height, video, deadline: Instant::now(), hovered: false }, cx));
             }
             None => util::notify(t("card.couldnt_open_file"), &path.display().to_string()),
         }
     })
     .detach();
+}
+
+/// What happens to a fresh capture, as set in the settings: copied, shown in
+/// a card, opened in the editor or the studio, pinned; kept in the captures
+/// folder or moved to a temporary one.
+pub fn after_capture(path: PathBuf, kind: Capture, cx: &mut App) {
+    let settings = Settings::load();
+    let after = match kind {
+        Capture::Screenshot => settings.after_shot,
+        Capture::Recording => settings.after_video,
+    };
+    let path = if after.save { path } else { unsaved(&path).unwrap_or(path) };
+    if after.copy {
+        match kind {
+            Capture::Screenshot => util::copy_image(&path),
+            Capture::Recording => util::copy_file(&path),
+        }
+    }
+    if after.card {
+        show(path.clone(), cx);
+    }
+    match kind {
+        Capture::Screenshot => {
+            if after.pin {
+                pin::open(path.clone(), cx);
+            }
+            if after.edit {
+                editor::open(path, cx);
+            }
+        }
+        Capture::Recording if after.edit => studio_editor::open(path, cx),
+        Capture::Recording => {}
+    }
+}
+
+/// Move a capture out of the captures folder into a temporary one, under the
+/// same name (so a recording's click log still finds it).
+fn unsaved(path: &Path) -> Option<PathBuf> {
+    let dir = util::runtime_dir().join("kadr-unsaved");
+    std::fs::create_dir_all(&dir).ok()?;
+    let to = dir.join(path.file_name()?);
+    if std::fs::rename(path, &to).is_err() {
+        std::fs::copy(path, &to).ok()?;
+        let _ = std::fs::remove_file(path);
+    }
+    Some(to)
 }
 
 /// Hide the overlay while a screenshot is taken. Returns whether it was visible.
@@ -125,8 +181,8 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
 }
 
 /// A card with recognized text (copied already), or with "nothing found".
-pub fn show_text(text: Option<String>, cx: &mut App) {
-    add(Card { id: 0, path: PathBuf::new(), image: None, text: Some(text), job: None, height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
+pub fn show_text(text: Option<String>, link: Option<String>, cx: &mut App) {
+    add(Card { id: 0, path: PathBuf::new(), image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
 }
 
 /// A card for a job on `source` (an export, a trim, a GIF): the video's
@@ -134,7 +190,7 @@ pub fn show_text(text: Option<String>, cx: &mut App) {
 /// `complete`.
 pub fn show_job(job: Rc<job::Job>, title: &'static str, source: PathBuf, cx: &mut App) -> usize {
     let id = NEXT_CARD.fetch_add(1, Ordering::Relaxed);
-    add(Card { id, path: source.clone(), image: None, text: None, job: Some((job, title)), height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
+    add(Card { id, path: source.clone(), image: None, text: None, link: None, job: Some((job, title)), height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
     cx.spawn(async move |cx| {
         if let Some((image, _, _)) = video_preview(&source, cx).await {
             let _ = cx.update(|cx| with_card(id, cx, |card| card.image = Some(image)));
@@ -241,7 +297,7 @@ fn add(card: Card, cx: &mut App) {
     let handle = kit::open_layer(cx, spec, |window, cx| {
         cx.new(|cx| {
             CardStack::start_ticking(window, cx);
-            CardStack { cards: vec![card], settings, hidden: false, region: InputRegion::default(), inside: false }
+            CardStack { cards: vec![card], settings, hidden: false, region: InputRegion::default(), inside: false, swipe: None }
         })
     });
     cx.set_global(CardsWindow(handle));
@@ -282,6 +338,29 @@ impl CardStack {
             window.remove_window();
         }
         cx.notify();
+    }
+
+    fn swipe_offset(&self, id: usize) -> f32 {
+        self.swipe.filter(|s| s.0 == id).map_or(0., |s| s.2)
+    }
+
+    /// Follow the pointer toward the screen edge, never away from it.
+    fn swipe_move(&mut self, x: f32, cx: &mut Context<Self>) {
+        let side = self.settings.card_side;
+        if let Some((_, start, offset)) = &mut self.swipe {
+            let dx = x - *start;
+            *offset = if side == Side::Right { dx.max(0.) } else { dx.min(0.) };
+            cx.notify();
+        }
+    }
+
+    fn swipe_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((id, _, offset)) = self.swipe.take() {
+            if offset.abs() > SWIPE_AWAY {
+                self.remove(id, window, cx);
+            }
+            cx.notify();
+        }
     }
 
     fn set_hover(&mut self, id: usize, hovered: bool) {
@@ -460,6 +539,8 @@ impl CardStack {
                 if e.click_count == 2 {
                     this.remove(id, window, cx);
                     edit(path.clone(), cx);
+                } else {
+                    this.swipe = Some((id, f32::from(e.position.x), 0.));
                 }
             })
         };
@@ -487,7 +568,9 @@ impl CardStack {
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(path.clone(), false)])))
             });
         // In from the screen edge the cards sit on.
-        card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
+        let swiped = self.swipe_offset(id);
+        let card_el = card_el.opacity(1. - (swiped.abs() / CARD_WIDTH).min(1.) * 0.8);
+        card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d) + swiped))).into_any_element()
     }
 }
 
@@ -570,6 +653,7 @@ impl CardStack {
                 .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
         };
         let copy = text.map(|t| t.to_owned());
+        let link = card.link.clone();
         let hover = div()
             .absolute()
             .inset_0()
@@ -577,6 +661,8 @@ impl CardStack {
             .opacity(if shown { 1. } else { 0. })
             .bg(rgba(0x00000080))
             .flex()
+            .flex_col()
+            .gap_1p5()
             .items_center()
             .justify_center()
             .when_some(copy, |d, text| {
@@ -588,6 +674,22 @@ impl CardStack {
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             crate::platform::copy_text(&text);
+                            this.remove(id, window, cx);
+                        })),
+                )
+            })
+            .when_some(link.clone(), |d, link| {
+                d.child(
+                    pill(div().id(("link", id)))
+                        .w(px(124. * kit::SCALE))
+                        .h(px(30. * kit::SCALE))
+                        .gap_1()
+                        .child(Icon::from_path("icons/kadr/link.svg").size(IconSize::Small).color(Color::Custom(ink)))
+                        .child(Label::new(t("ocr.open_link")).size(LabelSize::Small).color(Color::Custom(ink)))
+                        .tooltip(Tooltip::text(link.clone()))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            util::open_file(Path::new(&link));
                             this.remove(id, window, cx);
                         })),
                 )
@@ -623,7 +725,7 @@ impl CardStack {
                     .child(
                         h_flex()
                             .gap_1p5()
-                            .child(Icon::new(IconName::CaseSensitive).size(IconSize::Small).color(if text.is_some() { Color::Accent } else { Color::Muted }))
+                            .child(if link.is_some() { Icon::from_path("icons/kadr/link.svg") } else { Icon::new(IconName::CaseSensitive) }.size(IconSize::Small).color(if text.is_some() { Color::Accent } else { Color::Muted }))
                             .child(div().flex_1().child(Label::new(title).size(LabelSize::Small)))
                             .when_some(chars, |row, n| row.child(Label::new(tr!("ocr.chars", n)).size(LabelSize::XSmall).color(Color::Muted))),
                     )
@@ -633,7 +735,10 @@ impl CardStack {
             .child(div().absolute().left_0().right_0().bottom_0().h(px(36.)).rounded_b(px(kit::RADIUS)).bg(gpui::linear_gradient(180., gpui::linear_color_stop(clear, 0.), gpui::linear_color_stop(surface, 0.9))))
             .child(hover)
             .child(self.region.mark())
-            .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)));
+            .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, _| this.swipe = Some((id, f32::from(e.position.x), 0.))));
+        let swiped = self.swipe_offset(id);
+        let card_el = card_el.opacity(1. - (swiped.abs() / CARD_WIDTH).min(1.) * 0.8);
         card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
     }
 }
@@ -663,6 +768,13 @@ impl Render for CardStack {
             .when(self.settings.card_side == Side::Left, |d| d.pr(px(PAD)).pl(px(EDGE)))
             .gap(px(GAP))
             .children(cards)
+            // The pointer stays with this surface while the button is held.
+            .on_mouse_move(cx.listener(|this, e: &gpui::MouseMoveEvent, _, cx| {
+                if e.pressed_button == Some(MouseButton::Left) {
+                    this.swipe_move(f32::from(e.position.x), cx);
+                }
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, cx| this.swipe_end(window, cx)))
     }
 }
 

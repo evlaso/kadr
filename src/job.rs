@@ -56,7 +56,7 @@ pub struct Running {
 /// progress shows as a card that becomes the result's card when done.
 pub fn start(title: &'static str, icon: IconName, source: Option<&std::path::Path>, cx: &mut App) -> Running {
     let job = Rc::new(Job::default());
-    if let Some(source) = source.filter(|_| crate::settings::Settings::load().show_card) {
+    if let Some(source) = source.filter(|_| crate::settings::Settings::load().after_video.card) {
         let card = crate::cards::show_job(job.clone(), title, source.to_path_buf(), cx);
         return Running { job, window: None, card: Some(card), _hold: kit::hold(cx) };
     }

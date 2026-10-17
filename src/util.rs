@@ -33,7 +33,7 @@ pub async fn output<S: AsRef<OsStr>>(argv: &[S]) -> Option<(bool, String)> {
     Some((out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
-pub use crate::platform::{Signal, cache_dir, config_dir, copy_file, copy_image, cursor_pos, hypr, monitors, notify, open_file, runtime_dir, signal, trash, user_dir};
+pub use crate::platform::{Signal, cache_dir, config_dir, copy_file, copy_files, copy_image, cursor_pos, hypr, monitors, notify, open_file, runtime_dir, signal, trash, user_dir};
 
 pub fn open_folder(path: &Path) {
     if let Some(dir) = path.parent() {
@@ -44,10 +44,6 @@ pub fn open_folder(path: &Path) {
 pub fn format_duration(seconds: f64) -> String {
     let s = seconds.max(0.0) as u64;
     format!("{}:{:02}", s / 60, s % 60)
-}
-
-pub fn timestamp() -> String {
-    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
 }
 
 #[derive(Clone, Debug)]

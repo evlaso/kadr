@@ -20,12 +20,48 @@ pub const CARD_SECONDS: [u32; 4] = [5, 10, 20, 0];
 pub const MAX_CARDS: [usize; 3] = [2, 4, 6];
 pub const FPS: [u32; 2] = [30, 60];
 
+/// What happens right after a capture, like CleanShot's "After capture"
+/// list; any number of them at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct After {
+    /// The thumbnail card in the screen corner.
+    pub card: bool,
+    pub copy: bool,
+    /// Keep the file in the captures folder; off, it goes to a temporary one.
+    pub save: bool,
+    /// Open the editor (screenshots) or the studio (recordings).
+    pub edit: bool,
+    /// Pin the screenshot above all windows.
+    pub pin: bool,
+}
+
+impl After {
+    fn load(v: &Value, defaults: After) -> After {
+        let flag = |key: &str, default: bool| v[key].as_bool().unwrap_or(default);
+        After {
+            card: flag("card", defaults.card),
+            copy: flag("copy", defaults.copy),
+            save: flag("save", defaults.save),
+            edit: flag("edit", defaults.edit),
+            pin: flag("pin", defaults.pin),
+        }
+    }
+
+    fn json(&self) -> Value {
+        json!({ "card": self.card, "copy": self.copy, "save": self.save, "edit": self.edit, "pin": self.pin })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     /// None keeps Omarchy's screenshot folder.
     pub screenshot_dir: Option<PathBuf>,
-    pub copy_screenshot: bool,
-    pub show_card: bool,
+    pub after_shot: After,
+    pub after_video: After,
+    /// File names for new captures, with {date}, {time}, {type} and {n}.
+    pub name_template: String,
+    /// Window captures keep the window's shadow on a transparent background.
+    pub window_shadow: bool,
     /// 0 keeps cards until closed.
     pub card_seconds: u32,
     pub card_side: Side,
@@ -62,8 +98,10 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             screenshot_dir: None,
-            copy_screenshot: true,
-            show_card: true,
+            after_shot: After { card: true, copy: true, save: true, edit: false, pin: false },
+            after_video: After { card: true, copy: false, save: true, edit: false, pin: false },
+            name_template: crate::storage::DEFAULT_NAME.into(),
+            window_shadow: true,
             card_seconds: 10,
             card_side: Side::Left,
             tray: true,
@@ -98,8 +136,11 @@ impl Settings {
         let num_or = |key: &str, default: u64| v[key].as_u64().unwrap_or(default);
         Settings {
             screenshot_dir: dir("screenshot_dir"),
-            copy_screenshot: bool_or("copy_screenshot", d.copy_screenshot),
-            show_card: bool_or("show_card", d.show_card),
+            // Before the after-capture choices there were two switches.
+            after_shot: After::load(&v["after_shot"], After { card: bool_or("show_card", d.after_shot.card), copy: bool_or("copy_screenshot", d.after_shot.copy), ..d.after_shot }),
+            after_video: After::load(&v["after_video"], After { card: bool_or("show_card", d.after_video.card), ..d.after_video }),
+            name_template: v["name_template"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or(&d.name_template).to_owned(),
+            window_shadow: bool_or("window_shadow", d.window_shadow),
             card_seconds: num_or("card_seconds", d.card_seconds as u64) as u32,
             card_side: if v["card_side"].as_str() == Some("right") { Side::Right } else { Side::Left },
             tray: bool_or("tray", d.tray),
@@ -126,8 +167,10 @@ impl Settings {
         let dir = |p: &Option<PathBuf>| p.as_ref().map(|p| p.display().to_string());
         let v = json!({
             "screenshot_dir": dir(&self.screenshot_dir),
-            "copy_screenshot": self.copy_screenshot,
-            "show_card": self.show_card,
+            "after_shot": self.after_shot.json(),
+            "after_video": self.after_video.json(),
+            "name_template": self.name_template,
+            "window_shadow": self.window_shadow,
             "card_seconds": self.card_seconds,
             "card_side": if self.card_side == Side::Right { "right" } else { "left" },
             "tray": self.tray,

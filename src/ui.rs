@@ -643,6 +643,12 @@ impl ButtonLike {
         self
     }
 
+    /// As wide as it is tall, like an `IconButton` (for icons by path).
+    pub fn square(mut self) -> Self {
+        self.square = true;
+        self
+    }
+
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self

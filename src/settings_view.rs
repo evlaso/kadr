@@ -47,12 +47,12 @@ impl Tab {
         match self {
             Tab::General => Icon::new(IconName::Settings),
             Tab::Screenshots => Icon::new(IconName::Image),
-            Tab::Recording => Icon::new(IconName::Circle),
-            Tab::Studio => Icon::new(IconName::Sparkle),
+            Tab::Recording => Icon::from_path("icons/kadr/record.svg"),
+            Tab::Studio => Icon::from_path("icons/kadr/studio.svg"),
             Tab::Text => Icon::new(IconName::CaseSensitive),
             Tab::Shortcuts => Icon::new(IconName::Keyboard),
-            Tab::Storage => Icon::new(IconName::Folder),
-            Tab::About => Icon::from_path("icons/kadr/camera.svg"),
+            Tab::Storage => Icon::from_path("icons/kadr/storage.svg"),
+            Tab::About => Icon::from_path("icons/kadr/info.svg"),
         }
     }
 }
@@ -74,6 +74,8 @@ pub struct SettingsView {
     usage: storage::Usage,
     /// Type-to-search over every section, like System Settings.
     query: String,
+    /// Typing goes into the file name template instead of the search.
+    naming: bool,
     scroll: gpui::ScrollHandle,
     grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     focus: FocusHandle,
@@ -90,7 +92,7 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, languages_menu: Default::default(), usage: storage::usage(&Settings::load()), query: String::new(), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
+            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, languages_menu: Default::default(), usage: storage::usage(&Settings::load()), query: String::new(), naming: false, scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
         })
     });
 }
@@ -258,9 +260,15 @@ impl SettingsView {
                 v_flex()
                     .px_2()
                     .pb_1()
-                    .gap_1()
-                    .child(Label::new(t("settings.changes_saved_right_away")).size(LabelSize::XSmall).color(Color::Muted))
-                    .child(h_flex().gap_1().child(kit::keys("escape")).child(Label::new(t("common.close")).size(LabelSize::XSmall).color(Color::Muted))),
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(Icon::new(IconName::Check).size(IconSize::XSmall).color(Color::Muted))
+                            .child(Label::new(t("settings.changes_saved_right_away")).size(LabelSize::Small).color(Color::Muted)),
+                    )
+                    // What it does, then the key, like the history's bar.
+                    .child(h_flex().gap_1p5().child(Label::new(t("common.close")).size(LabelSize::Small)).child(kit::keys("escape"))),
             )
     }
 
@@ -295,8 +303,6 @@ impl SettingsView {
                             .into_any_element()
                     },
                 ),
-                row(t("settings.show_thumbnail"), t("settings.thumbnail_in_screen_corner_after"), switch("show_card", s.show_card, cx, |s, on| s.show_card = on)),
-                row(t("settings.copy_screenshots"), t("settings.put_screenshot_on_clipboard_right"), switch("copy", s.copy_screenshot, cx, |s, on| s.copy_screenshot = on)),
                 row(t("common.tray_icon"),
                     t("settings.click_opens_settings_right_click"),
                     switch("tray", s.tray, cx, |s, on| {
@@ -306,6 +312,7 @@ impl SettingsView {
                         if on { tray::start() } else { tray::stop() }
                     }),
                 ),
+                heading(t("settings.thumbnails")),
                 row(t("settings.thumbnail_goes_away_after"),
                     t("settings.stays_while_pointer_over"),
                     chips(cx, "secs", CARD_SECONDS.iter().map(|&n| if n == 0 { t("settings.never").into() } else { tr!("common.seconds", n) }).collect(), CARD_SECONDS.iter().position(|&n| n == s.card_seconds), |s, i| s.card_seconds = CARD_SECONDS[i]),
@@ -317,7 +324,18 @@ impl SettingsView {
                 ),
             ],
             Tab::Screenshots => {
-                let mut rows = vec![row(t("settings.screenshots_folder"), t("settings.by_default_same_as_omarchys"), folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true))];
+                let mut rows = vec![
+                    heading(t("settings.after_capture")),
+                    row(t("settings.show_thumbnail"), t("settings.thumbnail_in_screen_corner_after"), switch("shot-card", s.after_shot.card, cx, |s, on| s.after_shot.card = on)),
+                    row(t("settings.copy_to_clipboard"), t("settings.put_screenshot_on_clipboard_right"), switch("shot-copy", s.after_shot.copy, cx, |s, on| s.after_shot.copy = on)),
+                    row(t("settings.save_to_folder"), t("settings.off_goes_to_temporary_folder"), switch("shot-save", s.after_shot.save, cx, |s, on| s.after_shot.save = on)),
+                    row(t("settings.open_editor"), t("settings.annotate_right_after_capture"), switch("shot-edit", s.after_shot.edit, cx, |s, on| s.after_shot.edit = on)),
+                    row(t("card.pin_on_top"), t("settings.screenshot_floats_above_windows"), switch("shot-pin", s.after_shot.pin, cx, |s, on| s.after_shot.pin = on)),
+                    heading(t("settings.files")),
+                    row(t("settings.screenshots_folder"), t("settings.by_default_same_as_omarchys"), folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true)),
+                    self.render_name(crate::storage::Capture::Screenshot, "png", cx),
+                    row(t("settings.window_shadow"), t("settings.window_captures_keep_shadow"), switch("shadow", s.window_shadow, cx, |s, on| s.window_shadow = on)),
+                ];
                 // A choice only where windows tile; elsewhere it's a window.
                 if cfg!(target_os = "linux") {
                     rows.push(row(
@@ -329,7 +347,14 @@ impl SettingsView {
                 rows
             }
             Tab::Recording => vec![
+                heading(t("settings.after_recording")),
+                row(t("settings.show_thumbnail"), t("settings.thumbnail_in_screen_corner_after"), switch("video-card", s.after_video.card, cx, |s, on| s.after_video.card = on)),
+                row(t("settings.copy_to_clipboard"), t("settings.copy_file_paste_into_chat"), switch("video-copy", s.after_video.copy, cx, |s, on| s.after_video.copy = on)),
+                row(t("settings.save_to_folder"), t("settings.off_goes_to_temporary_folder"), switch("video-save", s.after_video.save, cx, |s, on| s.after_video.save = on)),
+                row(t("settings.open_studio"), t("settings.studio_mode_opens_it_anyway"), switch("video-edit", s.after_video.edit, cx, |s, on| s.after_video.edit = on)),
+                heading(t("settings.video")),
                 row(t("settings.recordings_folder"), t("settings.videos_by_default"), folder(cx, s.video_dir(), s.video_dir.is_some(), false)),
+                self.render_name(crate::storage::Capture::Recording, "mp4", cx),
                 row(t("settings.frame_rate"), t("settings.60_smoother_30_makes_smaller"), chips(cx, "fps", FPS.iter().map(|f| tr!("common.fps", f)).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
                 row(t("settings.quality"), t("settings.higher_keeps_small_text_sharp"), chips(cx, "quality", QUALITIES.iter().map(|q| t(q.1).to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
                 row(t("settings.frame_around_area"), t("settings.outline_recorded_area_not_recorded"), switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
@@ -427,8 +452,19 @@ impl SettingsView {
         let mut found = false;
         for tab in tabs {
             let whole = tab.label().to_lowercase().contains(&query);
-            let rows: Vec<AnyElement> = self.tab_rows(tab, cx).into_iter().filter(|(text, _)| !searching || whole || text.to_lowercase().contains(&query)).map(|r| r.1).collect();
-            if rows.is_empty() {
+            // Rows in groups, each under its heading; one group while searching.
+            let mut groups: Vec<(Option<AnyElement>, Vec<AnyElement>)> = vec![(None, Vec::new())];
+            for (text, el) in self.tab_rows(tab, cx) {
+                if text.starts_with(HEADING) {
+                    if !searching {
+                        groups.push((Some(el), Vec::new()));
+                    }
+                } else if !searching || whole || text.to_lowercase().contains(&query) {
+                    groups.last_mut().expect("a group").1.push(el);
+                }
+            }
+            groups.retain(|g| !g.1.is_empty());
+            if groups.is_empty() {
                 continue;
             }
             // The heading scrolls with its rows.
@@ -438,20 +474,33 @@ impl SettingsView {
                 body.child(div().pb_3().text_size(crate::ui::rems_from_px(20.)).font_weight(gpui::FontWeight::SEMIBOLD).child(tab.label()))
             };
             found = true;
-            // An inset group, like System Settings: rows on a soft rounded
-            // card, hairlines between them.
-            let count = rows.len();
-            let group = rows.into_iter().enumerate().flat_map(|(i, row)| {
-                let line = (i + 1 < count).then(|| div().h(px(1.)).bg(line_color).into_any_element());
-                std::iter::once(row).chain(line)
-            });
-            body = body.child(v_flex().px_4().rounded(crate::ui::rems_from_px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(group_bg).children(group.collect::<Vec<_>>()));
+            for (title, rows) in groups {
+                if let Some(title) = title {
+                    body = body.child(div().px_1().pt_5().pb_2().child(title));
+                }
+                // An inset group, like System Settings: rows on a soft rounded
+                // card, hairlines between them.
+                let count = rows.len();
+                let group = rows.into_iter().enumerate().flat_map(|(i, row)| {
+                    let line = (i + 1 < count).then(|| div().h(px(1.)).bg(line_color).into_any_element());
+                    std::iter::once(row).chain(line)
+                });
+                body = body.child(v_flex().px_4().rounded(crate::ui::rems_from_px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(group_bg).children(group.collect::<Vec<_>>()));
+            }
         }
         if !found {
             body = body.child(div().pt_10().flex().justify_center().child(Label::new(t("settings.nothing_found")).color(Color::Muted)));
         }
         body.into_any_element()
     }
+}
+
+/// Marks a heading among a section's rows: the rows after it make a group
+/// of their own.
+const HEADING: char = '\u{1}';
+
+fn heading(title: &str) -> (String, AnyElement) {
+    (format!("{HEADING}{title}"), Label::new(title.to_owned()).size(LabelSize::Small).color(Color::Muted).into_any_element())
 }
 
 /// Title and description on the left, the control on the right.
@@ -591,6 +640,83 @@ impl SettingsView {
         h_flex().gap_1().children(chips).child(add).into_any_element()
     }
 
+    /// The file name: a field to type the template into, an example of
+    /// the name it makes, and the tokens to put in with a click.
+    fn render_name(&self, kind: crate::storage::Capture, ext: &str, cx: &mut Context<Self>) -> (String, AnyElement) {
+        let colors = cx.theme().colors();
+        let template = &self.settings.name_template;
+        let example = format!("{}.{ext}", crate::storage::render_name(template, kind, chrono::Local::now(), 1));
+        let id = if ext == "png" { "name-shot" } else { "name-video" };
+        let field = h_flex()
+            .id(id)
+            .w(px(230. * kit::SCALE))
+            .h(px(28.))
+            .px_2()
+            .rounded(px(7.))
+            .rounded_smoothing(crate::ui::SMOOTHING)
+            .bg(colors.element_background)
+            .border_1()
+            .border_color(if self.naming { colors.text_accent } else { gpui::transparent_black() })
+            .cursor_text()
+            .overflow_hidden()
+            .child(div().whitespace_nowrap().text_sm().child(if self.naming { format!("{template}▏") } else { template.clone() }))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.naming = true;
+                cx.notify();
+            }))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if this.naming {
+                    this.naming = false;
+                    cx.notify();
+                }
+            }));
+        let tokens = h_flex().gap_0p5().children(["{date}", "{time}", "{type}", "{n}"].into_iter().map(|token| {
+            ButtonLike::new(SharedString::from(format!("{id}-{token}")))
+                .style(ButtonStyle::Subtle)
+                .child(div().px_1().font_family(kit::MONO_FONT).text_xs().child(token))
+                .tooltip(Tooltip::text(t("settings.add_to_name")))
+                .on_click(cx.listener(move |this, _, _, cx| this.update(cx, |s| s.name_template.push_str(token))))
+        }));
+        let default = template == crate::storage::DEFAULT_NAME;
+        let control = v_flex()
+            .items_end()
+            .gap_1()
+            .child(
+                h_flex().gap_1().child(field).when(!default, |row| {
+                    row.child(
+                        IconButton::new(SharedString::from(format!("{id}-reset")), IconName::Close)
+                            .tooltip(Tooltip::text(t("settings.default")))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.naming = false;
+                                this.update(cx, |s| s.name_template = crate::storage::DEFAULT_NAME.into())
+                            })),
+                    )
+                }),
+            )
+            .child(tokens)
+            .into_any_element();
+        row(t("settings.file_name"), &tr!("settings.for_example", example), control)
+    }
+
+    fn name_key(&mut self, e: &KeyDownEvent, cx: &mut Context<Self>) {
+        let k = &e.keystroke;
+        match k.key.as_str() {
+            "escape" | "enter" | "tab" => self.naming = false,
+            "backspace" => {
+                self.settings.name_template.pop();
+                self.settings.save();
+            }
+            _ if !(k.modifiers.control || k.modifiers.alt || k.modifiers.platform) => {
+                if let Some(ch) = k.key_char.as_deref().filter(|c| !c.chars().any(char::is_control)) {
+                    self.settings.name_template.push_str(ch);
+                    self.settings.save();
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
     fn record_key(&mut self, e: &KeyDownEvent, cx: &mut Context<Self>) {
         let Some(i) = self.recording else { return };
         let k = &e.keystroke;
@@ -640,6 +766,9 @@ impl Render for SettingsView {
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 if this.recording.is_some() {
                     return this.record_key(e, cx);
+                }
+                if this.naming {
+                    return this.name_key(e, cx);
                 }
                 let i = Tab::ALL.iter().position(|t| *t == this.tab).unwrap_or(0);
                 let k = &e.keystroke;

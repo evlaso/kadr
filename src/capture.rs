@@ -30,14 +30,9 @@ pub fn shot(mode: String, cx: &mut App) {
     .detach();
 }
 
-/// What happens to a fresh screenshot: copied and shown in a card, as set.
-pub fn deliver(path: PathBuf, settings: &Settings, cx: &mut App) {
-    if settings.copy_screenshot {
-        util::copy_image(&path);
-    }
-    if settings.show_card {
-        cards::show(path, cx);
-    }
+/// What happens to a fresh screenshot: as set in the settings.
+pub fn deliver(path: PathBuf, _settings: &Settings, cx: &mut App) {
+    cards::after_capture(path, crate::storage::Capture::Screenshot, cx);
 }
 
 /// Freeze the screen, pick (or take the whole monitor), save the picked part.
@@ -59,7 +54,7 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     };
     let dir = settings.screenshot_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join(format!("screenshot-{}.png", util::timestamp()));
+    let path = crate::storage::capture_path(&dir, crate::storage::Capture::Screenshot, "png");
     let target = path.clone();
     // Encoding a big PNG takes a moment; keep the UI free.
     let saved = cx.background_executor().spawn(async move { picked.crop().save(&target) }).await;
