@@ -58,6 +58,9 @@ const WORK_PAD: f32 = 0.1;
 const EDGE_SNAP: f32 = 6.;
 /// Grab distance for shapes and handles, in screen pixels.
 const GRAB: f32 = 7.;
+/// The selection band's gap from a shape and its width, in screen pixels.
+const BAND_GAP: f32 = 5.;
+const BAND: f32 = 5.;
 /// Toolbar and footer together, roughly: the first layout's guess at the
 /// stage height, measured from then on.
 const CHROME: f32 = 110. * kit::SCALE;
@@ -424,6 +427,26 @@ impl Shape {
                 vec![(l, t), (r, t), (r, bt), (l, bt)]
             }
         }
+    }
+
+    /// How far the selection band sits outside a boxy shape, in image
+    /// pixels at `scale`: clear of the stroke, like CleanShot's.
+    fn band_pad(&self, scale: f32) -> f32 {
+        let stroke = if matches!(self.kind, Kind::Rect | Kind::Ellipse) && !self.filled { self.size } else { 0. };
+        stroke + BAND_GAP / scale
+    }
+
+    /// Where the handles are drawn and grabbed: on the band round boxy
+    /// shapes, on the points themselves for lines.
+    fn knobs(&self, scale: f32) -> Vec<P> {
+        let hs = self.handles();
+        if matches!(self.kind, Kind::Line | Kind::Arrow) {
+            return hs;
+        }
+        let (l, t, r, b) = self.bounds();
+        let pad = self.band_pad(scale);
+        let out = |v: f32, lo: f32, hi: f32| if v <= lo { v - pad } else if v >= hi { v + pad } else { v };
+        hs.into_iter().map(|(x, y)| (out(x, l, r), out(y, t, b))).collect()
     }
 
     /// Shapes whose corner handles scale them rather than move a point.
@@ -827,8 +850,8 @@ impl Editor {
 
     fn handle_at(&self, p: P) -> Option<(usize, usize)> {
         let i = self.selected?;
-        let tol = (GRAB + 2.) / self.scale();
-        let h = self.doc.shapes[i].handles().iter().position(|h| (h.0 - p.0).hypot(h.1 - p.1) <= tol)?;
+        let tol = (GRAB + 4.) / self.scale();
+        let h = self.doc.shapes[i].knobs(self.scale()).iter().position(|h| (h.0 - p.0).hypot(h.1 - p.1) <= tol)?;
         Some((i, h))
     }
 
@@ -2201,7 +2224,7 @@ impl Editor {
         // The result's bounds, when drawing has grown it past the picture.
         let (el, et, er, eb) = self.extent();
         let grown = crop.is_none() && (el < 0. || et < 0. || er > pw || eb > ph);
-        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.handles(), sh.scales()));
+        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow)));
         let accent = cx.theme().colors().text_accent;
         let overlay = canvas(
             |_, _, _| {},
@@ -2226,14 +2249,23 @@ impl Editor {
                 } else if grown {
                     window.paint_quad(outline(area(el, et, er, eb), gpui::hsla(0., 0., 1., 0.45), BorderStyle::Dashed));
                 }
-                // Like CleanShot: a thin accent frame round anything boxy,
-                // lines and arrows only their knobs.
-                if let Some(((l, t, r, b), handles, _)) = selection {
-                    if handles.len() >= 4 {
-                        window.paint_quad(crate::ui::quad(area(l, t, r, b), px(0.), gpui::transparent_black(), px(1.5), accent, BorderStyle::Solid));
-                    }
-                    for h in handles {
-                        crate::ui::paint_knob(window, pt(h), accent);
+                // Like CleanShot: a soft, wide band just outside anything
+                // boxy with knobs on its corners; lines show their ends.
+                if let Some(((l, t, r, b), knobs, pad, line)) = selection {
+                    if line {
+                        for h in knobs {
+                            crate::ui::paint_knob(window, pt(h), accent);
+                        }
+                    } else {
+                        let mut band = accent;
+                        band.lightness = (band.lightness + 0.12).min(0.8);
+                        band.alpha = 0.8;
+                        let half = BAND / 2. / s;
+                        let r0 = area(l - pad - half, t - pad - half, r + pad + half, b + pad + half);
+                        window.paint_quad(crate::ui::quad(r0, px(2.), gpui::transparent_black(), px(BAND), band, BorderStyle::Solid));
+                        for &h in knobs.iter().take(4) {
+                            crate::ui::paint_knob(window, pt(h), accent);
+                        }
                     }
                 }
             },
