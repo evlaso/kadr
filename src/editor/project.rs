@@ -2,6 +2,7 @@
 //! the untouched picture, the shapes, the crop and the background, kept next
 //! to kadr's other data and keyed by the saved file. `kadr edit` on that file
 //! opens the drawing again, as long as the file is still what kadr wrote.
+//! The same folder, packed with `bundle`, is a `.kadr` project file.
 
 use std::path::{Path, PathBuf};
 
@@ -45,10 +46,21 @@ pub(super) fn load(path: &Path, bytes: &[u8]) -> Option<Restored> {
     if v["output_hash"].as_str() != Some(&format!("{:016x}", fnv(bytes))) {
         return None;
     }
+    read_dir(&dir, &v)
+}
+
+/// A project kept in `dir` (whose `project.json` is `v`).
+fn read_dir(dir: &Path, v: &Value) -> Option<Restored> {
     let base = std::fs::read(dir.join("base.png")).ok()?;
-    let shapes = v["shapes"].as_array()?.iter().filter_map(|s| shape_from_json(s, &dir)).collect();
+    let shapes = v["shapes"].as_array()?.iter().filter_map(|s| shape_from_json(s, dir)).collect();
     let crop = v["crop"].as_array().and_then(|c| Some((point(c.first()?)?, point(c.get(1)?)?)));
     Some(Restored { base, doc: Doc { shapes, crop }, frame: Frame::from_json(&v["frame"]) })
+}
+
+/// The project in an unpacked `.kadr`.
+pub(super) fn load_unpacked(dir: &Path) -> Option<Restored> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("project.json")).ok()?).ok()?;
+    read_dir(dir, &v)
 }
 
 /// Keep `doc` and `frame` drawn over `base` for `path`, whose contents are
@@ -59,8 +71,15 @@ pub(super) fn save(path: &Path, output: &[u8], base: &[u8], doc: &Doc, frame: &F
     if doc.shapes.is_empty() && doc.crop.is_none() && !frame.on() {
         return Ok(());
     }
-    std::fs::create_dir_all(&dir)?;
+    write_dir(&dir, base, doc, frame, json!({ "output": path.display().to_string(), "output_hash": format!("{:016x}", fnv(output)) })).map(|_| ())
+}
+
+/// Write the project into `dir`, with `extra` fields in its JSON. Returns
+/// the files written, by name.
+fn write_dir(dir: &Path, base: &[u8], doc: &Doc, frame: &Frame, extra: Value) -> std::io::Result<Vec<String>> {
+    std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join("base.png"), base)?;
+    let mut files = vec!["project.json".to_owned(), "base.png".to_owned()];
     let mut shapes = Vec::new();
     for (i, shape) in doc.shapes.iter().enumerate() {
         let mut v = shape_to_json(shape);
@@ -68,17 +87,36 @@ pub(super) fn save(path: &Path, output: &[u8], base: &[u8], doc: &Doc, frame: &F
             let name = format!("picture-{i}.png");
             picture.pixels.save(dir.join(&name)).map_err(std::io::Error::other)?;
             v["picture"] = json!(name);
+            files.push(name);
         }
         shapes.push(v);
     }
-    let v = json!({
-        "output": path.display().to_string(),
-        "output_hash": format!("{:016x}", fnv(output)),
+    let mut v = json!({
         "frame": frame.to_json(),
         "crop": doc.crop.map(|(a, b)| json!([[a.0, a.1], [b.0, b.1]])),
         "shapes": shapes,
     });
-    std::fs::write(dir.join("project.json"), serde_json::to_string(&v).unwrap_or_default())
+    if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
+        v.extend(extra.clone());
+    }
+    std::fs::write(dir.join("project.json"), serde_json::to_string(&v).unwrap_or_default())?;
+    Ok(files)
+}
+
+/// Pack the drawing, the picture under it and the result (`output`) into
+/// the `.kadr` at `target`.
+pub(super) fn save_bundle(target: &Path, output: &[u8], base: &[u8], doc: &Doc, frame: &Frame) -> std::io::Result<()> {
+    let tmp = crate::util::runtime_dir().join(format!("kadr-bundle-{}-{:016x}", std::process::id(), fnv(target.as_os_str().as_encoded_bytes())));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let result = (|| {
+        let mut names = write_dir(&tmp, base, doc, frame, json!({}))?;
+        std::fs::write(tmp.join("preview.png"), output)?;
+        names.push("preview.png".into());
+        let files: Vec<_> = names.into_iter().map(|n| (n.clone(), tmp.join(n))).collect();
+        crate::bundle::pack(target, crate::bundle::Kind::Shot, &files)
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
 }
 
 /// Remove projects whose file is gone. Returns the bytes and files freed.
@@ -229,6 +267,31 @@ mod tests {
         assert!(load(&file, b"changed since").is_none(), "a file changed elsewhere opens as it is");
         std::fs::remove_file(&file).unwrap();
         assert_eq!(prune().1, 2, "base and project of a deleted file go");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_drawing_round_trips_through_a_kadr_file() {
+        let tmp = std::env::temp_dir().join(format!("kadr-project-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let red = gpui::hsla(0., 1., 0.5, 1.);
+        let doc = Doc {
+            shapes: vec![
+                Shape { kind: Kind::Arrow, a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None },
+                Shape { kind: Kind::Text("hi".into()), a: (5., 5.), b: (5., 5.), color: red, size: 20., filled: false, text: TextStyle::Outline, bend: None },
+            ],
+            crop: Some(((0., 0.), (10., 10.))),
+        };
+        let target = tmp.join("Shot.kadr");
+        save_bundle(&target, b"result", b"original", &doc, &Frame::default()).unwrap();
+        let u = crate::bundle::unpack_into(&target, &tmp.join("cache")).unwrap();
+        assert_eq!(u.kind, crate::bundle::Kind::Shot);
+        assert_eq!(std::fs::read(u.dir.join("preview.png")).unwrap(), b"result");
+        let back = load_unpacked(&u.dir).expect("the drawing is there");
+        assert_eq!(back.base, b"original");
+        assert_eq!((back.doc.shapes.len(), back.doc.crop), (2, doc.crop));
+        assert!(matches!(&back.doc.shapes[1].kind, Kind::Text(t) if t == "hi"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

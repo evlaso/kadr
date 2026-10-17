@@ -133,6 +133,20 @@ pub fn open(video: PathBuf, cx: &mut App) {
     let hold = kit::hold(cx);
     cx.spawn(async move |cx| {
         let _hold = hold;
+        // A `.kadr`: the recording and its edit, unpacked into the cache.
+        let video = if crate::bundle::is_bundle(&video) {
+            let file = video.clone();
+            let unpacked = cx
+                .background_executor()
+                .spawn(async move { crate::bundle::unpack(&file).and_then(|u| studio::from_bundle(&file, &u)) })
+                .await;
+            match unpacked {
+                Ok(v) => v,
+                Err(e) => return util::notify(t("bundle.couldnt_open"), &format!("{}: {e}", video.display())),
+            }
+        } else {
+            video
+        };
         let Some(probe) = studio::probe(&video).await else {
             return util::notify(t("common.couldnt_open_video"), &video.display().to_string());
         };
@@ -757,7 +771,33 @@ impl StudioEditor {
 
     fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.remove_window();
+        // Opened from a `.kadr`: the project file keeps up with the edit.
+        if let Some(target) = crate::bundle::origin_of(&self.video) {
+            self.write_bundle(target, false, cx);
+        }
         studio::export(self.video.clone(), self.project.clone(), false, cx);
+    }
+
+    /// Keep the recording and its whole edit as a `.kadr`, beside the
+    /// recordings (or where this session's came from).
+    fn save_project(&mut self, cx: &mut Context<Self>) {
+        let target = crate::bundle::origin_of(&self.video).unwrap_or_else(|| crate::bundle::target_for(&self.video, &crate::settings::Settings::load().video_dir()));
+        self.write_bundle(target, true, cx);
+    }
+
+    fn write_bundle(&self, target: PathBuf, tell: bool, cx: &mut Context<Self>) {
+        let (video, project) = (self.video.clone(), self.project.clone());
+        let hold = kit::hold(cx);
+        cx.spawn(async move |_, cx| {
+            let _hold = hold;
+            let result = cx.background_executor().spawn(async move { studio::save_bundle(&video, &project, &target).map(|_| target) }).await;
+            match result {
+                Ok(target) if tell => util::notify(t("bundle.project_saved"), &target.display().to_string()),
+                Ok(_) => {}
+                Err(e) => util::notify(t("bundle.couldnt_save"), &e.to_string()),
+            }
+        })
+        .detach();
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1143,6 +1183,14 @@ impl StudioEditor {
                 h_flex()
                     .flex_none()
                     .gap_1()
+                    .child(
+                        Button::new("save-project", t("bundle.project"))
+                            .style(ButtonStyle::Subtle)
+                            .size(ButtonSize::Large)
+                            .start_icon(Icon::from_path("icons/kadr/project.svg").size(IconSize::Small))
+                            .tooltip(Tooltip::text(t("bundle.save_project_tip")))
+                            .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
+                    )
                     .child(
                         Button::new("preview", t("studio.preview"))
                             .style(ButtonStyle::Filled)

@@ -74,6 +74,7 @@ assets![
     "icons/kadr/pixelate.svg" => "../data/icons/editor/pixelate.svg",
     "icons/kadr/blur.svg" => "../data/icons/editor/blur.svg",
     "icons/kadr/scan_text.svg" => "../data/icons/editor/scan_text.svg",
+    "icons/kadr/project.svg" => "../data/icons/editor/project.svg",
     "icons/kadr/redo.svg" => "../data/icons/editor/redo.svg",
     "icons/kadr/pointer.svg" => "../data/icons/editor/pointer.svg",
     "icons/kadr/crop.svg" => "../data/icons/editor/crop.svg",

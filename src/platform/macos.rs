@@ -147,3 +147,10 @@ pub fn theme_cursor(_shape: &str, _arrow_height: f32) -> Option<(image::RgbaImag
 pub fn window_rounding() -> f32 {
     10.
 }
+
+/// File types are registered by the app bundle / installer there, not yet.
+pub fn install_desktop() -> std::io::Result<()> {
+    Err(std::io::Error::other("not on this system yet"))
+}
+
+pub fn ensure_desktop() {}

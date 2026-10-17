@@ -1,5 +1,6 @@
 #[macro_use]
 mod i18n;
+mod bundle;
 mod capture;
 mod cards;
 mod cursors;
@@ -47,7 +48,7 @@ Usage:
   kadr shot [smart|region|windows|fullscreen|timer|previous]
                                                  take a screenshot (smart by default; previous: the last area)
   kadr shot scroll [\"X,Y WxH\"]                  scrolling screenshot (again to finish)
-  kadr open <file>                               show the thumbnail for an existing image
+  kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
   kadr pin <file>                                pin an image on top of windows
 
   kadr record                                    the recording bar (or stop a running recording)
@@ -56,14 +57,15 @@ Usage:
   kadr record area \"X,Y WxH\"                   the recording bar for a given area
   kadr record previous                           the recording bar for the last area picked
   kadr record stop                               stop recording
-  kadr studio <video> [--render]                 studio: zooms, background, clicks and keys (--render exports at once)
-  kadr edit <image>                              editor: arrows, text, highlighter, blur…
+  kadr studio <video|project.kadr> [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+  kadr edit <image|project.kadr>                 editor: arrows, text, highlighter, blur…
   kadr trim <video> [--from S --to S]            trim a recording (no flags: the trim window)
   kadr gif <video>                               save a recording as GIF (720px, 15 fps)
   kadr history                                   history of screenshots and recordings
   kadr settings                                  settings
   kadr tray                                      tray icon (for autostart)
   kadr text [image]                              recognize text (in an area or an image) and copy it
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
 ";
 
 const MODES: [&str; 6] = ["smart", "region", "windows", "fullscreen", "timer", "previous"];
@@ -172,6 +174,7 @@ impl Command {
         match self {
             Command::Scroll(area) => scroll::start(area, cx),
             Command::Shot(mode) => capture::shot(mode, cx),
+            Command::Open(path) | Command::Edit(path) | Command::Studio(path, false) if bundle::is_bundle(&path) => bundle::open(path, cx),
             Command::Open(path) => cards::show(path, cx),
             Command::Pin(path) => pin::open(path, cx),
             Command::Record(mode, opts) => record::command(mode, opts, cx),
@@ -220,6 +223,16 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
         print!("{USAGE}");
+        return;
+    }
+    if args.first().map(String::as_str) == Some("install-desktop") {
+        match platform::install_desktop() {
+            Ok(()) => println!("{}", t("bundle.desktop_installed")),
+            Err(e) => {
+                eprintln!("kadr: {e}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     // The tray icon is its own small process, without GPUI.
@@ -277,6 +290,7 @@ fn main() {
         kit::init(cx);
         record::init(cx);
         storage::auto();
+        platform::ensure_desktop();
         command.run(cx);
 
         cx.spawn(async move |cx| {
