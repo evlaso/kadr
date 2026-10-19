@@ -14,7 +14,7 @@ use gpui::{
     App, Context, FocusHandle, Image, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     Pixels, Point, ScrollWheelEvent, Window, div, img, point, px,
 };
-use crate::ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
+use crate::ui::{Tooltip, prelude::*};
 
 use crate::cards::image_preview;
 use crate::kit::{self, InputRegion, LayerSpec};
@@ -108,12 +108,27 @@ impl Render for Pin {
         self.region.reset();
         let (w, h) = self.size();
         let locked = self.locked;
+        // Solid white circles with dark ink, like the cards' corner buttons,
+        // so they show on any picture.
+        let ink = gpui::hsla(0., 0., 0.12, 1.);
+        let pill = move |id: &'static str, icon: Icon| {
+            div()
+                .id(id)
+                .size(px(26.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(gpui::hsla(0., 0., 1., 0.92))
+                .shadow(kit::shadow())
+                .cursor_pointer()
+                .hover(|s| s.bg(gpui::hsla(0., 0., 1., 1.)))
+                .active(|s| s.bg(gpui::hsla(0., 0., 0.88, 1.)))
+                .child(icon.size(IconSize::Small).color(Color::Custom(ink)))
+        };
         let lock = |id: &'static str| {
-            ButtonLike::new(id)
-                .square()
-                .style(ButtonStyle::Filled)
-                .child(Icon::from_path(if locked { "icons/kadr/lock.svg" } else { "icons/kadr/unlock.svg" }).size(IconSize::Small))
-                .tooltip(Tooltip::text(if locked { t("pin.catch_clicks_again") } else { t("pin.let_clicks_through") }))
+            pill(id, Icon::from_path(if locked { "icons/kadr/lock.svg" } else { "icons/kadr/unlock.svg" }))
+                .tip(Tooltip::text(if locked { t("pin.catch_clicks_again") } else { t("pin.let_clicks_through") }))
                 .on_click(cx.listener(|this, _, window, cx| this.toggle_lock(window, cx)))
         };
         // While clicks go through, the picture can't be hovered: the lock
@@ -161,10 +176,8 @@ impl Render for Pin {
             .child(img(self.image.clone()).size_full().rounded(px(kit::RADIUS)).opacity(self.opacity))
             .child(
                 h_flex().gap_1().absolute().top_1p5().left_1p5().opacity(0.).group_hover("pin", |s| s.opacity(1.)).child(
-                    IconButton::new("close", IconName::Close)
-                        .style(ButtonStyle::Filled)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text(t("pin.close_esc")))
+                    pill("close", Icon::new(IconName::Close))
+                        .tip(Tooltip::text(t("pin.close_esc")))
                         .on_click(|_, window, _| window.remove_window()),
                 )
                 .child(lock("lock")),

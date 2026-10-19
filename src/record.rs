@@ -784,7 +784,7 @@ impl Render for RecBar {
         };
         // The same buttons as the recording panel's bar.
         let button = |id: &'static str, icon: IconName, tip: &'static str| {
-            IconButton::new(id, icon).shape(IconButtonShape::Square).size(ButtonSize::Large).icon_size(IconSize::Small).tooltip(Tooltip::text(tip))
+            IconButton::new(id, icon).shape(IconButtonShape::Square).size(ButtonSize::Large).icon_size(IconSize::Small).tip(Tooltip::text(tip))
         };
 
         let colors = cx.theme().status();
@@ -832,7 +832,7 @@ impl Render for RecBar {
                         .shape(IconButtonShape::Square)
                         .size(ButtonSize::Large)
                         .icon_size(IconSize::Small)
-                        .tooltip(|_: &mut Window, cx: &mut App| cx.new(|_| Tooltip::new(t("record.restart")).meta(t("record.restart_hint"))).into())
+                        .tip(|_: &mut Window, cx: &mut App| cx.new(|_| Tooltip::new(t("record.restart"))).into())
                         .on_click(with_rec(true, |rec, cx| rec.restart(cx))),
                 )
                 .child(button("discard", IconName::Trash, t("record.stop_delete")).on_click(with_rec(true, |rec, cx| rec.stop(true, cx))))

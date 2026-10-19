@@ -309,7 +309,7 @@ impl Panel {
                     .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)),
             )
             // No tooltip over its own open menu.
-            .when(!self.size_menu, |b| b.tooltip(Tooltip::text(t("record_bar.area_size"))))
+            .when(!self.size_menu, |b| b.tip(Tooltip::text(t("record_bar.area_size"))))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.size_menu = !this.size_menu;
                 cx.notify();
@@ -356,8 +356,9 @@ impl Panel {
                     .occlude()
                     .absolute()
                     .left_0()
-                    .when(below, |d| d.top(px(BAR_HEIGHT - 8.)))
-                    .when(!below, |d| d.bottom(px(BAR_HEIGHT - 8.)))
+                    // Just off the size button's edge, not the bar's.
+                    .when(below, |d| d.top(gpui::relative(1.)).mt(px(6.)))
+                    .when(!below, |d| d.bottom(gpui::relative(1.)).mb(px(6.)))
                     .w(px(240. * kit::SCALE))
                     .p(px(MENU_PAD))
                     .gap(px(MENU_GAP))
@@ -481,17 +482,8 @@ impl Render for Panel {
             cx.observe(state, |_, _, cx| cx.notify()).detach();
         }
         // CleanShot-style: icons only, names and shortcuts in tooltips.
-        let tip = |title: &'static str, meta: Option<SharedString>, keys: Option<&'static str>| {
-            move |_: &mut Window, cx: &mut App| -> AnyView {
-                cx.new(|_| {
-                    let tip = Tooltip::new(title).key_binding(keys.map(kit::keys));
-                    match meta.clone() {
-                        Some(meta) => tip.meta(meta),
-                        None => tip,
-                    }
-                })
-                .into()
-            }
+        let tip = |title: &'static str, keys: Option<&'static str>| {
+            move |_: &mut Window, cx: &mut App| -> AnyView { cx.new(|_| Tooltip::new(title).key_binding(keys.map(kit::keys))).into() }
         };
         let toggle = |id: &'static str, icon: Icon, on: bool| {
             ButtonLike::new(id)
@@ -503,11 +495,9 @@ impl Render for Panel {
         let action = |id: &'static str, icon: Icon| {
             ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(icon.size(IconSize::Medium)))
         };
-        let mic_desc = self.mics.iter().find(|(n, _)| *n == self.opts.mic_device).map(|(_, d)| SharedString::from(d.clone()));
         let is_region = self.part;
         let (x, y, w, h) = self.rect;
         let mw = self.mon.w as f32;
-        let on_off = |on: bool| Some(SharedString::from(if on { t("record_bar.on") } else { t("record_bar.off") }));
 
         self.sync_meter(cx);
         self.region.reset();
@@ -540,7 +530,7 @@ impl Render for Panel {
                         )
                     })
                     .child(div().px_1().child(Icon::new(IconName::Mic).size(IconSize::Medium)))
-                    .tooltip(tip(t("record_bar.microphone"), if self.opts.mic { mic_desc } else { on_off(false) }, None))
+                    .tip(tip(t("record_bar.microphone"), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.mic = !this.opts.mic;
                         cx.notify();
@@ -558,7 +548,7 @@ impl Render for Panel {
                         IconButton::new("mic-menu", IconName::ChevronDown)
                             .size(ButtonSize::Large)
                             .icon_size(IconSize::XSmall)
-                            .tooltip(Tooltip::text(t("record_bar.choose_microphone"))),
+                            .tip(Tooltip::text(t("record_bar.choose_microphone"))),
                     ),
             );
 
@@ -572,17 +562,17 @@ impl Render for Panel {
             .child(self.region.mark())
             .child(
                 action("cancel", Icon::new(IconName::Close))
-                    .tooltip(tip(t("common.cancel"), None, Some("escape")))
+                    .tip(tip(t("common.cancel"), Some("escape")))
                     .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Cancel, window, cx))),
             )
             .child(self.size_button(bar_y, cx))
             .child(Divider::vertical().h_5().mx_1())
             .child(mic)
-            .child(toggle("audio", Icon::new(IconName::AudioOn), self.opts.audio).tooltip(tip(t("record_bar.system_audio"), on_off(self.opts.audio), None)).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("audio", Icon::new(IconName::AudioOn), self.opts.audio).tip(tip(t("record_bar.system_audio"), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.audio = !this.opts.audio;
                 cx.notify();
             })))
-            .child(toggle("webcam", Icon::from_path("icons/webcam.svg"), self.opts.webcam).tooltip(tip(t("common.camera"), on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("webcam", Icon::from_path("icons/webcam.svg"), self.opts.webcam).tip(tip(t("common.camera"), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.webcam = !this.opts.webcam;
                 if this.opts.webcam {
                     crate::webcam::show(&this.mon, this.rect, true, cx);
@@ -593,7 +583,7 @@ impl Render for Panel {
             })))
             .child(
                 toggle("keys", Icon::new(IconName::Keyboard), self.opts.keys)
-                    .tooltip(tip(t("common.keyboard_shortcuts"), Some(t("record_bar.shown_in_studio_plain_typing").into()), None))
+                    .tip(tip(t("common.keyboard_shortcuts"), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.keys = !this.opts.keys;
                         cx.notify();
@@ -601,7 +591,7 @@ impl Render for Panel {
             )
             .child(
                 toggle("studio", Icon::new(IconName::Sparkle), self.opts.studio)
-                    .tooltip(tip(t("record_bar.studio_mode"), Some(t("record_bar.kadr_draws_cursor_large_smooth").into()), None))
+                    .tip(tip(t("record_bar.studio_mode"), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opts.studio = !this.opts.studio;
                         cx.notify();
@@ -621,7 +611,7 @@ impl Render for Panel {
                             .child(Icon::from_path("icons/kadr/timer.svg").size(IconSize::Medium))
                             .when(n > 0, |row| row.child(Label::new(format!("{n}")).size(LabelSize::Small))),
                     )
-                    .tooltip(tip(t("record_bar.countdown_before_recording"), Some(if n > 0 { tr!("record_bar.s_esc_cancels", n).into() } else { t("record_bar.countdown_off").into() }), None))
+                    .tip(tip(t("record_bar.countdown_before_recording"), None))
                     .on_click(cx.listener(|this, _, _, cx| {
                         let i = record::COUNTDOWNS.iter().position(|&c| c == this.opts.countdown).unwrap_or(0);
                         this.opts.countdown = record::COUNTDOWNS[(i + 1) % record::COUNTDOWNS.len()];
@@ -631,13 +621,13 @@ impl Render for Panel {
             .child(Divider::vertical().h_5().mx_1())
             .child(
                 action("repick", Icon::new(IconName::Crosshair))
-                    .tooltip(tip(t("record_bar.another_area"), None, Some("r")))
+                    .tip(tip(t("record_bar.another_area"), Some("r")))
                     .on_click(cx.listener(|this, _, window, cx| this.choose(PanelChoice::Repick, window, cx))),
             )
             .when(is_region, |bar| {
                 bar.child(
                     action("fullscreen", Icon::new(IconName::Screen))
-                        .tooltip(tip(t("common.fullscreen"), None, Some("f")))
+                        .tip(tip(t("common.fullscreen"), Some("f")))
                         .on_click(cx.listener(|this, _, window, cx| {
                             let choice = this.fullscreen();
                             this.choose(choice, window, cx)

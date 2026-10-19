@@ -15,7 +15,7 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use gpui::{
     FillOptions, PathStyle,
     App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
-    KeyDownEvent, MouseButton, ScrollWheelEvent, relative, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
+    KeyDownEvent, MouseButton, ScrollWheelEvent, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
     Window, canvas, div, img, linear_color_stop, linear_gradient, 
     point, px, rgba, size,
 };
@@ -62,6 +62,10 @@ const FRAME_PAD: f32 = 0.06;
 /// Room around the picture to draw and crop in, the same way: like
 /// CleanShot, the result grows to take in what's drawn outside the picture.
 const WORK_PAD: f32 = 0.1;
+/// How far a crop can reach past the picture at most, against absurd sizes.
+const MAX_REACH: f32 = 3.;
+/// How far the canvas zooms out from fitting the stage.
+const MIN_ZOOM: f32 = 0.2;
 /// Points this close to the picture's edge (screen pixels) snap onto it.
 const EDGE_SNAP: f32 = 6.;
 /// Grab distance for shapes and handles, in screen pixels.
@@ -578,11 +582,14 @@ struct Doc {
     view: crop::Orientation,
     /// The result's size, as a fraction of the cropped picture's.
     scale: f32,
+    /// What fills a crop past the picture's edges (RGBA); None leaves it
+    /// see-through.
+    fill: Option<[u8; 4]>,
 }
 
 impl Default for Doc {
     fn default() -> Self {
-        Doc { shapes: Vec::new(), crop: None, view: crop::Orientation::default(), scale: 1. }
+        Doc { shapes: Vec::new(), crop: None, view: crop::Orientation::default(), scale: 1., fill: None }
     }
 }
 
@@ -592,6 +599,9 @@ enum Drag {
     Handle { index: usize, handle: usize },
     Scale { index: usize, handle: usize, orig: Shape },
     Crop { start: P },
+    /// A box dragged over the empty canvas with the select tool: the shapes
+    /// it touches get marked.
+    Marquee { start: P, now: P },
     /// A crop's knob (corners, then edge middles) dragged, or the crop
     /// moved whole (`handle` None) from `from`.
     CropEdit { handle: Option<usize>, orig: (f32, f32, f32, f32), from: P },
@@ -617,8 +627,8 @@ enum CropMenu {
     Aspect,
     Scale,
     Zoom,
-    /// Save's other ways: as a new file, as a project.
-    Save,
+    /// What fills a crop past the picture.
+    Fill,
 }
 
 /// A dropdown choice: its text, whether it's the current one, and what
@@ -647,6 +657,25 @@ pub struct Editor {
     /// A window shot's window inside its baked-in shadow, for how `source`
     /// is turned; None when the picture has no such margin.
     window: Option<(crop::Orientation, Option<crop::Rect>)>,
+    /// While cropping: the stage's free room round the picture, in image
+    /// pixels, which a crop can grow the canvas into.
+    crop_room: std::cell::Cell<f32>,
+    /// The room the canvas was last laid out with. Pointer positions map
+    /// through it: the room follows the crop, and events between frames
+    /// would otherwise land on a picture that isn't where they think.
+    laid_margin: std::cell::Cell<f32>,
+    /// The canvas sits in the middle of the stage, moved by this much: a
+    /// camera, panned with Space or the wheel, kept round the point zoomed
+    /// at. A canvas growing round the picture (a crop pulled out) leaves the
+    /// picture where it is.
+    view_pan: (f32, f32),
+    /// The stage's bounds in the window, last laid out: x, y, w, h.
+    stage_box: Rc<Cell<(f32, f32, f32, f32)>>,
+    /// Space is held: a press pans the stage.
+    space: bool,
+    /// While Space is held: the pointer's last position; moving it pans,
+    /// with or without a button down.
+    pan: Option<(f32, f32)>,
     /// The crop was set to `window` by turning a background on.
     window_fitted: bool,
     /// The crop mode, while it's on.
@@ -671,6 +700,9 @@ pub struct Editor {
     draft: Option<Shape>,
     drag: Option<Drag>,
     selected: Option<usize>,
+    /// Shapes picked together by dragging a box round them (or Ctrl+A),
+    /// for deleting at once.
+    marked: Vec<usize>,
     /// Index of the text shape being typed.
     editing: Option<usize>,
     tool: Tool,
@@ -835,6 +867,12 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 px_taken: (w, h),
                 shown: crop::Orientation::default(),
                 window: None,
+                crop_room: std::cell::Cell::new(0.),
+                laid_margin: std::cell::Cell::new(0.),
+                view_pan: (0., 0.),
+                stage_box: Rc::new(Cell::new((0., 0., 0., 0.))),
+                space: false,
+                pan: None,
                 window_fitted: false,
                 cropping: None,
                 aspect: crop::Aspect::Free,
@@ -850,6 +888,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 draft: None,
                 drag: None,
                 selected: None,
+                marked: Vec::new(),
                 editing: None,
                 tool: Tool::Arrow,
                 colors: palette::annotation_colors(),
@@ -905,16 +944,47 @@ impl Editor {
         self.disp.0 / self.px.0 as f32
     }
 
-    /// The room around the picture, in image pixels.
+    /// The room around the picture, in image pixels: the usual room, or more
+    /// for a crop that reaches past it. While cropping, the whole stage round
+    /// the picture, and more as a crop is pulled past it.
     fn margin(&self) -> f32 {
-        work_margin(self.px)
+        let resting = self.resting_margin();
+        if self.cropping.is_none() {
+            return resting;
+        }
+        // Past the stage's room the canvas grows with the crop, some ahead
+        // of it, round the picture, which stays put.
+        let ahead = self.crop_overhang() + work_margin_at(self.px, WORK_PAD);
+        self.crop_room.get().max(resting).max(ahead).ceil().min(work_margin_at(self.px, MAX_REACH))
+    }
+
+    /// The room as last drawn; before the first frame, as it would be.
+    fn laid_margin(&self) -> f32 {
+        match self.laid_margin.get() {
+            m if m > 0. => m,
+            _ => self.margin(),
+        }
+    }
+
+    /// The room outside the crop mode: the usual, or the crop's overhang.
+    fn resting_margin(&self) -> f32 {
+        work_margin_at(self.px, WORK_PAD).max(self.crop_overhang().ceil())
+    }
+
+    /// How far the crop reaches past the picture, in image pixels.
+    fn crop_overhang(&self) -> f32 {
+        let (w, h) = (self.px.0 as f32, self.px.1 as f32);
+        self.doc.crop.map_or(0., |(a, b)| {
+            let (l, t, r, b) = rect(a, b);
+            (-l).max(-t).max(r - w).max(b - h).max(0.)
+        })
     }
 
     /// A point on screen in image pixels: anywhere in the work area around
     /// the picture, snapped onto the picture's edges when close.
     fn to_image(&self, pos: Point<gpui::Pixels>, clamp: bool) -> Option<P> {
         let (ox, oy) = self.origin.get();
-        let (s, m) = (self.scale(), self.margin());
+        let (s, m) = (self.scale(), self.laid_margin());
         let (x, y) = ((f32::from(pos.x) - ox) / s - m, (f32::from(pos.y) - oy) / s - m);
         let (w, h) = (self.px.0 as f32, self.px.1 as f32);
         let snap = |v: f32, edge: f32| if (v - edge).abs() < EDGE_SNAP / s { edge } else { v };
@@ -997,6 +1067,7 @@ impl Editor {
     /// another tool keeps the crop.
     fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
         self.finish_text();
+        self.marked.clear();
         if tool == Tool::Crop {
             return self.enter_crop(cx);
         }
@@ -1119,7 +1190,7 @@ impl Editor {
     fn drag_crop(&mut self, p: P, ctrl: bool) {
         let ratio = self.crop_ratio();
         let lines = self.snap_lines(ctrl);
-        let m = self.margin();
+        let m = self.laid_margin();
         let area = (-m, -m, self.px.0 as f32 + m, self.px.1 as f32 + m);
         let r = match self.drag {
             Some(Drag::Crop { start }) => {
@@ -1206,7 +1277,7 @@ impl Editor {
     /// The canvas zoom for a share of the real size, as far as it goes.
     fn zoom_to_real(&mut self, share: f32) {
         let fit = self.disp.0 / self.zoom;
-        self.zoom = (share * self.real.0 / fit.max(1.)).clamp(1., 8.);
+        self.zoom_at(share * self.real.0 / fit.max(1.), (0., 0.));
     }
 
     fn crop_handle_at(&self, p: P) -> Option<usize> {
@@ -1235,6 +1306,7 @@ impl Editor {
         if let Some(doc) = self.history.pop() {
             self.future.push(std::mem::replace(&mut self.doc, doc));
             self.selected = None;
+            self.marked.clear();
             self.sync_view(cx);
         }
     }
@@ -1243,6 +1315,7 @@ impl Editor {
         if let Some(doc) = self.future.pop() {
             self.history.push(std::mem::replace(&mut self.doc, doc));
             self.selected = None;
+            self.marked.clear();
             self.sync_view(cx);
         }
     }
@@ -1257,6 +1330,16 @@ impl Editor {
     }
 
     fn delete_selected(&mut self) {
+        if !self.marked.is_empty() {
+            self.checkpoint();
+            let mut marked = std::mem::take(&mut self.marked);
+            marked.sort_unstable();
+            for i in marked.into_iter().rev() {
+                self.doc.shapes.remove(i);
+            }
+            self.selected = None;
+            return;
+        }
         if let Some(i) = self.selected.take() {
             self.checkpoint();
             self.doc.shapes.remove(i);
@@ -1301,6 +1384,10 @@ impl Editor {
     }
 
     fn mouse_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
+        // Space held: the pointer pans; a press doesn't draw.
+        if self.space {
+            return;
+        }
         // A typed crop size counts once the canvas is clicked.
         self.apply_size_field();
         let Some(p) = self.to_image(e.position, false) else { return };
@@ -1342,6 +1429,7 @@ impl Editor {
             self.drag = Some(Drag::Crop { start: p });
             return cx.notify();
         }
+        self.marked.clear();
         let grabbed = match self.tool {
             Tool::Select => self.shape_at(p),
             _ => self.selected.filter(|&i| self.doc.shapes[i].hit(p, GRAB / s)),
@@ -1356,7 +1444,11 @@ impl Editor {
 
         let color = self.current_color();
         let kind = match self.tool {
-            Tool::Select | Tool::Crop => return cx.notify(),
+            Tool::Select => {
+                self.drag = Some(Drag::Marquee { start: p, now: p });
+                return cx.notify();
+            }
+            Tool::Crop => return cx.notify(),
             Tool::Text => {
                 self.checkpoint();
                 self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: sized(FONT_SIZES, self.weight) / s, filled: false, text: self.text_style, bend: None });
@@ -1389,6 +1481,14 @@ impl Editor {
     }
 
     fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if self.space {
+            let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
+            if let Some((x0, y0)) = self.pan {
+                self.view_pan = (self.view_pan.0 + x - x0, self.view_pan.1 + y - y0);
+            }
+            self.pan = Some((x, y));
+            return cx.notify();
+        }
         if e.pressed_button != Some(MouseButton::Left) {
             // Show what a press would do: resize at a knob, move over a shape.
             let hover = self.to_image(e.position, false).and_then(|p| {
@@ -1448,6 +1548,7 @@ impl Editor {
                 self.doc.shapes[index].scale_from(orig, handle, p);
             }
             Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => self.drag_crop(p, e.modifiers.control),
+            Some(Drag::Marquee { now, .. }) => *now = p,
             Some(Drag::Slider(_)) => {}
             Some(Drag::Draw) => {
                 let min_step = 2.5 / self.scale();
@@ -1467,7 +1568,23 @@ impl Editor {
     }
 
     fn mouse_up(&mut self, cx: &mut Context<Self>) {
+        if self.space {
+            return;
+        }
         match self.drag.take() {
+            Some(Drag::Marquee { start, now }) => {
+                let (l, t, r, b) = rect(start, now);
+                self.marked = (0..self.doc.shapes.len())
+                    .filter(|&i| {
+                        let (sl, st, sr, sb) = self.doc.shapes[i].bounds();
+                        sl <= r && sr >= l && st <= b && sb >= t
+                    })
+                    .collect();
+                // One shape is a plain selection, with its handles.
+                if self.marked.len() == 1 {
+                    self.selected = self.marked.pop();
+                }
+            }
             Some(Drag::Slider(_)) => {}
             // A click without movement isn't an edit.
             Some(Drag::Move { moved: false, .. }) => {
@@ -1553,9 +1670,16 @@ impl Editor {
         }
 
         match (k.key.as_str(), ctrl, shift) {
+            // Held Space pans, like in design apps.
+            ("space", false, false) => self.space = true,
             // Esc steps back: the colour menu, the selection, then the editor.
             ("escape", _, _) if self.colors_open => self.colors_open = false,
+            ("escape", _, _) if !self.marked.is_empty() => self.marked.clear(),
             ("escape", _, _) if self.selected.is_some() => self.selected = None,
+            ("a", true, _) if self.cropping.is_none() => {
+                self.selected = None;
+                self.marked = (0..self.doc.shapes.len()).collect();
+            }
             // Done with the crop: it stays, the crop tool steps aside.
             ("escape", _, _) if self.crop_menu.is_some() => self.crop_menu = None,
             ("escape", _, _) if self.cropping.is_some() => self.cancel_crop(cx),
@@ -1588,8 +1712,9 @@ impl Editor {
             ("v", true, _) => self.paste(cx),
             ("=" | "+", true, _) => self.zoom_by(1.25),
             ("-", true, _) => self.zoom_by(0.8),
-            ("0", true, _) => self.zoom = 1.,
-            ("s", true, _) => self.export(Export::Save, window, cx),
+            ("0", true, _) => self.zoom_at(1., (0., 0.)),
+            ("s", true, false) => self.export(Export::Save, window, cx),
+            ("s", true, true) => self.save_as(window, cx),
             (key, false, false) => {
                 if let Some(tool) = Tool::ALL.into_iter().find(|t| t.key() == key) {
                     // C again in the crop mode is Crop.
@@ -1786,7 +1911,17 @@ impl Editor {
 
     /// Zoom the canvas by `factor`, between fitting and 4×.
     fn zoom_by(&mut self, factor: f32) {
-        self.zoom = (self.zoom * factor).clamp(1., 8.);
+        self.zoom_at(self.zoom * factor, (0., 0.));
+    }
+
+    /// Zoom to `zoom`, keeping the point `at` (from the stage's middle, in
+    /// window pixels) where it is; fitting the stage centres it again.
+    fn zoom_at(&mut self, zoom: f32, at: (f32, f32)) {
+        let zoom = zoom.clamp(MIN_ZOOM, 8.);
+        let k = zoom / self.zoom;
+        let (px_, py) = self.view_pan;
+        self.view_pan = if zoom == 1. { (0., 0.) } else { (at.0 - (at.0 - px_) * k, at.1 - (at.1 - py) * k) };
+        self.zoom = zoom;
     }
 
     fn slide(&mut self, knob: Knob, x: f32, cx: &mut Context<Self>) {
@@ -1889,7 +2024,16 @@ impl Editor {
         let picked = cx.prompt_for_new_path(&dir, name.as_deref());
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(path))) = picked.await else { return };
-            let _ = this.update_in(cx, |editor, window, cx| editor.export(Export::SaveAs(path), window, cx));
+            // A name ending in .kadr saves an editable project there.
+            let project = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("kadr"));
+            let _ = this.update_in(cx, |editor, window, cx| {
+                if project {
+                    editor.bundle = Some(path);
+                    editor.save_project(cx);
+                } else {
+                    editor.export(Export::SaveAs(path), window, cx);
+                }
+            });
         })
         .detach();
     }
@@ -1994,7 +2138,7 @@ impl Editor {
                 .size(ButtonSize::Large)
                 .square()
                 .child(if on { icon.color(Color::Custom(gpui::white())) } else { icon })
-                .tooltip(Tooltip::text(format!("{} ({})", tool.label(), tool.key().to_uppercase())))
+                .tip(Tooltip::text(format!("{} ({})", tool.label(), tool.key().to_uppercase())))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.set_tool(tool, cx);
                     cx.notify();
@@ -2023,7 +2167,7 @@ impl Editor {
                 .border_color(if selected { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
                 .child(div().size(px(20.)).rounded_full().bg(c))
-                .tooltip(Tooltip::text(tr!("editor.color_n", i + 1)))
+                .tip(Tooltip::text(tr!("editor.color_n", i + 1)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.pick_color(i);
                     this.colors_open = false;
@@ -2051,7 +2195,7 @@ impl Editor {
                         .child(div().size(px(16.)).rounded_full().bg(current).border_1().border_color(cx.theme().colors().border))
                         .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)),
                 )
-                .tooltip(Tooltip::text(t("editor.color_1_7")))
+                .tip(Tooltip::text(t("editor.color_1_7")))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.colors_open = !this.colors_open;
                     cx.notify();
@@ -2081,22 +2225,17 @@ impl Editor {
             .gap_1()
             .child(div().w(px(18.)).flex().justify_center().child(div().size(px(dot_size)).rounded_full().bg(current)))
             .child(self.slider(Knob::Weight, self.weight, String::new(), cx))
-            .tooltip(Tooltip::text(t("common.size")));
-        // The modes, like CleanShot's: crop, a picture on top, the background.
+            .tip(Tooltip::text(t("common.size")));
+        // The modes: the background first, then crop and a picture on top.
         let mode = |id: &'static str, icon: Icon, on: bool, tip: &'static str| {
-            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().toggle_state(on).child(icon).tooltip(Tooltip::text(tip))
+            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().toggle_state(on).child(icon).tip(Tooltip::text(tip))
         };
         let modes = h_flex()
             .gap_0p5()
-            .child(mode("mode-crop", Icon::from_path("icons/kadr/crop.svg").size(IconSize::Tool), false, t("editor.crop_tip")).on_click(cx.listener(|this, _, _, cx| {
-                this.set_tool(Tool::Crop, cx);
-                cx.notify();
-            })))
-            .child(mode("mode-picture", Icon::from_path("icons/image_plus.svg").size(IconSize::Tool), false, t("editor.add_picture")).on_click(cx.listener(|this, _, _, cx| this.pick_picture(cx))))
             .child(
                 mode(
                     "mode-background",
-                    Icon::from_path("icons/kadr/frame.svg").size(IconSize::Tool).color(if self.frame.on() { Color::Accent } else { Color::Default }),
+                    Icon::from_path("icons/kadr/frame.svg").size(IconSize::Tool),
                     self.panel,
                     t("editor.background_padding_corners_shadow_format"),
                 )
@@ -2104,7 +2243,12 @@ impl Editor {
                     this.panel = !this.panel;
                     cx.notify();
                 })),
-            );
+            )
+            .child(mode("mode-crop", Icon::from_path("icons/kadr/crop.svg").size(IconSize::Tool), false, t("editor.crop_tip")).on_click(cx.listener(|this, _, _, cx| {
+                this.set_tool(Tool::Crop, cx);
+                cx.notify();
+            })))
+            .child(mode("mode-picture", Icon::from_path("icons/image_plus.svg").size(IconSize::Tool), false, t("editor.add_picture")).on_click(cx.listener(|this, _, _, cx| this.pick_picture(cx))));
 
         let history = h_flex()
             .gap_0p5()
@@ -2113,7 +2257,7 @@ impl Editor {
                     .shape(IconButtonShape::Square)
                     .size(ButtonSize::Large)
                     .disabled(self.history.is_empty())
-                    .tooltip(Tooltip::text(t("editor.undo_ctrl_z")))
+                    .tip(Tooltip::text(t("editor.undo_ctrl_z")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.undo(cx);
                         cx.notify();
@@ -2125,7 +2269,7 @@ impl Editor {
                     .size(ButtonSize::Large)
                     .disabled(self.future.is_empty())
                     .child(div().px_1().child(Icon::from_path("icons/kadr/redo.svg").size(IconSize::Small).color(if self.future.is_empty() { Color::Disabled } else { Color::Default })))
-                    .tooltip(Tooltip::text(t("editor.redo_ctrl_shift_z")))
+                    .tip(Tooltip::text(t("editor.redo_ctrl_shift_z")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.redo(cx);
                         cx.notify();
@@ -2144,7 +2288,7 @@ impl Editor {
                     .size(ButtonSize::Large)
                     .toggle_state(self.fill == solid)
                     .child(div().px_1().child(Icon::from_path(icon).size(IconSize::Small)))
-                    .tooltip(Tooltip::text(tip))
+                    .tip(Tooltip::text(tip))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.pick_fill(solid);
                         cx.notify();
@@ -2172,7 +2316,7 @@ impl Editor {
                     .size(ButtonSize::Large)
                     .toggle_state(self.text_style == style)
                     .child(div().px_0p5().child(sample))
-                    .tooltip(Tooltip::text(tip))
+                    .tip(Tooltip::text(tip))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.pick_text_style(style);
                         cx.notify();
@@ -2194,7 +2338,7 @@ impl Editor {
                     .size(ButtonSize::Large)
                     .toggle_state(self.hide == how)
                     .child(div().px_1().child(Icon::from_path(icon).size(IconSize::Small)))
-                    .tooltip(Tooltip::text(tip))
+                    .tip(Tooltip::text(tip))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.pick_hide(how, cx);
                         cx.notify();
@@ -2213,7 +2357,7 @@ impl Editor {
                             .size(ButtonSize::Large)
                             .start_icon(Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Small))
                             .disabled(self.redacting || self.source.is_none())
-                            .tooltip(tip)
+                            .tip(tip)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.hide_sensitive(cx);
                                 cx.notify();
@@ -2225,7 +2369,7 @@ impl Editor {
                             .size(ButtonSize::Large)
                             .disabled(self.redacting || self.source.is_none())
                             .child(div().px_1().child(Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Small)))
-                            .tooltip(tip)
+                            .tip(tip)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.hide_sensitive(cx);
                                 cx.notify();
@@ -2327,8 +2471,8 @@ impl Editor {
     /// The zoom as a dropdown: fit, or a real size.
     fn zoom_menu(&self, cx: &mut Context<Self>) -> AnyElement {
         let percent = |k: f32| format!("{}%", (k * 100.).round());
-        let mut zooms: Vec<MenuItem> = vec![(t("editor.fit").into(), self.zoom == 1., Rc::new(|this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.zoom = 1.) as MenuPick)];
-        zooms.extend([0.5f32, 1., 2.].map(|k| (percent(k), false, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.zoom_to_real(k)) as MenuPick)));
+        let mut zooms: Vec<MenuItem> = vec![(t("editor.fit").into(), self.zoom == 1., Rc::new(|this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.zoom_at(1., (0., 0.))) as MenuPick)];
+        zooms.extend([0.25f32, 0.5, 1., 2.].map(|k| (percent(k), false, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.zoom_to_real(k)) as MenuPick)));
         self.crop_dropdown(CropMenu::Zoom, percent(self.disp.0 / self.real.0), t("editor.zoom"), zooms, true, cx)
     }
 
@@ -2354,7 +2498,7 @@ impl Editor {
             .when(width >= COMPACT_TOOLBAR, |d| {
                 d.child(Label::new(t("editor.drag")).color(Color::Muted)).child(Icon::from_path("icons/kadr/grip.svg").size(IconSize::Small).color(Color::Muted))
             })
-            .tooltip(Tooltip::text(t("editor.drag_annotated_image_into_chat")))
+            .tip(Tooltip::text(t("editor.drag_annotated_image_into_chat")))
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
                 let (src, doc, frame, path) = drag_state.as_ref()?;
@@ -2366,7 +2510,7 @@ impl Editor {
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(out, false)])))
             });
 
-        let action = |id: &'static str, icon: Icon, tip: String| ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().child(icon).tooltip(Tooltip::text(tip));
+        let action = |id: &'static str, icon: Icon, tip: String| ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().child(icon).tip(Tooltip::text(tip));
         let actions = h_flex()
             .gap_0p5()
             .child(action("ocr", Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Medium), t("editor.copy_text_tip").into()).on_click(cx.listener(|this, _, _, cx| this.read_text(cx))))
@@ -2377,39 +2521,22 @@ impl Editor {
                     .on_click(cx.listener(|this, _, window, cx| this.export(Export::Copy, window, cx))),
             );
 
-        // Save, with its other ways in a menu off the chevron.
-        let open = self.crop_menu == Some(CropMenu::Save);
-        let saves: Vec<MenuItem> = vec![
-            (t("common.save").into(), false, Rc::new(|this: &mut Editor, window: &mut Window, cx: &mut Context<Editor>| this.export(Export::Save, window, cx)) as MenuPick),
-            (t("editor.save_as").into(), false, Rc::new(|this: &mut Editor, window: &mut Window, cx: &mut Context<Editor>| this.save_as(window, cx)) as MenuPick),
-            (t("editor.save_project").into(), false, Rc::new(|this: &mut Editor, _: &mut Window, cx: &mut Context<Editor>| this.save_project(cx)) as MenuPick),
-        ];
-        let menu = open.then(|| self.menu_popup(saves, true, true, cx));
-        let save = self
-            .menu_anchor(CropMenu::Save, cx)
+        // Save as a quieter button before Save (a project has its own above).
+        let save = h_flex()
+            .gap_1()
             .child(
-                h_flex()
-                    .gap(px(1.))
-                    .child(
-                        Button::new("save", t("common.save"))
-                            .style(ButtonStyle::Accent)
-                            .size(ButtonSize::Large)
-                            .when(width >= COMPACT_TOOLBAR, |b| b.key_binding(kit::keys("ctrl-s")))
-                            .on_click(cx.listener(|this, _, window, cx| this.export(Export::Save, window, cx))),
-                    )
-                    .child(
-                        ButtonLike::new("save-more")
-                            .style(ButtonStyle::Accent)
-                            .size(ButtonSize::Large)
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Custom(gpui::white())))
-                            .tooltip(Tooltip::text(t("editor.save_options")))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.crop_menu = if this.crop_menu == Some(CropMenu::Save) { None } else { Some(CropMenu::Save) };
-                                cx.notify();
-                            })),
-                    ),
+                Button::new("save-as", t("editor.save_as"))
+                    .style(ButtonStyle::Filled)
+                    .size(ButtonSize::Large)
+                    .on_click(cx.listener(|this, _, window, cx| this.save_as(window, cx))),
             )
-            .children(menu);
+            .child(
+                Button::new("save", t("common.save"))
+                    .style(ButtonStyle::Accent)
+                    .size(ButtonSize::Large)
+                    .when(width >= COMPACT_TOOLBAR, |b| b.key_binding(kit::keys("ctrl-s")))
+                    .on_click(cx.listener(|this, _, window, cx| this.export(Export::Save, window, cx))),
+            );
 
         // Zoom (and undoing a crop or a reopened drawing) at the left, the
         // drag-out in the middle, the results at the right.
@@ -2444,7 +2571,7 @@ impl Editor {
                                 .style(ButtonStyle::Subtle)
                                 .size(ButtonSize::Large)
                                 .color(Color::Muted)
-                                .tooltip(Tooltip::text(t("editor.start_over_tip")))
+                                .tip(Tooltip::text(t("editor.start_over_tip")))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.discard_edits(cx);
                                     cx.notify();
@@ -2523,13 +2650,102 @@ impl Editor {
                     .size(ButtonSize::Large)
                     .toggle_state(open)
                     .child(h_flex().gap_1().px_1().child(Label::new(label)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
-                    .tooltip(Tooltip::text(tip))
+                    .tip(Tooltip::text(tip))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.crop_menu = if this.crop_menu == Some(which) { None } else { Some(which) };
                         cx.notify();
                     })),
             )
             .children(menu)
+            .into_any_element()
+    }
+
+    /// The crop's fill: a button with its dot, and swatches under it (see-
+    /// through, white, black, then the pen colours).
+    fn fill_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
+        let (ring, edge) = (colors.text_accent, colors.text_muted);
+        let rgba = |c: Hsla| {
+            let c = crate::ui::rgb_of(c);
+            [c.r, c.g, c.b, c.a].map(|v| (v * 255.).round() as u8)
+        };
+        let hsla = |[r, g, b, a]: [u8; 4]| {
+            let mut c = crate::ui::from_hex((r as u32) << 16 | (g as u32) << 8 | b as u32);
+            c.alpha = a as f32 / 255.;
+            c
+        };
+        // A see-through fill shows as a struck-out circle.
+        let dot = move |fill: Option<[u8; 4]>, size: f32| match fill {
+            Some(f) => div().size(px(size)).rounded_full().bg(hsla(f)).border_1().border_color(edge).into_any_element(),
+            None => div()
+                .size(px(size))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border_1()
+                .border_color(edge)
+                .child(Icon::new(IconName::Slash).size(IconSize::XSmall).color(Color::Muted))
+                .into_any_element(),
+        };
+        let mut choices: Vec<Option<[u8; 4]>> = vec![None, Some([255, 255, 255, 255]), Some([0, 0, 0, 255])];
+        for &c in &self.colors {
+            let c = Some(rgba(c));
+            if !choices.contains(&c) {
+                choices.push(c);
+            }
+        }
+        let open = self.crop_menu == Some(CropMenu::Fill);
+        let swatches = choices.into_iter().enumerate().map(|(i, fill)| {
+            div()
+                .id(("fill", i))
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border_2()
+                .border_color(if fill == self.doc.fill { ring } else { gpui::transparent_black() })
+                .cursor_pointer()
+                .child(dot(fill, 20.))
+                .when(fill.is_none(), |d| d.tip(Tooltip::text(t("editor.fill_transparent"))))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.doc.fill != fill {
+                        this.checkpoint();
+                        this.doc.fill = fill;
+                    }
+                    this.crop_menu = None;
+                    cx.notify();
+                }))
+        }).collect::<Vec<_>>();
+        self.menu_anchor(CropMenu::Fill, cx)
+            .child(
+                ButtonLike::new("crop-fill")
+                    .style(if open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(open)
+                    .child(h_flex().gap_1().px_1().child(dot(self.doc.fill, 16.)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                    .tip(Tooltip::text(t("editor.fill_tip")))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.crop_menu = if this.crop_menu == Some(CropMenu::Fill) { None } else { Some(CropMenu::Fill) };
+                        cx.notify();
+                    })),
+            )
+            .when(open, |d| {
+                d.child(gpui::deferred(
+                    h_flex()
+                        .id("fill-menu")
+                        .occlude()
+                        .absolute()
+                        .top(px(38.))
+                        .left_0()
+                        .gap_1()
+                        .p_1p5()
+                        .elevation_3(cx)
+                        .children(swatches)
+                        .child(crate::ui::track_bounds(&self.crop_menu_bounds)),
+                ))
+            })
             .into_any_element()
     }
 
@@ -2546,7 +2762,7 @@ impl Editor {
             .size(ButtonSize::Large)
             .toggle_state(true)
             .child(div().px_1().child(Icon::from_path("icons/kadr/crop.svg").size(IconSize::Tool).color(Color::Accent)))
-            .tooltip(Tooltip::text(t("editor.leave_crop")))
+            .tip(Tooltip::text(t("editor.leave_crop")))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.apply_crop();
                 cx.notify();
@@ -2579,7 +2795,7 @@ impl Editor {
                 .cursor(CursorStyle::IBeam)
                 .child(shown)
                 .when(typing.is_some(), |d| d.child(div().w(px(1.)).h(px(14.)).bg(accent)))
-                .tooltip(Tooltip::text(t(if height { "editor.height_px" } else { "editor.width_px" })))
+                .tip(Tooltip::text(t(if height { "editor.height_px" } else { "editor.width_px" })))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.apply_size_field();
                     this.size_field = Some((height, String::new()));
@@ -2587,7 +2803,7 @@ impl Editor {
                 }))
         };
         let icon_button = |id: &'static str, icon: &'static str, tip: &'static str| {
-            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(Icon::from_path(icon).size(IconSize::Small))).tooltip(Tooltip::text(tip))
+            ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(Icon::from_path(icon).size(IconSize::Small))).tip(Tooltip::text(tip))
         };
         let swap = icon_button("crop-swap", "icons/kadr/swap.svg", t("editor.swap_sides")).on_click(cx.listener(|this, _, _, cx| {
             this.swap_crop_sides();
@@ -2612,6 +2828,10 @@ impl Editor {
             .collect();
         let scale = self.crop_dropdown(CropMenu::Scale, sized(self.doc.scale), t("editor.image_size_tip"), scales, false, cx);
 
+        // What fills the crop where it reaches past the picture: a dot and
+        // swatches like the pen colour's, see-through first.
+        let fill = self.fill_picker(cx);
+
         let narrow = width < COMPACT_TOOLBAR;
         let tight = width < 780.;
         let left = h_flex()
@@ -2627,7 +2847,8 @@ impl Editor {
             .child(flip)
             .child(div().w(px(12.)))
             .when(!narrow, |row| row.child(Label::new(t("editor.image_size")).size(LabelSize::Small).color(Color::Muted)))
-            .child(scale);
+            .child(scale)
+            .child(fill);
         let right = h_flex()
             .flex_none()
             .gap_1()
@@ -2847,14 +3068,14 @@ impl Editor {
                         .justify_center()
                         .child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)),
                 )
-                .tooltip(Tooltip::text(t("common.your_own_image")))
+                .tip(Tooltip::text(t("common.your_own_image")))
                 .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
                 .into_any_element(),
         );
 
         let blurred = tile("backdrop-blurred".into(), self.frame.backdrop == Backdrop::Blurred)
             .child(swatch().bg(field_bg).children(self.blurred.clone().map(|b| img(b).size_full().object_fit(ObjectFit::Cover))))
-            .tooltip(Tooltip::text(t("editor.blurred_tip")))
+            .tip(Tooltip::text(t("editor.blurred_tip")))
             .on_click(pick(Backdrop::Blurred));
 
         // Plain colours as dots, transparency first.
@@ -2863,7 +3084,7 @@ impl Editor {
         };
         let mut plain: Vec<AnyElement> = vec![dot("transparent".into(), self.frame.backdrop == Backdrop::Transparent)
             .child(div().size(px(DOT)).rounded_full().overflow_hidden().border_1().border_color(edge).child(checker_tile(DOT, 5.)))
-            .tooltip(Tooltip::text(t("editor.transparent")))
+            .tip(Tooltip::text(t("editor.transparent")))
             .on_click(pick(Backdrop::Transparent))
             .into_any_element()];
         plain.extend(plains.iter().map(|&i| {
@@ -2958,6 +3179,7 @@ impl Editor {
         let s = self.scale();
         // Everything is laid out in the work area, the picture `m` in.
         let m = self.margin();
+        self.laid_margin.set(m);
         let off = m * s;
         let at = |p: P| (px(p.0 * s + off), px(p.1 * s + off));
         let (pw, ph) = (self.px.0 as f32, self.px.1 as f32);
@@ -3074,6 +3296,11 @@ impl Editor {
         // The result's bounds, when drawing has grown it past the picture.
         let (el, et, er, eb) = self.extent();
         let grown = crop.is_none() && (el < 0. || et < 0. || er > pw || eb > ph);
+        let marquee = match self.drag {
+            Some(Drag::Marquee { start, now }) => Some(rect(start, now)),
+            _ => None,
+        };
+        let marked: Vec<_> = self.marked.iter().filter_map(|&i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.band_pad(s))).collect();
         let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow)));
         let accent = cx.theme().colors().text_accent;
         let overlay = canvas(
@@ -3102,6 +3329,20 @@ impl Editor {
                 }
                 // Like CleanShot: a soft, wide band just outside anything
                 // boxy with knobs on its corners; lines show their ends.
+                // Marked shapes: the selection's band, without knobs.
+                let mut band = accent;
+                band.lightness = (band.lightness + 0.12).min(0.8);
+                band.alpha = 0.8;
+                for &((l, t, r, b), pad) in &marked {
+                    let half = BAND / 2. / s;
+                    let r0 = area(l - pad - half, t - pad - half, r + pad + half, b + pad + half);
+                    window.paint_quad(crate::ui::quad(r0, px(2.), gpui::transparent_black(), px(BAND), band, BorderStyle::Solid));
+                }
+                if let Some((l, t, r, b)) = marquee {
+                    let mut tint = accent;
+                    tint.alpha = 0.12;
+                    window.paint_quad(crate::ui::quad(area(l, t, r, b), px(0.), tint, px(1.), accent, BorderStyle::Solid));
+                }
                 if let Some(((l, t, r, b), knobs, pad, line)) = selection {
                     if line {
                         for h in knobs {
@@ -3126,12 +3367,14 @@ impl Editor {
         .size_full();
 
         let pointer = match self.tool {
+            _ if self.space => CursorStyle::OpenHand,
             _ if self.drag.is_none() && self.hover.is_some() => self.hover.unwrap_or(CursorStyle::Arrow),
             Tool::Select => CursorStyle::Arrow,
             Tool::Text => CursorStyle::IBeam,
             _ => CursorStyle::Crosshair,
         };
-        let framed = self.frame.on();
+        // No background while cropping: the picture alone, as it's cut.
+        let framed = self.frame.on() && self.cropping.is_none();
         // A window shot's see-through margin holds its own shadow; the
         // stage's shadow and edge would show through it as a dark box.
         let clear_edge = matches!(self.window, Some((_, Some(_))));
@@ -3165,6 +3408,7 @@ impl Editor {
         // result, which may reach past the picture.
         let ((ow, oh), (left, top)) = self.frame.layout((er - el) * s, (eb - et) * s);
         let backdrop = match &self.frame.backdrop {
+            _ if self.cropping.is_some() => None,
             Backdrop::None => None,
             Backdrop::Transparent => Some(checkerboard(10.).absolute().inset_0().size_full().into_any_element()),
             Backdrop::Gradient(i) => {
@@ -3188,6 +3432,24 @@ impl Editor {
                 .overflow_hidden()
                 .child(fill)
         });
+        // A crop past the picture, filled as Save fills it; while cropping,
+        // the whole room round the picture, the shade marking what's cut.
+        let cropping = self.cropping.is_some();
+        let fill = self.doc.fill.map(|[r, g, b, a]| {
+            let mut color = crate::ui::from_hex((r as u32) << 16 | (g as u32) << 8 | b as u32);
+            color.alpha = a as f32 / 255.;
+            div()
+                .absolute()
+                .map(|d| {
+                    if cropping {
+                        d.inset_0()
+                    } else {
+                        d.left(px(el * s + off)).top(px(et * s + off)).w(px((er - el) * s)).h(px((eb - et) * s))
+                    }
+                })
+                .when(framed, |d| d.rounded(px(radius)))
+                .bg(color)
+        });
         div()
             .id("canvas")
             .relative()
@@ -3196,6 +3458,7 @@ impl Editor {
             .h(px(self.disp.1 + 2. * off))
             .cursor(pointer)
             .children(backdrop)
+            .children(fill)
             .child(picture)
             .children(pictures)
             .child(strokes)
@@ -3220,11 +3483,14 @@ impl Render for Editor {
         let viewport = window.viewport_size();
         let vw = f32::from(viewport.width);
         let panel = if self.panel { PANEL } else { 0. };
+        // The same layout in and out of the crop mode, so the picture keeps
+        // its size there.
+        let pad_share = self.resting_margin() / self.px.0.max(self.px.1).max(1) as f32;
         let box_of = |frame: &Frame, (w, h): (f32, f32)| {
             if frame.on() {
                 frame.layout(w, h).0
             } else {
-                let pad = w.max(h) * WORK_PAD;
+                let pad = w.max(h) * pad_share;
                 (w + 2. * pad, h + 2. * pad)
             }
         };
@@ -3233,6 +3499,13 @@ impl Render for Editor {
         let k = (room.0 / full.0).min(room.1 / full.1).min(1.);
         let fit = (self.natural.0 * k, self.natural.1 * k);
         self.disp = (fit.0 * self.zoom, fit.1 * self.zoom);
+        if self.cropping.is_some() {
+            // The stage's free room round the picture, the tighter way,
+            // inside its 24px padding.
+            let s = self.disp.0 / self.px.0.max(1) as f32;
+            let free = (vw - panel - self.disp.0).min(self.stage_h.get() - self.disp.1) / 2. - 24.;
+            self.crop_room.set((free / s).max(0.));
+        }
         // The picture fits the stage; a zoomed canvas scrolls inside it.
         let width = if self.windowed { vw } else { self.size.0 };
         let stage_h = self.stage_h.clone();
@@ -3248,6 +3521,26 @@ impl Render for Editor {
         )
         .absolute()
         .size_full();
+        // The stage's own bounds, for centring the canvas and zooming at the
+        // pointer.
+        let stage_box = self.stage_box.clone();
+        let stage_measure = canvas(
+            move |bounds, window, _| {
+                let b = (f32::from(bounds.origin.x), f32::from(bounds.origin.y), f32::from(bounds.size.width), f32::from(bounds.size.height));
+                if b != stage_box.get() {
+                    stage_box.set(b);
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let canvas_at = {
+            let (_, _, w, h) = self.stage_box.get();
+            let off = self.margin() * self.disp.0 / self.px.0.max(1) as f32;
+            ((w - self.disp.0) / 2. - off + self.view_pan.0, (h - self.disp.1) / 2. - off + self.view_pan.1)
+        };
         let stage = h_flex()
             .relative()
             .w_full()
@@ -3263,21 +3556,31 @@ impl Render for Editor {
                     .items_start()
                     .flex_1()
                     .h_full()
-                    .overflow_scroll()
-                    .bg(cx.theme().colors().editor_background)
+                    .relative()
+                    .overflow_hidden()
+                    .when(self.space, |d| d.cursor(CursorStyle::OpenHand))
+                    // The bars' tone, so the picture sits in one surface;
+                    // black while cropping, like CleanShot.
+                    .bg(if self.cropping.is_some() { gpui::black() } else { cx.theme().colors().title_bar_background })
+                    // Ctrl and the wheel zoom at the pointer; the wheel alone pans.
                     .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
+                        cx.stop_propagation();
+                        let d = e.delta.pixel_delta(px(20.));
+                        let (dx, dy) = (f32::from(d.x), f32::from(d.y));
                         if e.modifiers.control {
-                            cx.stop_propagation();
-                            let dy = f32::from(e.delta.pixel_delta(px(20.)).y);
                             if dy != 0. {
-                                this.zoom_by(if dy > 0. { 1.1 } else { 1. / 1.1 });
-                                cx.notify();
+                                let (x, y, w, h) = this.stage_box.get();
+                                let at = (f32::from(e.position.x) - x - w / 2., f32::from(e.position.y) - y - h / 2.);
+                                this.zoom_at(this.zoom * if dy > 0. { 1.1 } else { 1. / 1.1 }, at);
                             }
+                        } else {
+                            this.view_pan = (this.view_pan.0 + dx, this.view_pan.1 + dy);
                         }
+                        cx.notify();
                     }))
-                    // Centered with auto margins, which stop at the edge when the
-                    // zoomed canvas is bigger, so all of it can be scrolled to.
-                    .child(div().flex_none().min_w(relative(1.)).min_h(relative(1.)).flex().p(px(24.)).child(div().m_auto().child(self.render_canvas(cx)))),
+                    .child(stage_measure)
+                    // In the middle of the stage, moved by the camera.
+                    .child(div().absolute().left(px(canvas_at.0)).top(px(canvas_at.1)).child(self.render_canvas(cx))),
             )
             ;
         let border = cx.theme().colors().border;
@@ -3299,19 +3602,42 @@ impl Render for Editor {
             )
         };
         kit::root(cx)
-            .when(self.windowed, |d| d.bg(cx.theme().colors().editor_background))
+            .when(self.windowed, |d| d.bg(cx.theme().colors().title_bar_background))
             .when(!self.windowed, |d| d.bg(rgba(0x00000040)).items_center().justify_center())
             .flex()
             .flex_col()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
+            .on_key_up(cx.listener(|this, e: &gpui::KeyUpEvent, _, cx| {
+                if e.keystroke.key == "space" {
+                    this.space = false;
+                    this.pan = None;
+                    cx.notify();
+                }
+            }))
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
                 this.drop_files(paths);
                 cx.notify();
             }))
             // The pointer stays with this surface while the button is held.
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.mouse_up(cx)))
+            // `_all`: the plain listeners skip events over occluding children
+            // (the bars), and a drag would stall there.
+            .on_mouse_move_all({
+                let editor = cx.entity().downgrade();
+                move |e: &MouseMoveEvent, phase, _, _, cx| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        let _ = editor.update(cx, |this, cx| this.mouse_move(e, cx));
+                    }
+                }
+            })
+            .on_mouse_up_all({
+                let editor = cx.entity().downgrade();
+                move |e: &gpui::MouseUpEvent, phase, _, _, cx| {
+                    if phase == gpui::DispatchPhase::Bubble && e.button == MouseButton::Left {
+                        let _ = editor.update(cx, |this, cx| this.mouse_up(cx));
+                    }
+                }
+            })
             .child(content)
     }
 }
@@ -3437,8 +3763,8 @@ fn segment_distance(p: P, a: P, b: P) -> f32 {
 }
 
 /// The room around a picture of `size` to draw and crop in, in its pixels.
-fn work_margin(size: (u32, u32)) -> f32 {
-    (size.0.max(size.1) as f32 * WORK_PAD).round()
+fn work_margin_at(size: (u32, u32), share: f32) -> f32 {
+    (size.0.max(size.1) as f32 * share).round()
 }
 
 /// The box of a picture's opaque pixels, when everything round it is see-
@@ -3459,7 +3785,8 @@ fn opaque_bounds(img: &RgbaImage) -> Option<crop::Rect> {
 /// the crop, or else the picture and everything drawn around it.
 fn extent(doc: &Doc, size: (u32, u32)) -> (f32, f32, f32, f32) {
     let (w, h) = (size.0 as f32, size.1 as f32);
-    let m = work_margin(size);
+    // A crop may reach as far as the crop mode lets it.
+    let m = work_margin_at(size, MAX_REACH);
     let (l, t, r, b) = match doc.crop {
         Some((a, b)) => rect(a, b),
         None => doc.shapes.iter().map(Shape::bounds).fold((0f32, 0f32, w, h), |e, s| (e.0.min(s.0), e.1.min(s.1), e.2.max(s.2), e.3.max(s.3))),
@@ -3475,8 +3802,18 @@ fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
     // shapes moved along with it.
     let (l, t, r, b) = extent(doc, src.dimensions());
     let (ew, eh) = ((r - l) as u32, (b - t) as u32);
-    let mut canvas = RgbaImage::new(ew, eh);
-    image::imageops::replace(&mut canvas, src, -l as i64, -t as i64);
+    let canvas = match doc.fill {
+        Some(fill) => {
+            let mut canvas = RgbaImage::from_pixel(ew, eh, image::Rgba(fill));
+            image::imageops::overlay(&mut canvas, src, -l as i64, -t as i64);
+            canvas
+        }
+        None => {
+            let mut canvas = RgbaImage::new(ew, eh);
+            image::imageops::replace(&mut canvas, src, -l as i64, -t as i64);
+            canvas
+        }
+    };
     let shapes: Vec<Shape> = doc
         .shapes
         .iter()
@@ -3492,7 +3829,8 @@ fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
         // past its edges sits on the backdrop as it is.
         let drawn = rasterize(&RgbaImage::new(ew, eh), &shapes)?;
         let (w, h) = (src.width() as f32, src.height() as f32);
-        let inner = ((-l).max(0.), (-t).max(0.), (w - l).min(ew as f32), (h - t).min(eh as f32));
+        // A filled canvas is all picture: it gets the corners and shadow.
+        let inner = if doc.fill.is_some() { (0., 0., ew as f32, eh as f32) } else { ((-l).max(0.), (-t).max(0.), (w - l).min(ew as f32), (h - t).min(eh as f32)) };
         out = framed(&out, &drawn, inner, frame);
     }
     // The crop mode's image size: the whole result, smaller.
@@ -4218,6 +4556,12 @@ mod tests {
         assert_eq!(out.dimensions(), (220, 110));
         assert_eq!(out.get_pixel(5, 5).0[3], 0);
         assert_eq!(out.get_pixel(15, 15).0, [200, 200, 200, 255]);
+        // Filled, the new room takes the fill; far past the old margin too.
+        let doc = Doc { shapes: Vec::new(), crop: Some(((-60., -10.), (210., 100.))), fill: Some([255, 255, 255, 255]), ..Doc::default() };
+        let out = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.dimensions(), (270, 110));
+        assert_eq!(out.get_pixel(5, 5).0, [255, 255, 255, 255]);
+        assert_eq!(out.get_pixel(65, 15).0, [200, 200, 200, 255]);
         // On a backdrop the line still shows past the rounded picture.
         let frame = Frame { backdrop: Backdrop::Gradient(0), ..Frame::default() };
         let doc = Doc { shapes: doc_line(), crop: None, ..Doc::default() };

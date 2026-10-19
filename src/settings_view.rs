@@ -558,7 +558,7 @@ fn folder(cx: &mut Context<SettingsView>, dir: PathBuf, custom: bool, screenshot
         .when(custom, |row| {
             row.child(
                 IconButton::new(if screenshots { "reset-shots" } else { "reset-videos" }, IconName::Close)
-                    .tooltip(Tooltip::text(t("settings.default")))
+                    .tip(Tooltip::text(t("settings.default")))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.update(cx, |s| {
                             if screenshots {
@@ -620,7 +620,7 @@ impl SettingsView {
             ButtonLike::new(SharedString::from(format!("key-{i}-{k}")))
                 .style(ButtonStyle::Filled)
                 .child(div().px_1().font_family(kit::MONO_FONT).text_sm().child(hotkeys::label(spec)))
-                .tooltip(Tooltip::text(t("settings.remove_shortcut")))
+                .tip(Tooltip::text(t("settings.remove_shortcut")))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.keys[i].remove(k);
                     this.save_keys();
@@ -632,7 +632,7 @@ impl SettingsView {
             Label::new(t("settings.press_shortcut_esc_cancel")).size(LabelSize::Small).color(Color::Accent).into_any_element()
         } else {
             IconButton::new(SharedString::from(format!("add-key-{i}")), IconName::Plus)
-                .tooltip(Tooltip::text(t("settings.add_shortcut")))
+                .tip(Tooltip::text(t("settings.add_shortcut")))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.recording.is_none() {
                         hotkeys::quiet(true);
@@ -679,7 +679,7 @@ impl SettingsView {
             ButtonLike::new(SharedString::from(format!("{id}-{token}")))
                 .style(ButtonStyle::Subtle)
                 .child(div().px_1().font_family(kit::MONO_FONT).text_xs().child(token))
-                .tooltip(Tooltip::text(t("settings.add_to_name")))
+                .tip(Tooltip::text(t("settings.add_to_name")))
                 .on_click(cx.listener(move |this, _, _, cx| this.update(cx, |s| s.name_template.push_str(token))))
         }));
         let default = template == crate::storage::DEFAULT_NAME;
@@ -690,7 +690,7 @@ impl SettingsView {
                 h_flex().gap_1().child(field).when(!default, |row| {
                     row.child(
                         IconButton::new(SharedString::from(format!("{id}-reset")), IconName::Close)
-                            .tooltip(Tooltip::text(t("settings.default")))
+                            .tip(Tooltip::text(t("settings.default")))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.naming = false;
                                 this.update(cx, |s| s.name_template = crate::storage::DEFAULT_NAME.into())

@@ -1328,7 +1328,7 @@ impl StudioEditor {
                 Button::new("save-project", t("bundle.project"))
                     .style(ButtonStyle::Subtle)
                     .start_icon(Icon::from_path("icons/kadr/project.svg").size(IconSize::Small))
-                    .tooltip(Tooltip::text(t("bundle.save_project_tip")))
+                    .tip(Tooltip::text(t("bundle.save_project_tip")))
                     .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
             )
             .child(self.render_export(cx))
@@ -1417,7 +1417,7 @@ impl StudioEditor {
                                 Button::new("preview", t("studio.preview"))
                                     .style(ButtonStyle::Filled)
                                     .size(ButtonSize::Large)
-                                    .tooltip(Tooltip::text(t("studio.build_720p_preview_with_all")))
+                                    .tip(Tooltip::text(t("studio.build_720p_preview_with_all")))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.export_open = false;
                                         studio::export(this.video.clone(), this.project.clone(), true, cx);
@@ -1473,7 +1473,7 @@ impl StudioEditor {
                             .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
                             .child(div().px_1().child(Icon::from_path("icons/kadr/skip_back.svg").size(IconSize::Medium)))
-                            .tooltip(Tooltip::text(t("studio.to_start")))
+                            .tip(Tooltip::text(t("studio.to_start")))
                             .on_click(cx.listener(move |this, _, _, cx| this.seek(start, cx))),
                     )
                     .child(
@@ -1481,7 +1481,7 @@ impl StudioEditor {
                             .shape(IconButtonShape::Square)
                             .size(ButtonSize::Large)
                             .icon_size(IconSize::Large)
-                            .tooltip(|_, cx| cx.new(|_| Tooltip::new(t("studio.play_pause")).key_binding(kit::keys("space"))).into())
+                            .tip(|_, cx| cx.new(|_| Tooltip::new(t("studio.play_pause")).key_binding(kit::keys("space"))).into())
                             .on_click(cx.listener(|this, _, window, cx| this.toggle_play(window, cx))),
                     )
                     .child(
@@ -1489,7 +1489,7 @@ impl StudioEditor {
                             .style(ButtonStyle::Subtle)
                             .size(ButtonSize::Large)
                             .child(div().px_1().child(Icon::from_path("icons/kadr/skip_forward.svg").size(IconSize::Medium)))
-                            .tooltip(Tooltip::text(t("studio.to_end")))
+                            .tip(Tooltip::text(t("studio.to_end")))
                             .on_click(cx.listener(move |this, _, _, cx| this.seek(end, cx))),
                     ),
             )
@@ -1503,7 +1503,7 @@ impl StudioEditor {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text(t("studio.timeline_zoom")))
+                            .tip(Tooltip::text(t("studio.timeline_zoom")))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.timeline_zoom = (this.timeline_zoom / 1.5).max(1.);
                                 cx.notify();
@@ -1515,7 +1515,7 @@ impl StudioEditor {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text(t("studio.timeline_zoom")))
+                            .tip(Tooltip::text(t("studio.timeline_zoom")))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.timeline_zoom = (this.timeline_zoom * 1.5).min(MAX_TIMELINE_ZOOM);
                                 cx.notify();
@@ -1666,7 +1666,7 @@ impl StudioEditor {
                 .when(on, |d| d.bg(colors.text_accent))
                 .when(!on, |d| d.hover(|d| d.bg(colors.ghost_element_hover)))
                 .child(Icon::from_path(section.icon()).size(IconSize::Medium).color(if on { Color::Custom(gpui::white()) } else { Color::Muted }))
-                .tooltip(Tooltip::text(section.label()))
+                .tip(Tooltip::text(section.label()))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.show_section(section);
                     cx.notify();
@@ -1838,7 +1838,7 @@ impl StudioEditor {
                         .cursor_pointer()
                         .hover(|d| d.bg(colors.element_hover))
                         .children(thumb.clone().map(|i| img(i).max_w(px(30.)).max_h(px(30.)).object_fit(ObjectFit::Contain)))
-                        .tooltip(Tooltip::text(t(CURSOR_STYLES[style])))
+                        .tip(Tooltip::text(t(CURSOR_STYLES[style])))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.project.cursor_style = style;
                             this.changed(cx);
@@ -2018,7 +2018,7 @@ impl StudioEditor {
         walls.push(
             tile("own-wallpaper".into(), own)
                 .child(div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).border_1().border_dashed().border_color(colors.border).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
-                .tooltip(Tooltip::text(t("common.your_own_image")))
+                .tip(Tooltip::text(t("common.your_own_image")))
                 .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
                 .into_any_element(),
         );
@@ -2278,7 +2278,7 @@ impl Render for StudioEditor {
         let expand = ButtonLike::new("expand")
             .style(ButtonStyle::Subtle)
             .child(div().p_1().child(Icon::from_path("icons/expand.svg").size(IconSize::Small).color(Color::Muted)))
-            .tooltip(Tooltip::text(t(if self.expanded { "studio.show_settings" } else { "studio.preview_only" })))
+            .tip(Tooltip::text(t(if self.expanded { "studio.show_settings" } else { "studio.preview_only" })))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.expanded = !this.expanded;
                 cx.notify();

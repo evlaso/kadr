@@ -8,7 +8,7 @@
 
 use gpui::{
     AnyElement, AnyView, App, Background, BorderStyle, Bounds, BoxShadow, ClickEvent, Div, PaintQuad, Pixels, ElementId, Global, Hsla, IntoElement,
-    ParentElement, Rems, RenderOnce, SharedString, Stateful, Styled, StyleRefinement, Window, div, hsla, point,
+    ParentElement, Point, Rems, RenderOnce, SharedString, Stateful, Styled, StyleRefinement, Window, canvas, div, hsla, point,
     prelude::*, px, relative, rems, svg,
 };
 use palette::IntoColor;
@@ -21,7 +21,7 @@ pub mod prelude {
     pub use gpui::{AnyElement, Div, InteractiveElement, ParentElement, SharedString, Styled, div, px};
 
     pub use super::{
-        ActiveTheme, Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label, LabelSize, StyledExt, h_flex, v_flex,
+        ActiveTheme, Button, ButtonSize, ButtonStyle, Color, Icon, IconButton, IconName, IconSize, Label, LabelSize, StyledExt, TipExt, h_flex, v_flex,
     };
 }
 
@@ -470,27 +470,79 @@ impl RenderOnce for KeyBinding {
 
 // ---------------------------------------------------------------- tooltip
 
-/// A floating hint: a title, maybe a shortcut and a muted line below.
+thread_local! {
+    /// The bounds of the last element with a tooltip found under the pointer
+    /// while painting, and its window: where the tooltip lines up.
+    static TIP_ANCHOR: std::cell::Cell<Option<(gpui::WindowId, Bounds<Pixels>)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Notes the element it's inside (which must be positioned) as a tooltip's
+/// anchor while the pointer is over it. GPUI only tells a tooltip where the
+/// pointer is, not what it belongs to.
+pub fn tip_anchor() -> AnyElement {
+    canvas(
+        |bounds, window, _| {
+            if bounds.contains(&window.mouse_position()) {
+                TIP_ANCHOR.set(Some((window.window_handle().window_id(), bounds)));
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// `.tip(...)`: a tooltip centred under the element instead of at the
+/// pointer.
+pub trait TipExt: gpui::StatefulInteractiveElement + ParentElement + Styled + Sized {
+    fn tip(self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.relative().tooltip(tooltip).child(tip_anchor())
+    }
+}
+
+impl<E: gpui::StatefulInteractiveElement + ParentElement + Styled + Sized> TipExt for E {}
+
+/// The tooltips' dark plate with small white text, also for other hints
+/// (the picker's keys); dimmer parts take `TIP_DIM`.
+pub fn tip_plate() -> Div {
+    h_flex()
+        .rounded(rems_from_px(6.))
+        .rounded_smoothing(SMOOTHING)
+        .bg(gpui::black())
+        // A hairline, like the desktop's window borders, so the black plate
+        // still reads on a dark screen.
+        .border_1()
+        .border_color(gpui::hsla(0., 0., 1., 0.14))
+        .font_family(kit::UI_FONT)
+        .text_size(LabelSize::XSmall.rems())
+        .text_color(gpui::white())
+        .px(px(TOOLTIP_PAD))
+}
+
+/// Shortcuts and other secondary words on a `tip_plate`.
+pub const TIP_DIM: Hsla = gpui::hsla(0., 0., 1., 0.5);
+
+/// A floating hint: a few words, maybe a shortcut.
 pub struct Tooltip {
     title: SharedString,
-    meta: Option<SharedString>,
     key_binding: Option<KeyBinding>,
+    /// Where the pointer was and what was under it when it appeared; GPUI
+    /// places the tooltip from that pointer position.
+    placed: Option<(Point<Pixels>, Option<Bounds<Pixels>>)>,
 }
 
 impl Tooltip {
     pub fn new(title: impl Into<SharedString>) -> Self {
-        Tooltip { title: title.into(), meta: None, key_binding: None }
+        Tooltip { title: title.into(), key_binding: None, placed: None }
     }
 
     /// For `.tooltip(...)`: a plain text hint.
     pub fn text(title: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
         let title = title.into();
         move |_, cx| cx.new(|_| Tooltip::new(title.clone())).into()
-    }
-
-    pub fn meta(mut self, meta: impl Into<SharedString>) -> Self {
-        self.meta = Some(meta.into());
-        self
     }
 
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
@@ -500,50 +552,61 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        // Small, quiet and centred under the pointer, like macOS's. GPUI
-        // puts a tooltip's corner a pixel off the pointer, over whatever is
-        // below; measuring the text lets the card shift down, clear of the
-        // control, and left, onto the pointer's axis.
-        let size = LabelSize::Small.rems().to_pixels(window.rem_size());
+    fn render(&mut self, window: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        // A few white words on a dark plate, centred under the element it
+        // belongs to (above it near the bottom of the window), like macOS's.
+        let size = LabelSize::XSmall.rems().to_pixels(window.rem_size());
         let font = gpui::font(kit::UI_FONT);
         let width_of = |text: &str| {
             let run = gpui::TextRun { len: text.len(), font: font.clone(), ..Default::default() };
             f32::from(window.text_system().layout_line(text, size, &[run]).width)
         };
-        let keys = if self.key_binding.is_some() { 48. } else { 0. };
-        let text = (width_of(&self.title) + keys).max(self.meta.as_ref().map_or(0., |m| width_of(m)));
-        let width = text.min(TOOLTIP_MAX) + 2. * TOOLTIP_PAD + 2.;
-        let mouse = f32::from(window.mouse_position().x);
-        let room = f32::from(window.viewport_size().width);
-        // Where GPUI will put it, and where it should be.
-        let origin = if mouse + 1. + width > room { mouse - width - 1. } else { mouse + 1. };
-        let left = (mouse - width / 2.).clamp(4., (room - width - 4.).max(4.));
-        div().w(px(width)).pt(px(TOOLTIP_DROP)).child(
-            v_flex()
+        let keys_text = self.key_binding.as_ref().map(|k| k.text.clone());
+        let keys = keys_text.as_ref().map_or(0., |k| width_of(k) + 8.);
+        let width = (width_of(&self.title) + keys).min(TOOLTIP_MAX) + 2. * TOOLTIP_PAD + 2.;
+        let height = (f32::from(size) * 1.6).round() + 4.;
+        let window_id = window.window_handle().window_id();
+        let (mouse, anchor) = *self.placed.get_or_insert_with(|| {
+            let mouse = window.mouse_position();
+            let anchor = TIP_ANCHOR.get().filter(|(id, b)| *id == window_id && b.contains(&mouse)).map(|(_, b)| b);
+            (mouse, anchor)
+        });
+        let (mx, my) = (f32::from(mouse.x), f32::from(mouse.y));
+        let room = window.viewport_size();
+        let (rw, rh) = (f32::from(room.width), f32::from(room.height));
+        // Where GPUI puts a box this size: a pixel off the pointer, flipped
+        // to the other side at the window's edges.
+        let origin_x = if mx + 1. + width <= rw { mx + 1. } else { (mx - width - 1.).max(0.) };
+        let origin_y = if my + 1. + height <= rh { my + 1. } else { (my - height - 1.).max(0.) };
+        // Where it should be: the element's middle, clear of it.
+        let (centre, top, bottom) = match anchor {
+            Some(b) => (f32::from(b.center().x), f32::from(b.top()), f32::from(b.bottom())),
+            None => (mx, my - 4., my + 14.),
+        };
+        let x = (centre - width / 2.).clamp(4., (rw - width - 4.).max(4.));
+        let y = if bottom + TOOLTIP_GAP + height <= rh - 4. { bottom + TOOLTIP_GAP } else { (top - TOOLTIP_GAP - height).max(4.) };
+        div().w(px(width)).h(px(height)).child(
+            tip_plate()
                 .relative()
-                .left(px(left - origin))
+                .left(px(x - origin_x))
+                .top(px(y - origin_y))
                 .w(px(width))
-                .items_center()
-                .elevation_2(cx)
-                .font_family(kit::UI_FONT)
-                .text_size(LabelSize::Small.rems())
-                .text_center()
-                .text_color(cx.theme().colors.text)
-                .py_1()
-                .px(px(TOOLTIP_PAD))
-                .child(h_flex().gap_2().child(div().max_w(px(TOOLTIP_MAX)).child(self.title.clone())).children(self.key_binding.clone()))
-                .children(self.meta.clone().map(|meta| div().max_w(px(TOOLTIP_MAX)).text_color(cx.theme().colors.text_muted).child(meta))),
+                .h(px(height))
+                .justify_center()
+                .gap_1()
+                .child(div().max_w(px(TOOLTIP_MAX)).truncate().child(self.title.clone()))
+                // The shortcut, dimmer, in the same small size.
+                .children(keys_text.map(|keys| div().flex_none().text_color(TIP_DIM).child(keys))),
         )
     }
 }
 
 /// The widest a tooltip's text gets before it wraps, and its side padding.
 const TOOLTIP_MAX: f32 = 240.;
-const TOOLTIP_PAD: f32 = 8.;
+const TOOLTIP_PAD: f32 = 6.;
 
-/// How far below the pointer a tooltip's card starts.
-const TOOLTIP_DROP: f32 = 18.;
+/// The gap between a tooltip and its element.
+const TOOLTIP_GAP: f32 = 6.;
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;
@@ -668,6 +731,11 @@ impl ButtonLike {
         self
     }
 
+    /// The same as `tooltip`, named like `TipExt::tip` for plain elements.
+    pub fn tip(self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip(tooltip)
+    }
+
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -716,7 +784,7 @@ impl RenderOnce for ButtonLike {
             .when(self.disabled, |b| b.cursor_not_allowed())
             .children(self.children);
         button
-            .when_some(self.tooltip, |b, tooltip| b.tooltip(tooltip))
+            .when_some(self.tooltip, |b, tooltip| b.tooltip(tooltip).child(tip_anchor()))
             .when_some(self.on_click.filter(|_| !self.disabled), |b, on_click| {
                 b.on_mouse_down(gpui::MouseButton::Left, |_, window, _| window.prevent_default()).on_click(move |event, window, cx| {
                     cx.stop_propagation();
@@ -767,6 +835,11 @@ impl Button {
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
+    }
+
+    /// The same as `tooltip`, named like `TipExt::tip` for plain elements.
+    pub fn tip(self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip(tooltip)
     }
 
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
@@ -861,6 +934,11 @@ impl IconButton {
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
+    }
+
+    /// The same as `tooltip`, named like `TipExt::tip` for plain elements.
+    pub fn tip(self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip(tooltip)
     }
 
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {

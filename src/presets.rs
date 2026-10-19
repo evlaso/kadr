@@ -118,7 +118,7 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                             IconButton::new(SharedString::from(format!("preset-rename-{i}")), IconName::Pencil)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
-                                .tooltip(Tooltip::text(t("presets.rename")))
+                                .tip(Tooltip::text(t("presets.rename")))
                                 .on_click(cx.listener(move |this: &mut T, _, window, cx| {
                                     let p = this.presets();
                                     p.commit(window, cx);
@@ -130,7 +130,7 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                             IconButton::new(SharedString::from(format!("preset-delete-{i}")), IconName::Trash)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
-                                .tooltip(Tooltip::text(t("common.delete_preset")))
+                                .tip(Tooltip::text(t("common.delete_preset")))
                                 .on_click(cx.listener(move |this: &mut T, _, window, cx| {
                                     let p = this.presets();
                                     p.commit(window, cx);
@@ -225,7 +225,7 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                     IconButton::new("preset-add", IconName::Plus)
                         .style(ButtonStyle::Filled)
                         .size(ButtonSize::Large)
-                        .tooltip(Tooltip::text(t("common.save_as_preset")))
+                        .tip(Tooltip::text(t("common.save_as_preset")))
                         .on_click(cx.listener(|this: &mut T, _, window, cx| {
                             let look = this.current_look();
                             let p = this.presets();

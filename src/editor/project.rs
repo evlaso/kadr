@@ -56,7 +56,8 @@ fn read_dir(dir: &Path, v: &Value) -> Option<Restored> {
     let crop = v["crop"].as_array().and_then(|c| Some((point(c.first()?)?, point(c.get(1)?)?)));
     let view = super::crop::Orientation { turns: v["view"]["turns"].as_u64().unwrap_or(0) as u8 % 4, mirrored: v["view"]["mirrored"].as_bool().unwrap_or(false) };
     let scale = v["scale"].as_f64().map_or(1., |s| (s as f32).clamp(0.05, 1.));
-    Some(Restored { base, doc: Doc { shapes, crop, view, scale }, frame: Frame::from_json(&v["frame"]) })
+    let fill = v["fill"].as_array().filter(|c| c.len() == 4).map(|c| [0, 1, 2, 3].map(|i| c[i].as_u64().unwrap_or(0).min(255) as u8));
+    Some(Restored { base, doc: Doc { shapes, crop, view, scale, fill }, frame: Frame::from_json(&v["frame"]) })
 }
 
 /// The project in an unpacked `.kadr`.
@@ -98,6 +99,7 @@ fn write_dir(dir: &Path, base: &[u8], doc: &Doc, frame: &Frame, extra: Value) ->
         "crop": doc.crop.map(|(a, b)| json!([[a.0, a.1], [b.0, b.1]])),
         "view": { "turns": doc.view.turns, "mirrored": doc.view.mirrored },
         "scale": doc.scale,
+        "fill": doc.fill,
         "shapes": shapes,
     });
     if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {

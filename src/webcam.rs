@@ -388,7 +388,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
                 .cursor_pointer()
                 .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
                 .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(ink)))
-                .tooltip(Tooltip::text(t(tip)))
+                .tip(Tooltip::text(t(tip)))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         };
         let next_round = ROUNDS[(ROUNDS.iter().position(|&r| (r - round).abs() < 0.01).unwrap_or(0) + 1) % ROUNDS.len()];
@@ -425,7 +425,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
                             .cursor_pointer()
                             .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
                             .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).rounded_smoothing(crate::ui::SMOOTHING).border_2().border_color(ink))
-                            .tooltip(Tooltip::text(t("camera.shape")))
+                            .tip(Tooltip::text(t("camera.shape")))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, _, cx| shape.update(cx, |s, cx| {
                                 s.look.round = next_round;

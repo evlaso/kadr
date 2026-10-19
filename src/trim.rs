@@ -380,7 +380,7 @@ impl Trimmer {
                         Button::new("save", t("common.save"))
                             .style(ButtonStyle::Accent)
                             .disabled(!self.trimmed())
-                            .tooltip(Tooltip::text(t("trim.as_new_file_original_stays")))
+                            .tip(Tooltip::text(t("trim.as_new_file_original_stays")))
                             .key_binding(kit::keys("ctrl-s"))
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),

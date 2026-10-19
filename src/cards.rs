@@ -433,7 +433,7 @@ impl CardStack {
             pill(div().id((key, id)))
                 .size(px(CORNER))
                 .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink)))
-                .tooltip(Tooltip::text(tip))
+                .tip(Tooltip::text(tip))
         };
 
         // As wide as the longest label, the shorter ones stretched to it.
@@ -448,7 +448,7 @@ impl CardStack {
         center = if video && !gif {
             center.child(
                 big("studio", t("common.studio"))
-                    .tooltip(Tooltip::text(if has_track { t("card.zooms_on_clicks_background_clicks") } else { t("card.background_padding_zooms_by_hand") }))
+                    .tip(Tooltip::text(if has_track { t("card.zooms_on_clicks_background_clicks") } else { t("card.background_padding_zooms_by_hand") }))
                     .on_click(act(|this, path, id, window, cx| {
                         this.remove(id, window, cx);
                         studio_editor::open(path.to_owned(), cx);
@@ -482,7 +482,7 @@ impl CardStack {
                     .h(px(CORNER))
                     .px_2()
                     .child(Label::new("GIF").size(LabelSize::XSmall).color(Color::Custom(ink)))
-                    .tooltip(Tooltip::text(t("card.save_as_gif_720px_15")))
+                    .tip(Tooltip::text(t("card.save_as_gif_720px_15")))
                     .on_click(act(|_, path, _, _, cx| trim::quick_gif(path.to_owned(), cx)))
                     .into_any_element()
             })
@@ -633,7 +633,7 @@ impl CardStack {
                         .cursor_pointer()
                         .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
                         .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Custom(ink)))
-                        .tooltip(Tooltip::text(t("job.cancel")))
+                        .tip(Tooltip::text(t("job.cancel")))
                         .on_click(move |_, _, _| job.cancel()),
                 ),
             )
@@ -701,7 +701,7 @@ impl CardStack {
                         .gap_1()
                         .child(Icon::from_path("icons/kadr/link.svg").size(IconSize::Small).color(Color::Custom(ink)))
                         .child(Label::new(t("ocr.open_link")).size(LabelSize::XSmall).color(Color::Custom(ink)))
-                        .tooltip(Tooltip::text(link.clone()))
+                        .tip(Tooltip::text(link.clone()))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             util::open_file(Path::new(&link));
@@ -714,7 +714,7 @@ impl CardStack {
                     pill(div().id(("close", id)))
                         .size(px(CORNER))
                         .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Custom(ink)))
-                        .tooltip(Tooltip::text(t("common.close")))
+                        .tip(Tooltip::text(t("common.close")))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             this.remove(id, window, cx);

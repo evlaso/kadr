@@ -177,7 +177,7 @@ pub fn window_controls(right: bool, cx: &App) -> Option<AnyElement> {
         (W::Own, true) => Some(
             IconButton::new("window-close", IconName::Close)
                 .size(ButtonSize::Large)
-                .tooltip(Tooltip::text(t("common.close")))
+                .tip(Tooltip::text(t("common.close")))
                 .on_click(|_, window, _| window.remove_window())
                 .into_any_element(),
         ),

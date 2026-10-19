@@ -94,6 +94,8 @@ pub struct History {
     /// Where the scrollbar thumb was grabbed, while it is dragged.
     grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     focus: FocusHandle,
+    /// The search's caret is showing: it blinks while the window is active.
+    caret: bool,
 }
 
 /// Files kadr and Omarchy save, newest first.
@@ -183,6 +185,9 @@ fn crop_thumb(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((encode(&thumb)?, encode(&blurred)?))
 }
 
+/// How long the search's caret stays on and off.
+const CARET_BLINK: std::time::Duration = std::time::Duration::from_millis(530);
+
 pub fn open(cx: &mut App) {
     // One history window at a time.
     if let Some(window) = cx.windows().into_iter().find_map(|w| w.downcast::<History>()) {
@@ -212,18 +217,41 @@ pub fn open(cx: &mut App) {
                 }
             })
             .detach();
-            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus }
+            // The search's caret blinks like a text field's, only while the
+            // window has the keyboard.
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(CARET_BLINK).await;
+                    let alive = this.update_in(cx, |history: &mut History, window, cx| {
+                        let caret = history.focus.is_focused(window) && !history.caret;
+                        if caret != history.caret {
+                            history.caret = caret;
+                            cx.notify();
+                        }
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus, caret: true }
         })
     });
 }
 
 impl History {
     fn visible(&self) -> Vec<usize> {
+        self.matching(self.filter)
+    }
+
+    /// The items a filter shows for the current search.
+    fn matching(&self, filter: Filter) -> Vec<usize> {
         let q = self.query.to_lowercase();
         self.items
             .iter()
             .enumerate()
-            .filter(|(_, it)| self.filter.accepts(it.kind) && (q.is_empty() || it.name.to_lowercase().contains(&q) || when(it.modified).to_lowercase().contains(&q)))
+            .filter(|(_, it)| filter.accepts(it.kind) && (q.is_empty() || it.name.to_lowercase().contains(&q) || when(it.modified).to_lowercase().contains(&q)))
             .map(|(i, _)| i)
             .collect()
     }
@@ -322,6 +350,8 @@ impl History {
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Typing keeps the caret on, like a text field's.
+        self.caret = true;
         let k = &e.keystroke;
         let ctrl = k.modifiers.control || k.modifiers.platform;
         let current = self.current();
@@ -407,7 +437,7 @@ impl History {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         };
         let corner = |id: &'static str, icon: IconName, tip: &'static str| {
-            pill(div().id((id, index))).size(px(BUTTON)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tooltip(Tooltip::text(tip))
+            pill(div().id((id, index))).size(px(BUTTON)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tip(Tooltip::text(tip))
         };
         let wide = |id: &'static str, label: &'static str| pill(div().id((id, index))).h(px(28.)).px_3().child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)));
         let overlay = div()
@@ -424,7 +454,7 @@ impl History {
                     .items_center()
                     .justify_center()
                     .gap_1p5()
-                    .child(wide("copy", t("common.copy")).tooltip(Tooltip::text(t("history.copy_ctrl_c"))).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
+                    .child(wide("copy", t("common.copy")).tip(Tooltip::text(t("history.copy_ctrl_c"))).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
                         this.copy(&[index]);
                         window.remove_window();
                     })))
@@ -537,12 +567,20 @@ impl Render for History {
         self.item_width = ((room - 1. - GAP * (self.columns as f32 - 1.)) / self.columns as f32 - 10.).floor();
 
         let visible = self.visible();
+        // Each filter with how many it shows, unless none.
         let filters: Vec<_> = Filter::ALL.iter().map(|&(filter, label)| {
+            let count = self.matching(filter).len();
             ButtonLike::new(SharedString::from(format!("filter-{label}")))
                 .style(if self.filter == filter { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                 .size(ButtonSize::Large)
                 .toggle_state(self.filter == filter)
-                .child(div().px_2().child(Label::new(t(label))))
+                .child(
+                    h_flex()
+                        .px_2()
+                        .gap_1p5()
+                        .child(Label::new(t(label)))
+                        .when(count > 0, |row| row.child(Label::new(count.to_string()).size(LabelSize::Small).color(Color::Muted))),
+                )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.filter = filter;
                     this.selected = 0;
@@ -555,13 +593,17 @@ impl Render for History {
             .gap_3()
             .text_size(crate::ui::rems_from_px(19.))
             .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Large).color(Color::Muted))
-            .child(div().flex_1().child(if self.query.is_empty() {
-                div().text_color(cx.theme().colors().text_placeholder).child(t("history.search_by_name_date")).into_any_element()
-            } else {
-                div().child(format!("{}▏", self.query)).into_any_element()
-            }))
-            // The count sits with the search, so the filters don't move.
-            .child(div().pr_2().child(Label::new(format!("{}", visible.len())).size(LabelSize::Small).color(Color::Muted)));
+            // A text field: an I-beam over it, the caret after what's typed
+            // (before the placeholder when nothing is).
+            .child({
+                let caret = div().flex_none().w(px(1.5)).h(crate::ui::rems_from_px(22.)).when(self.caret, |d| d.bg(cx.theme().colors().text_accent));
+                let row = h_flex().id("search").flex_1().cursor(gpui::CursorStyle::IBeam);
+                if self.query.is_empty() {
+                    row.child(caret).child(div().text_color(cx.theme().colors().text_placeholder).child(t("history.search_by_name_date")))
+                } else {
+                    row.child(div().child(self.query.clone())).child(caret)
+                }
+            });
 
         let grid: Vec<AnyElement> = visible.iter().enumerate().map(|(pos, &i)| self.render_item(i, pos, cx)).collect();
         let empty = grid.is_empty();
@@ -614,7 +656,7 @@ impl Render for History {
                                 IconButton::new("settings", IconName::Settings)
                                     .shape(IconButtonShape::Square)
                                     .size(ButtonSize::Large)
-                                    .tooltip(Tooltip::text(t("common.settings")))
+                                    .tip(Tooltip::text(t("common.settings")))
                                     .on_click(|_, window, cx| {
                                         window.remove_window();
                                         crate::settings_view::open(cx);
