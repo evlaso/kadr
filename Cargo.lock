@@ -2862,6 +2862,7 @@ dependencies = [
  "anyhow",
  "async-process",
  "chrono",
+ "crc32fast",
  "futures",
  "gpui-ce",
  "gpui_ce_platform",

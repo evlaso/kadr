@@ -57,6 +57,7 @@ impl Picked {
 
 /// Freeze the monitor under the pointer and let the user pick an area on it.
 /// With `snap`, hovering highlights windows and a plain click takes one.
+/// Space switches to picking windows only and back, like CleanShot.
 /// A click on nothing takes the whole monitor, or with `color` copies the
 /// colour under the pointer instead. None when cancelled.
 pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> {
@@ -67,7 +68,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     let _picking = Picking;
     let mon = util::focused_monitor()?;
     let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
-    let windows = if snap { windows_on(&mon) } else { Vec::new() };
+    let windows = windows_on(&mon);
     // The last area, if it was on this monitor.
     let previous = previous_area()
         .filter(|(name, _)| *name == mon.name)
@@ -100,6 +101,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                     screen,
                     windows,
                     snap,
+                    windows_only: false,
                     color,
                     adjust: false,
                     previous,
@@ -231,6 +233,8 @@ struct Picker {
     screen: (f32, f32),
     windows: Vec<Rect>,
     snap: bool,
+    /// Space toggled: a click takes the window under it, nothing is drawn.
+    windows_only: bool,
     /// A click on nothing copies the colour under it.
     color: bool,
     /// The selection stays when the mouse is let go.
@@ -379,6 +383,12 @@ impl Picker {
                 return;
             }
         }
+        if self.windows_only {
+            if let Some(win) = self.hovered_window() {
+                self.finish(Some(win), true, window);
+            }
+            return;
+        }
         self.typing = None;
         self.before = self.selection.take().filter(|_| self.adjust);
         self.drag = Some(Drag::New(p));
@@ -489,7 +499,10 @@ impl Picker {
                     self.finish(sel, false, window);
                 }
             }
-            "space" => self.moving = true,
+            // Held while drawing: moves the selection. Pressed otherwise:
+            // windows only, or back to drawing an area.
+            "space" if matches!(self.drag, Some(Drag::New(_))) => self.moving = true,
+            "space" if !e.is_held && self.drag.is_none() && !self.editable() => self.windows_only = !self.windows_only,
             "p" => {
                 if let Some(prev) = self.previous {
                     self.selection = Some(self.clamp(prev));
@@ -594,6 +607,7 @@ impl Picker {
         match (self.drag, self.cursor) {
             (Some(Drag::Resize { edges, .. }), _) => resize_cursor(edges),
             (Some(Drag::Move(_)), _) => CursorStyle::ClosedHand,
+            (None, _) if self.windows_only => CursorStyle::PointingHand,
             (None, Some(p)) if self.editable() => match self.handle_at(p) {
                 Some(edges) => resize_cursor(edges),
                 None if self.selection.is_some_and(|s| inside(s, p)) => CursorStyle::OpenHand,
@@ -621,12 +635,12 @@ impl Render for Picker {
         let picture = self.picture.clone();
         let selection = self.selection;
         let editable = self.editable();
-        let hovered = if selection.is_none() && self.snap && self.drag.is_none() { self.hovered_window() } else { None };
+        let hovered = if selection.is_none() && (self.snap || self.windows_only) && self.drag.is_none() { self.hovered_window() } else { None };
         let lit = selection.or(hovered);
         // Guides and the magnifier while aiming, not while adjusting.
-        let aiming = !editable || matches!(self.drag, Some(Drag::Resize { .. }));
+        let aiming = (!editable && !self.windows_only) || matches!(self.drag, Some(Drag::Resize { .. }));
         let cursor = self.cursor;
-        let guides = cursor.filter(|_| self.drag.is_none() && !editable);
+        let guides = cursor.filter(|_| self.drag.is_none() && !editable && !self.windows_only);
 
         // The frozen screen, dimmed outside what would be taken, with guides.
         let scene = canvas(
@@ -752,7 +766,10 @@ impl Render for Picker {
             keys.extend([("Enter", t("picker.set_size")), ("X", t("picker.height")), ("Esc", t("common.cancel"))]);
         } else if editable {
             keys.extend([("Enter", t("picker.take")), (t("picker.arrows"), t("picker.move")), (t("picker.alt_arrows"), t("picker.resize")), ("A", t("picker.aspect")), ("0–9", t("picker.size")), ("Esc", t("common.cancel"))]);
+        } else if self.windows_only {
+            keys.extend([(t("picker.click"), t("picker.take_window")), (t("picker.space"), t("picker.area")), ("Esc", t("common.cancel"))]);
         } else if self.drag.is_none() {
+            keys.push((t("picker.space"), t("common.window")));
             if self.previous.is_some() {
                 keys.extend([("P", t("picker.previous_area")), ("Enter", t("picker.take_previous"))]);
             }

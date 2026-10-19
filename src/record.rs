@@ -461,7 +461,7 @@ impl Recorder {
                 if let Some(tracker) = s.tracker.take() {
                     tracker.save(s.target.rect(&util::monitors()), s.studio, &file);
                 }
-                finalize(&file).await;
+                finalize(&file, s.opts.audio, s.opts.mic).await;
                 // Studio recordings go straight to the editor, like CleanShot.
                 let studio = s.studio;
                 let _ = cx.update(|cx| if studio { crate::studio_editor::open(file, cx) } else { cards::after_capture(file, crate::storage::Capture::Recording, cx) });
@@ -569,13 +569,17 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         args.push(a.into());
     }
     args.push(file.clone().into());
-    // One merged track: players usually play only the first of several.
+    // Separate tracks (system first) so finalize() can center the mic
+    // before mixing them into one: players usually play only the first.
     let audio: Vec<&str> = [(opts.audio, "default_output"), (opts.mic, opts.mic_source())]
         .into_iter()
         .filter_map(|(on, dev)| on.then_some(dev))
         .collect();
+    for dev in &audio {
+        args.extend(["-a".into(), (*dev).into()]);
+    }
     if !audio.is_empty() {
-        args.extend(["-a".into(), audio.join("|").into(), "-ac".into(), "aac".into()]);
+        args.extend(["-ac".into(), "aac".into()]);
     }
 
     let _ = std::fs::create_dir_all(util::cache_dir());
@@ -851,7 +855,10 @@ async fn pick_target(cx: &mut AsyncApp) -> Option<Target> {
 }
 
 /// Port of Omarchy's finalize step: trim the warmup frame and normalize audio.
-async fn finalize(file: &Path) {
+/// Also mixes the system and mic tracks record() writes into one, with the
+/// mic downmixed to the center: interfaces like the Audient iD4 expose a
+/// stereo source with the mic on input 1 only, which plays in the left ear.
+async fn finalize(file: &Path, system: bool, mic: bool) {
     let f = file.to_string_lossy().into_owned();
     let warmup = util::output(&["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+0.2", "-show_entries", "packet=flags", "-of", "csv=p=0", &f])
         .await
@@ -868,9 +875,17 @@ async fn finalize(file: &Path) {
     } else {
         args.extend(["-c:v", "copy"]);
     }
+    let graph;
     if has_audio {
+        let center = "aformat=channel_layouts=mono,aformat=channel_layouts=stereo";
+        let mix = match (system, mic) {
+            (true, true) => format!("[0:a:0]aformat=channel_layouts=stereo[sys];[0:a:1]{center}[mic];[sys][mic]amix=inputs=2:normalize=0,"),
+            (false, true) => format!("[0:a:0]{center},"),
+            _ => "[0:a:0]".into(),
+        };
         // Mute the PipeWire capture-open pop, then normalize to -14 LUFS.
-        args.extend(["-af", "volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11"]);
+        graph = format!("{mix}volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11[a]");
+        args.extend(["-filter_complex", &graph, "-map", "0:v:0", "-map", "[a]"]);
     }
     args.push(&processed);
     match util::output(&args).await {

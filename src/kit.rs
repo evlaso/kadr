@@ -73,7 +73,8 @@ assets![
     "icons/pointer.svg" => "../data/icons/ui/pointer.svg",
     "icons/video.svg" => "../data/icons/ui/video.svg",
     "icons/expand.svg" => "../data/icons/ui/expand.svg",
-    // Editor tools Zed's set lacks, drawn in the same style.
+    // Editor tools, Lucide too (counter and pixelate are drawn on its grid
+    // and stroke, Lucide has neither).
     "icons/kadr/rect.svg" => "../data/icons/editor/rect.svg",
     "icons/kadr/ellipse.svg" => "../data/icons/editor/ellipse.svg",
     "icons/kadr/marker.svg" => "../data/icons/editor/marker.svg",
@@ -101,9 +102,8 @@ assets![
     "icons/kadr/skip_back.svg" => "../data/icons/editor/skip_back.svg",
     "icons/kadr/more.svg" => "../data/icons/editor/more.svg",
     "icons/kadr/skip_forward.svg" => "../data/icons/editor/skip_forward.svg",
-    // Zed has no camera icon.
-    "icons/kadr/camera.svg" => "../data/icons/kadr-camera-symbolic.svg",
-    // Settings sections, the pin's lock and links, in the same style.
+    "icons/webcam.svg" => "../data/icons/ui/webcam.svg",
+    // Settings sections, the pin's lock and links (Lucide).
     "icons/kadr/record.svg" => "../data/icons/settings/record.svg",
     "icons/kadr/studio.svg" => "../data/icons/settings/studio.svg",
     "icons/kadr/storage.svg" => "../data/icons/settings/storage.svg",
@@ -318,6 +318,10 @@ pub fn open_layer<V: Render + 'static>(
         app_id: Some("kadr".into()),
         display_id: spec.monitor.as_ref().and_then(|m| m.display(cx)),
         kind,
+        // Overlays rarely have the keyboard, and GPUI holds windows without
+        // it to ~30 fps, which made the cards slide in choppily on a 240 Hz
+        // screen.
+        inactive_frame_interval: None,
         ..Default::default()
     };
     crate::platform::transparent(&mut options);

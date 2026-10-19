@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use gpui::{App, Context, Global, MouseButton, MouseDownEvent, RenderImage, Window, WindowHandle, canvas, div, px};
+use gpui::{App, Context, CursorStyle, Global, MouseButton, MouseDownEvent, RenderImage, Window, WindowHandle, canvas, div, px};
 
 use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{Tooltip, prelude::*};
@@ -105,6 +105,9 @@ pub struct BubbleState {
     /// While dragged: the pointer's offset inside the bubble, and where the
     /// bubble's top left is now.
     drag: Option<((f32, f32), (f32, f32))>,
+    /// While resized by its edge: its centre and the pointer's distance from
+    /// it when grabbed, and the size then.
+    resizing: Option<((f32, f32), f32, f64)>,
     /// After a drop: where the bubble was let go and when; it glides from
     /// there to its spot.
     glide: Option<((f32, f32), std::time::Instant)>,
@@ -136,7 +139,8 @@ impl BubbleState {
     }
 
     fn resize(&mut self, step: i32) {
-        let i = SIZES.iter().position(|&s| (s - self.look.size).abs() < 0.001).unwrap_or(2) as i32;
+        // The nearest step: a size dragged by the edge is in between.
+        let i = (0..SIZES.len()).min_by(|&a, &b| (SIZES[a] - self.look.size).abs().total_cmp(&(SIZES[b] - self.look.size).abs())).unwrap_or(2) as i32;
         self.look.size = SIZES[(i + step).clamp(0, SIZES.len() as i32 - 1) as usize];
         self.look.save();
     }
@@ -165,6 +169,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), hosted: bool, cx: &mut App) {
     }
     // KADR_FAKE_CAMERA=<lavfi source> stands in for a camera when trying
     // the bubble out, e.g. "testsrc2=size=1280x720:rate=30".
+    let mut camera = None;
     let input: Vec<String> = match std::env::var("KADR_FAKE_CAMERA") {
         Ok(source) => vec!["-f".into(), "lavfi".into(), "-i".into(), source],
         Err(_) => {
@@ -172,7 +177,9 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), hosted: bool, cx: &mut App) {
                 return util::notify(t("common.no_camera_found"), t("common.recording_without_camera"));
             };
             let capture = capture_size(&device);
-            ["-f", "v4l2", "-framerate", "30", "-video_size", capture, "-i", &device].map(String::from).to_vec()
+            let args = ["-f", "v4l2", "-framerate", "30", "-video_size", capture, "-i", &device].map(String::from).to_vec();
+            camera = Some(device);
+            args
         }
     };
     let Ok(mut child) = std::process::Command::new("ffmpeg")
@@ -190,9 +197,25 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), hosted: bool, cx: &mut App) {
     std::thread::spawn(move || {
         use std::io::Read;
         let Some(mut out) = child.stdout.take() else { return };
+        let mut shown = false;
         loop {
             let mut buf = vec![0u8; LIVE * LIVE * 4];
-            if out.read_exact(&mut buf).is_err() || futures::executor::block_on(futures::SinkExt::send(&mut tx, buf)).is_err() {
+            if out.read_exact(&mut buf).is_err() {
+                // ffmpeg gave up before a single frame, most often because
+                // another app has the camera (a stop from kadr kills it,
+                // which leaves no exit code).
+                let failed = child.wait().ok().and_then(|status| status.code()).is_some_and(|code| code != 0);
+                if failed && !shown {
+                    let holder = camera.as_deref().and_then(crate::platform::device_holder);
+                    match holder {
+                        Some(app) => util::notify(t("camera.busy"), &crate::tr!("camera.busy_with", app)),
+                        None => util::notify(t("common.camera_didnt_start"), t("camera.busy_unknown")),
+                    }
+                }
+                return;
+            }
+            shown = true;
+            if futures::executor::block_on(futures::SinkExt::send(&mut tx, buf)).is_err() {
                 break;
             }
         }
@@ -200,7 +223,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), hosted: bool, cx: &mut App) {
         let _ = child.wait();
     });
 
-    let state = cx.new(|_| BubbleState { frame: None, stale: Vec::new(), area, look: Look::load(), drag: None, glide: None, hovered: false, hosted });
+    let state = cx.new(|_| BubbleState { frame: None, stale: Vec::new(), area, look: Look::load(), drag: None, resizing: None, glide: None, hovered: false, hosted });
     let spec = LayerSpec {
         namespace: "kadr-camera",
         anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
@@ -249,6 +272,7 @@ pub fn lock(cx: &mut App) {
             s.hosted = false;
             s.hovered = false;
             s.drag = None;
+            s.resizing = None;
             cx.notify();
         });
     }
@@ -263,11 +287,30 @@ pub fn hide(cx: &mut App) {
     }
 }
 
+/// The bubble is being dragged: the host takes the pointer everywhere
+/// meanwhile, so a quick move can't slip off the bubble and the release
+/// isn't lost to the window beneath.
+pub fn dragging(state: &gpui::Entity<BubbleState>, cx: &App) -> bool {
+    let s = state.read(cx);
+    s.drag.is_some() || s.resizing.is_some()
+}
+
 /// The pointer moved over the host window: drag the bubble along.
-pub fn pointer_moved(state: &gpui::Entity<BubbleState>, position: gpui::Point<gpui::Pixels>, cx: &mut App) {
+pub fn pointer_moved(state: &gpui::Entity<BubbleState>, position: gpui::Point<gpui::Pixels>, pressed: Option<MouseButton>, cx: &mut App) {
+    // The button came up somewhere the host didn't hear it: drop it here.
+    if pressed != Some(MouseButton::Left) {
+        return pointer_released(state, cx);
+    }
+    let p = (f32::from(position.x), f32::from(position.y));
     state.update(cx, |s, cx| {
+        // By the edge: as much bigger as the pointer got farther from the
+        // centre, between the smallest and the biggest step.
+        if let Some((centre, from, size)) = s.resizing {
+            let now = (p.0 - centre.0).hypot(p.1 - centre.1);
+            s.look.size = (size * (now / from.max(1.)) as f64).clamp(SIZES[0], SIZES[SIZES.len() - 1]);
+            cx.notify();
+        }
         if let Some((grab, _)) = s.drag {
-            let p = (f32::from(position.x), f32::from(position.y));
             s.drag = Some((grab, (p.0 - grab.0, p.1 - grab.1)));
             cx.notify();
         }
@@ -277,6 +320,10 @@ pub fn pointer_moved(state: &gpui::Entity<BubbleState>, position: gpui::Point<gp
 /// The button came up over the host window: drop the bubble into its spot.
 pub fn pointer_released(state: &gpui::Entity<BubbleState>, cx: &mut App) {
     state.update(cx, |s, cx| {
+        if s.resizing.take().is_some() {
+            s.look.save();
+            cx.notify();
+        }
         if let Some((_, at)) = s.drag.take() {
             s.snap(at);
             s.glide = Some((at, std::time::Instant::now()));
@@ -312,7 +359,8 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
     let radius = s.look.round as f32 * side / 2.;
     let frame = s.frame.clone();
     let round = s.look.round;
-    let shown = interactive && s.hovered && s.drag.is_none();
+    let shown = interactive && s.hovered && s.drag.is_none() && s.resizing.is_none();
+    let anchor = ANCHORS[s.look.anchor.min(ANCHORS.len() - 1)];
     if !gliding && s.glide.is_some() {
         state.update(cx, |s, _| s.glide = None);
     }
@@ -320,7 +368,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
         |_, _, _| {},
         move |bounds, _, window, _| {
             if let Some(frame) = frame.clone() {
-                let _ = window.paint_image(bounds, bounds, px(radius).into(), 0., frame, 0, false);
+                let _ = window.paint_image(bounds, bounds, px(radius).into(), crate::ui::SMOOTHING, frame, 0, false);
             }
         },
     )
@@ -376,7 +424,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
                             .rounded_full()
                             .cursor_pointer()
                             .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
-                            .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).border_2().border_color(ink))
+                            .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).rounded_smoothing(crate::ui::SMOOTHING).border_2().border_color(ink))
                             .tooltip(Tooltip::text(t("camera.shape")))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, _, cx| shape.update(cx, |s, cx| {
@@ -388,15 +436,17 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
             )
     });
 
-    let (hover, wheel, press) = (state.clone(), state.clone(), state.clone());
-    div()
+    let (hover, wheel, press, grow) = (state.clone(), state.clone(), state.clone(), state.clone());
+    let bubble = div()
         .id("cam")
         .absolute()
-        .left(px(left))
-        .top(px(top))
+        .when(!interactive, |d| d.left(px(left)).top(px(top)))
+        .when(interactive, |d| d.left(px(EDGE)).top(px(EDGE)))
         .w(px(side))
         .h(px(side))
+        // A squircle, not a plain rounded square (a circle stays a circle).
         .rounded(px(radius))
+        .rounded_smoothing(crate::ui::SMOOTHING)
         .bg(gpui::black())
         .shadow(kit::shadow())
         .when(interactive, |d| {
@@ -418,6 +468,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
                     }
                 })
                 .on_mouse_down(MouseButton::Left, move |e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
                     let p = (f32::from(e.position.x), f32::from(e.position.y));
                     press.update(cx, |s, cx| {
                         s.drag = Some(((p.0 - left, p.1 - top), (left, top)));
@@ -426,10 +477,38 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
                 })
         })
         .child(picture)
-        .children(controls)
+        .children(controls);
+    if !interactive {
+        return bubble.into_any_element();
+    }
+    // A band round the bubble resizes it by dragging, the way it grows: away
+    // from the corner or edge it keeps to.
+    let cursor = if (anchor.0 - 0.5) * (anchor.1 - 0.5) < 0. { CursorStyle::ResizeUpRightDownLeft } else { CursorStyle::ResizeUpLeftDownRight };
+    let centre = (left + side / 2., top + side / 2.);
+    div()
+        .id("cam-edge")
+        .absolute()
+        .left(px(left - EDGE))
+        .top(px(top - EDGE))
+        .size(px(side + 2. * EDGE))
+        .rounded(px(radius + EDGE))
+        .rounded_smoothing(crate::ui::SMOOTHING)
+        .occlude()
+        .cursor(cursor)
+        .on_mouse_down(MouseButton::Left, move |e: &MouseDownEvent, _, cx| {
+            let p = (f32::from(e.position.x), f32::from(e.position.y));
+            grow.update(cx, |s, cx| {
+                s.resizing = Some((centre, (p.0 - centre.0).hypot(p.1 - centre.1), s.look.size));
+                cx.notify();
+            });
+        })
+        .child(bubble)
         .children(mark)
         .into_any_element()
 }
+
+/// How far round the bubble its edge can be grabbed to resize it.
+const EDGE: f32 = 10.;
 
 /// The camera's own layer: empty and click-through while the panel draws
 /// the bubble, the bubble itself (as part of the picture) once recording.

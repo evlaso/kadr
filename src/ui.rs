@@ -699,6 +699,7 @@ impl RenderOnce for ButtonLike {
         let height = self.size.height();
         let button: Stateful<Div> = h_flex()
             .id(self.id)
+            .relative()
             .flex_none()
             .justify_center()
             .gap(rems_from_px(4.))

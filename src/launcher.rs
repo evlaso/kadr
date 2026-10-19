@@ -24,7 +24,7 @@ const MODES: [Mode; 8] = [
     Mode { icon: "icons/kadr/scroll.svg", label: "capture_bar.scrolling", args: &["shot", "scroll"] },
     Mode { icon: "icons/kadr/timer.svg", label: "capture_bar.timer", args: &["shot", "timer"] },
     Mode { icon: "icons/case_sensitive.svg", label: "common.text", args: &["text"] },
-    Mode { icon: "icons/kadr/camera.svg", label: "common.recording", args: &["record"] },
+    Mode { icon: "icons/video.svg", label: "common.recording", args: &["record"] },
 ];
 
 /// Groups end after these: screenshots, then text, then recording.

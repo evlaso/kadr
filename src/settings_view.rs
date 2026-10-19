@@ -335,6 +335,11 @@ impl SettingsView {
                     row(t("settings.screenshots_folder"), t("settings.by_default_same_as_omarchys"), folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true)),
                     self.render_name(crate::storage::Capture::Screenshot, "png", cx),
                     row(t("settings.window_shadow"), t("settings.window_captures_keep_shadow"), switch("shadow", s.window_shadow, cx, |s, on| s.window_shadow = on)),
+                    row(
+                        t("settings.screenshot_size"),
+                        t("settings.screenshot_size_tip"),
+                        chips(cx, "shot-size", vec!["1×".into(), t("settings.screen_pixels").into()], Some((!s.logical_size) as usize), |s, i| s.logical_size = i == 0),
+                    ),
                 ];
                 // A choice only where windows tile; elsewhere it's a window.
                 if cfg!(target_os = "linux") {

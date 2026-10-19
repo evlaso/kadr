@@ -52,6 +52,10 @@ pub fn open_file(path: &Path) {
     spawn(&[OsStr::new("open"), path.as_os_str()]);
 }
 
+pub fn device_holder(_device: &str) -> Option<String> {
+    None
+}
+
 pub fn trash(path: &Path) {
     let script = format!("tell application \"Finder\" to delete (POSIX file \"{}\")", path.display());
     if spawn(&["osascript", "-e", &script]).is_none() {

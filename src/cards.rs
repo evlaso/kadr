@@ -22,11 +22,23 @@ use crate::storage::Capture;
 use crate::{editor, job, ocr, pin, studio_editor, track, trim, util};
 use crate::i18n::t;
 
-const CARD_WIDTH: f32 = 240. * kit::SCALE;
+const CARD_WIDTH: f32 = 180. * kit::SCALE;
+/// The height of the text buttons in the middle of a hovered card; their
+/// width is the label's and some padding, so it suits every language.
+const PILL_H: f32 = 26. * kit::SCALE;
 /// How far in the corner buttons sit; as circles of radius
-/// `kit::RADIUS - INSET` they stay concentric with the card's corners.
-const INSET: f32 = 6.;
-const CORNER: f32 = 2. * (kit::RADIUS - INSET);
+/// `RADIUS - INSET` they stay concentric with the card's corners.
+const INSET: f32 = 5.;
+/// The card's corners, rounder than a small card can carry `kit::RADIUS`.
+const RADIUS: f32 = 17.;
+const CORNER: f32 = 2. * (RADIUS - INSET);
+
+/// A hairline round the card, like the desktop's window borders (Omarchy's
+/// 1px white at 18%), so a screenshot doesn't blend into what's behind it.
+/// On top of the picture, which would cover a border of the card itself.
+fn edge() -> gpui::Div {
+    div().absolute().inset_0().rounded(px(RADIUS)).border_1().border_color(hsla(0., 0., 1., 0.18))
+}
 const THUMB_WIDTH: f32 = CARD_WIDTH;
 /// Cards are always 4:3; the picture is cropped to fill them, centred.
 const THUMB_MAX: f32 = THUMB_WIDTH * 3. / 4.;
@@ -36,7 +48,7 @@ const GAP: f32 = 14.;
 /// the overlay's edge. Below and to the left is the screen edge anyway.
 const PAD: f32 = 56.;
 /// Distance from the screen corner.
-const EDGE: f32 = 10.;
+const EDGE: f32 = 24.;
 
 /// When an untouched card goes away; "never" is a long way off.
 fn dismiss_at(settings: &Settings) -> Instant {
@@ -413,18 +425,19 @@ impl CardStack {
         };
         let big = |key: &'static str, label: &'static str| {
             pill(div().id((key, id)))
-                .w(px(124. * kit::SCALE))
-                .h(px(30. * kit::SCALE))
+                .px_3()
+                .h(px(PILL_H))
                 .child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)))
         };
         let corner = |key: &'static str, icon: IconName, tip: &'static str| {
             pill(div().id((key, id)))
                 .size(px(CORNER))
-                .child(Icon::new(icon).size(IconSize::Small).color(Color::Custom(ink)))
+                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink)))
                 .tooltip(Tooltip::text(tip))
         };
 
-        let mut center = v_flex().items_center().gap_1p5().child(big("copy", t("common.copy")).on_click(act(|this, path, id, window, cx| {
+        // As wide as the longest label, the shorter ones stretched to it.
+        let mut center = v_flex().items_stretch().gap_1().child(big("copy", t("common.copy")).on_click(act(|this, path, id, window, cx| {
             if is_video(path) {
                 util::copy_file(path)
             } else {
@@ -481,11 +494,11 @@ impl CardStack {
         let hover = div()
             .absolute()
             .inset_0()
-            .rounded(px(kit::RADIUS))
+            .rounded(px(RADIUS))
             .opacity(if shown { 1. } else { 0. })
             // The picture blurs and dims behind the buttons.
-            .when_some(card.image.as_ref().filter(|_| shown), |d, image| d.child(img(image.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
-            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000052)))
+            .when_some(card.image.as_ref().filter(|_| shown), |d, image| d.child(img(image.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
+            .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x00000052)))
             .flex()
             .items_center()
             .justify_center()
@@ -551,14 +564,15 @@ impl CardStack {
             .flex_none()
             .w(px(CARD_WIDTH))
             .h(px(card.height))
-            .rounded(px(kit::RADIUS))
+            .rounded(px(RADIUS))
             .shadow(kit::shadow())
             .bg(cx.theme().colors().elevated_surface_background)
             // GPUI clips children to a rectangle, so the image rounds its own
             // corners; it is pre-cropped to the card so those are the visible ones.
-            .children(card.image.as_ref().map(|image| img(image.sharp.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
+            .children(card.image.as_ref().map(|image| img(image.sharp.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
             .children(badge)
             .child(hover)
+            .child(edge())
             .child(self.region.mark())
             .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
             .on_mouse_down(MouseButton::Left, double_click)
@@ -589,11 +603,11 @@ impl CardStack {
             .flex_none()
             .w(px(CARD_WIDTH))
             .h(px(card.height))
-            .rounded(px(kit::RADIUS))
+            .rounded(px(RADIUS))
             .shadow(kit::shadow())
             .bg(colors.elevated_surface_background)
-            .children(card.image.as_ref().map(|image| img(image.blurred.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(kit::RADIUS))))
-            .child(div().absolute().inset_0().rounded(px(kit::RADIUS)).bg(rgba(0x00000066)))
+            .children(card.image.as_ref().map(|image| img(image.blurred.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
+            .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x00000066)))
             .child(
                 v_flex()
                     .absolute()
@@ -618,11 +632,12 @@ impl CardStack {
                         .bg(hsla(0., 0., 1., 0.92))
                         .cursor_pointer()
                         .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
-                        .child(Icon::new(IconName::Close).size(IconSize::Small).color(Color::Custom(ink)))
+                        .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Custom(ink)))
                         .tooltip(Tooltip::text(t("job.cancel")))
                         .on_click(move |_, _, _| job.cancel()),
                 ),
             )
+            .child(edge())
             .child(self.region.mark());
         card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
     }
@@ -657,7 +672,7 @@ impl CardStack {
         let hover = div()
             .absolute()
             .inset_0()
-            .rounded(px(kit::RADIUS))
+            .rounded(px(RADIUS))
             .opacity(if shown { 1. } else { 0. })
             .bg(rgba(0x00000080))
             .flex()
@@ -668,9 +683,9 @@ impl CardStack {
             .when_some(copy, |d, text| {
                 d.child(
                     pill(div().id(("again", id)))
-                        .w(px(124. * kit::SCALE))
-                        .h(px(30. * kit::SCALE))
-                        .child(Label::new(t("ocr.copy_again")).size(LabelSize::Small).color(Color::Custom(ink)))
+                        .w(px(CARD_WIDTH - 2. * INSET))
+                        .h(px(PILL_H))
+                        .child(Label::new(t("ocr.copy_again")).size(LabelSize::XSmall).color(Color::Custom(ink)))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             crate::platform::copy_text(&text);
@@ -681,11 +696,11 @@ impl CardStack {
             .when_some(link.clone(), |d, link| {
                 d.child(
                     pill(div().id(("link", id)))
-                        .w(px(124. * kit::SCALE))
-                        .h(px(30. * kit::SCALE))
+                        .w(px(CARD_WIDTH - 2. * INSET))
+                        .h(px(PILL_H))
                         .gap_1()
                         .child(Icon::from_path("icons/kadr/link.svg").size(IconSize::Small).color(Color::Custom(ink)))
-                        .child(Label::new(t("ocr.open_link")).size(LabelSize::Small).color(Color::Custom(ink)))
+                        .child(Label::new(t("ocr.open_link")).size(LabelSize::XSmall).color(Color::Custom(ink)))
                         .tooltip(Tooltip::text(link.clone()))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
@@ -698,7 +713,7 @@ impl CardStack {
                 div().absolute().top_0().left_0().m(px(INSET)).child(
                     pill(div().id(("close", id)))
                         .size(px(CORNER))
-                        .child(Icon::new(IconName::Close).size(IconSize::Small).color(Color::Custom(ink)))
+                        .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Custom(ink)))
                         .tooltip(Tooltip::text(t("common.close")))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
@@ -714,14 +729,14 @@ impl CardStack {
             .flex_none()
             .w(px(CARD_WIDTH))
             .h(px(card.height))
-            .rounded(px(kit::RADIUS))
+            .rounded(px(RADIUS))
             .shadow(kit::shadow())
             .bg(surface)
             .child(
                 v_flex()
                     .size_full()
-                    .gap_1p5()
-                    .p_3()
+                    .gap_1()
+                    .p_2()
                     .child(
                         h_flex()
                             .gap_1p5()
@@ -729,11 +744,12 @@ impl CardStack {
                             .child(div().flex_1().child(Label::new(title).size(LabelSize::Small)))
                             .when_some(chars, |row, n| row.child(Label::new(tr!("ocr.chars", n)).size(LabelSize::XSmall).color(Color::Muted))),
                     )
-                    .child(div().flex_1().min_h_0().overflow_hidden().text_sm().text_color(colors.text_muted).child(body)),
+                    .child(div().flex_1().min_h_0().overflow_hidden().text_xs().text_color(colors.text_muted).child(body)),
             )
             // Text that doesn't fit fades out instead of being cut.
-            .child(div().absolute().left_0().right_0().bottom_0().h(px(36.)).rounded_b(px(kit::RADIUS)).bg(gpui::linear_gradient(180., gpui::linear_color_stop(clear, 0.), gpui::linear_color_stop(surface, 0.9))))
+            .child(div().absolute().left_0().right_0().bottom_0().h(px(36.)).rounded_b(px(RADIUS)).bg(gpui::linear_gradient(180., gpui::linear_color_stop(clear, 0.), gpui::linear_color_stop(surface, 0.9))))
             .child(hover)
+            .child(edge())
             .child(self.region.mark())
             .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, _| this.swipe = Some((id, f32::from(e.position.x), 0.))));
@@ -813,6 +829,50 @@ pub fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
     }
     let be = |i: usize| u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
     Some((be(16), be(20)))
+}
+
+/// One meter in inches over CSS's 96 pixels per inch: pHYs pixels per
+/// meter for a picture at 1×.
+const PPM_1X: f64 = 96. / 0.0254;
+
+/// Picture pixels per logical pixel, from a PNG's pHYs chunk: 1 for a 1×
+/// shot, the screen's scale for one in screen pixels. None without it.
+pub fn png_density(bytes: &[u8]) -> Option<f64> {
+    let mut i = 8;
+    while i + 12 <= bytes.len() {
+        let len = u32::from_be_bytes(bytes[i..i + 4].try_into().ok()?) as usize;
+        let kind = &bytes[i + 4..i + 8];
+        if kind == b"pHYs" && len == 9 && i + 17 <= bytes.len() && bytes[i + 16] == 1 {
+            let ppm = u32::from_be_bytes(bytes[i + 8..i + 12].try_into().ok()?) as f64;
+            return (ppm > 0.).then(|| (ppm / PPM_1X * 100.).round() / 100.);
+        }
+        if kind == b"IDAT" || kind == b"IEND" {
+            return None;
+        }
+        i += 12 + len;
+    }
+    None
+}
+
+/// The PNG with a pHYs chunk saying `density` picture pixels per logical
+/// pixel, right after IHDR. Viewers that read it (macOS Preview, browsers'
+/// image-set) show the picture at its real size; kadr's pin and editor too.
+pub fn with_density(png: Vec<u8>, density: f64) -> Vec<u8> {
+    if png.len() < 33 || &png[12..16] != b"IHDR" || png_density(&png).is_some() {
+        return png;
+    }
+    let ppm = ((PPM_1X * density).round() as u32).to_be_bytes();
+    let mut chunk = Vec::with_capacity(21);
+    chunk.extend_from_slice(&9u32.to_be_bytes());
+    chunk.extend_from_slice(b"pHYs");
+    chunk.extend_from_slice(&ppm);
+    chunk.extend_from_slice(&ppm);
+    chunk.push(1);
+    let crc = crc32fast::hash(&chunk[4..]);
+    chunk.extend_from_slice(&crc.to_be_bytes());
+    let mut out = png;
+    out.splice(33..33, chunk);
+    out
 }
 
 /// Loaded from bytes rather than by path, so an edited file isn't served from cache.

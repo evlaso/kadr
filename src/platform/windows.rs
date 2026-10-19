@@ -47,6 +47,10 @@ pub fn open_file(path: &Path) {
     spawn(&[OsStr::new("explorer"), path.as_os_str()]);
 }
 
+pub fn device_holder(_device: &str) -> Option<String> {
+    None
+}
+
 pub fn trash(path: &Path) {
     let _ = std::fs::remove_file(path);
 }

@@ -44,8 +44,9 @@ pub fn open(path: PathBuf, cx: &mut App) {
     let Some(mon) = util::focused_monitor() else { return };
     let (mw, mh) = (mon.w as f32, mon.h as f32);
 
-    // Screenshots are captured in physical pixels; show them at their real size.
-    let scale = mon.scale as f32;
+    // Show screenshots at their real size: a 1× shot as it is, one in screen
+    // pixels (or without a density, like older ones) shrunk by the scale.
+    let scale = std::fs::read(&path).ok().and_then(|b| crate::cards::png_density(&b)).unwrap_or(mon.scale) as f32;
     let (mut bw, mut bh) = (w as f32 / scale, h as f32 / scale);
     let fit = (0.8 * mw / bw).min(0.8 * mh / bh).min(1.0);
     bw *= fit;

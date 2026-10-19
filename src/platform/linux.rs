@@ -52,6 +52,20 @@ pub fn open_file(path: &Path) {
     spawn(&[OsStr::new("xdg-open"), path.as_os_str()]);
 }
 
+/// The name of a process (other than kadr) that has `device` open, such as
+/// the app keeping a camera busy.
+pub fn device_holder(device: &str) -> Option<String> {
+    let me = std::process::id().to_string();
+    std::fs::read_dir("/proc").ok()?.flatten().find_map(|entry| {
+        let pid = entry.file_name().into_string().ok()?;
+        if !pid.bytes().all(|b| b.is_ascii_digit()) || pid == me {
+            return None;
+        }
+        let holds = std::fs::read_dir(entry.path().join("fd")).ok()?.flatten().any(|fd| std::fs::read_link(fd.path()).is_ok_and(|l| l == Path::new(device)));
+        holds.then(|| std::fs::read_to_string(entry.path().join("comm")).ok().map(|c| c.trim().to_owned())).flatten()
+    })
+}
+
 pub fn trash(path: &Path) {
     if spawn(&[OsStr::new("gio"), "trash".as_ref(), path.as_os_str()]).is_none() {
         let _ = std::fs::remove_file(path);

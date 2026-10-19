@@ -3,15 +3,15 @@
 //! with the area's size, the audio, camera and keys toggles and Record. The
 //! area stays adjustable meanwhile: knobs on its corners and edges, dragged
 //! from inside, nudged with the arrows (Alt+arrows resize), or set to a size
-//! from the size menu or typed. The rest of the monitor is dimmed so the
+//! from the size menu. The rest of the monitor is dimmed so the
 //! area stays obvious.
 
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
-    AnyView, App, Bounds, Context, CursorStyle, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, WeakEntity,
+    AnyView, App, Bounds, Context, CursorStyle, DispatchPhase, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, WeakEntity,
     Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, deferred, div, point, popup::*, px, rgba, size,
 };
-use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
+use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*, rems_from_px};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::picker::{BOTTOM, LEFT, RIGHT, Rect, TOP};
@@ -42,8 +42,6 @@ pub struct Panel {
     /// pointer when it started.
     drag: Option<(u8, Rect, (f32, f32))>,
     size_menu: bool,
-    /// A size being typed, in real pixels: width, height, on the height.
-    typing: Option<(String, String, bool)>,
     /// The microphone's level 0..1 while it's on, and the `parec` reading it
     /// (with the device it reads).
     level: f32,
@@ -129,7 +127,6 @@ impl Panel {
             part,
             drag: None,
             size_menu: false,
-            typing: None,
             level: 0.,
             meter: None,
             region: InputRegion::default(),
@@ -195,34 +192,9 @@ impl Panel {
         self.set_rect((x + w / 2. - nw / 2., y + h / 2. - nh / 2., nw, nh), cx);
     }
 
-    /// The typed size; a missing side stays as it is.
-    fn apply_typed(&mut self, cx: &mut Context<Self>) {
-        let Some((w, h, _)) = self.typing.take() else { return };
-        let s = self.mon.scale as f32;
-        let (_, _, cw, ch) = self.rect;
-        let side = |v: &str, now: f32| v.parse::<f32>().ok().filter(|v| *v > 0.).unwrap_or(now * s);
-        self.resize_to((side(&w, cw), side(&h, ch)), cx);
-    }
-
     fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = e.keystroke.key.as_str();
         let (shift, alt) = (e.keystroke.modifiers.shift, e.keystroke.modifiers.alt);
-        // A size being typed: digits, then x (or Tab) and the height.
-        if let Some((w, h, on_h)) = self.typing.as_mut() {
-            let field = if *on_h { h } else { w };
-            match key {
-                "escape" => self.typing = None,
-                "enter" => self.apply_typed(cx),
-                "x" | "tab" | "space" => *on_h = true,
-                "backspace" if field.is_empty() => *on_h = false,
-                "backspace" => {
-                    field.pop();
-                }
-                k if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) && field.len() < 5 => field.push_str(k),
-                _ => {}
-            }
-            return cx.notify();
-        }
         match key {
             "escape" if self.size_menu => self.size_menu = false,
             "escape" => self.choose(PanelChoice::Cancel, window, cx),
@@ -246,10 +218,6 @@ impl Panel {
                 // Alt: the right and bottom edges grow and shrink.
                 let next = self.dragged(if alt { RIGHT | BOTTOM } else { 0 }, self.rect, d);
                 self.set_rect(next, cx);
-            }
-            k if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) => {
-                self.size_menu = false;
-                self.typing = Some((k.to_owned(), String::new(), false));
             }
             _ => {}
         }
@@ -322,18 +290,15 @@ impl Panel {
         }
     }
 
-    /// The area's size in real pixels, a menu of sizes under it (or above,
-    /// short of room) and a typed size while it's typed.
+    /// The area's size in real pixels and a menu of sizes under it (or
+    /// above, short of room).
     fn size_button(&self, bar_y: f32, cx: &mut Context<Self>) -> AnyElement {
         let s = self.mon.scale as f32;
         let (_, _, w, h) = self.rect;
         let current = ((w * s).round(), (h * s).round());
-        let text = match &self.typing {
-            Some((tw, th, on_h)) => format!("{}{} × {}{}", tw, if *on_h { "" } else { "|" }, th, if *on_h { "|" } else { "" }),
-            None => format!("{} × {}", current.0, current.1),
-        };
+        let text = format!("{} × {}", current.0, current.1);
         let button = ButtonLike::new("size")
-            .style(if self.size_menu || self.typing.is_some() { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+            .style(if self.size_menu { ButtonStyle::Filled } else { ButtonStyle::Subtle })
             .size(ButtonSize::Large)
             .toggle_state(self.size_menu)
             .child(
@@ -346,7 +311,6 @@ impl Panel {
             // No tooltip over its own open menu.
             .when(!self.size_menu, |b| b.tooltip(Tooltip::text(t("record_bar.area_size"))))
             .on_click(cx.listener(|this, _, _, cx| {
-                this.typing = None;
                 this.size_menu = !this.size_menu;
                 cx.notify();
             }));
@@ -357,7 +321,7 @@ impl Panel {
             let phys = (self.mon.phys.0 as f32, self.mon.phys.1 as f32);
             let mut sizes: Vec<((f32, f32), Option<SharedString>)> = PRESETS.iter().map(|&(pw, ph)| ((pw as f32, ph as f32), None)).collect();
             sizes.push((phys, Some(t("common.fullscreen").into())));
-            let mut rows: Vec<AnyElement> = sizes
+            let rows: Vec<AnyElement> = sizes
                 .into_iter()
                 .enumerate()
                 .map(|(i, (size, hint))| {
@@ -382,26 +346,6 @@ impl Panel {
                         .into_any_element()
                 })
                 .collect();
-            rows.push(
-                h_flex()
-                    .id("size-custom")
-                    .h(px(MENU_ROW))
-                    .flex_none()
-                    .px_2()
-                    .gap_2()
-                    .rounded(crate::ui::rems_from_px(7.))
-                    .cursor_pointer()
-                    .hover(move |st| st.bg(hover))
-                    .child(Icon::new(IconName::Check).size(IconSize::Small).color(Color::Custom(gpui::transparent_black())))
-                    .child(Label::new(t("record_bar.custom_size")))
-                    .child(Label::new(t("record_bar.type_digits")).color(Color::Muted))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.size_menu = false;
-                        this.typing = Some((String::new(), String::new(), false));
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
             let n = rows.len() as f32;
             let height = n * MENU_ROW + (n - 1.) * MENU_GAP + 2. * MENU_PAD;
             // Down when it fits under the bar, else up.
@@ -569,30 +513,38 @@ impl Render for Panel {
         self.region.reset();
         let bar_y = self.bar_y();
         // While the microphone is on, its button fills from the bottom with
-        // how loud it is, like in call apps.
-        let level = self.level;
-        let mut fill = cx.theme().colors().text_accent;
-        fill.alpha = 0.45;
-        let height = 32. * (level.clamp(0., 1.));
+        // how loud it is, like in call apps: a shade of the text color, so
+        // darker than the button in light themes and lighter in dark ones.
+        let level = if self.opts.mic { self.level.clamp(0., 1.) } else { 0. };
+        let mut fill = cx.theme().colors().text;
+        fill.alpha = 0.12;
         let mic = h_flex()
             .child(
-                div()
-                    .relative()
-                    .when(self.opts.mic && height > 1., |d| {
-                        d.child(div().absolute().left_0().right_0().bottom_0().h(px(height)).rounded_b(px(9.)).when(height > 23., |d| d.rounded_t(px(9. - (32. - height)))).bg(fill))
+                ButtonLike::new("mic")
+                    .style(if self.opts.mic { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(self.opts.mic)
+                    .when(level > 0.03, |b| {
+                        // The button's whole shape, filled up to the level by a
+                        // hard-edged gradient: a shorter box would round into a
+                        // pill of its own, since GPUI can't clip to the corners.
+                        let mut clear = fill;
+                        clear.alpha = 0.;
+                        b.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .rounded(rems_from_px(9.))
+                                .rounded_smoothing(crate::ui::SMOOTHING)
+                                .bg(gpui::linear_gradient(0., gpui::linear_color_stop(fill, level), gpui::linear_color_stop(clear, level + 0.01))),
+                        )
                     })
-                    .child(
-                        ButtonLike::new("mic")
-                            .style(if self.opts.mic { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                            .size(ButtonSize::Large)
-                            .toggle_state(self.opts.mic)
-                            .child(div().px_1().child(Icon::new(IconName::Mic).size(IconSize::Medium)))
-                            .tooltip(tip(t("record_bar.microphone"), if self.opts.mic { mic_desc } else { on_off(false) }, None))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.opts.mic = !this.opts.mic;
-                                cx.notify();
-                            })),
-                    ),
+                    .child(div().px_1().child(Icon::new(IconName::Mic).size(IconSize::Medium)))
+                    .tooltip(tip(t("record_bar.microphone"), if self.opts.mic { mic_desc } else { on_off(false) }, None))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.opts.mic = !this.opts.mic;
+                        cx.notify();
+                    })),
             )
             .child(
                 // Opened on mouse-down: a grabbing popup must be requested
@@ -630,7 +582,7 @@ impl Render for Panel {
                 this.opts.audio = !this.opts.audio;
                 cx.notify();
             })))
-            .child(toggle("webcam", Icon::from_path("icons/kadr/camera.svg"), self.opts.webcam).tooltip(tip(t("common.camera"), on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("webcam", Icon::from_path("icons/webcam.svg"), self.opts.webcam).tooltip(tip(t("common.camera"), on_off(self.opts.webcam), None)).on_click(cx.listener(|this, _, _, cx| {
                 this.opts.webcam = !this.opts.webcam;
                 if this.opts.webcam {
                     crate::webcam::show(&this.mon, this.rect, true, cx);
@@ -715,22 +667,39 @@ impl Render for Panel {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key_down(e, window, cx)))
             // A press on the area or a knob holds the pointer, so the drag
-            // goes on past the input region.
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
-                let Some((edges, from, start)) = this.drag else { return };
-                if e.pressed_button != Some(MouseButton::Left) {
-                    this.drag = None;
-                    return cx.notify();
+            // goes on past the input region. `_all`: the plain listeners skip
+            // events over occluding children (the bar, the camera), and the
+            // drag would stall and jump while the pointer crosses them.
+            .on_mouse_move_all({
+                let panel = cx.entity().downgrade();
+                move |e: &MouseMoveEvent, phase, _, _, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+                    let _ = panel.update(cx, |this, cx| {
+                        let Some((edges, from, start)) = this.drag else { return };
+                        if e.pressed_button != Some(MouseButton::Left) {
+                            this.drag = None;
+                            return cx.notify();
+                        }
+                        let d = (f32::from(e.position.x) - start.0, f32::from(e.position.y) - start.1);
+                        let next = this.dragged(edges, from, d);
+                        this.set_rect(next, cx);
+                    });
                 }
-                let d = (f32::from(e.position.x) - start.0, f32::from(e.position.y) - start.1);
-                let next = this.dragged(edges, from, d);
-                this.set_rect(next, cx);
-            }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                if this.drag.take().is_some() {
-                    cx.notify();
+            })
+            .on_mouse_up_all({
+                let panel = cx.entity().downgrade();
+                move |e: &gpui::MouseUpEvent, phase, _, _, cx| {
+                    if phase == DispatchPhase::Bubble && e.button == MouseButton::Left {
+                        let _ = panel.update(cx, |this, cx| {
+                            if this.drag.take().is_some() {
+                                cx.notify();
+                            }
+                        });
+                    }
                 }
-            }))
+            })
             .when(is_region, |root| {
                 root.child(dim().top_0().left_0().right_0().h(px(y)))
                     .child(dim().top(px(y + h)).left_0().right_0().bottom_0())
@@ -740,10 +709,19 @@ impl Render for Panel {
             })
             .child(div().absolute().left(px(bar_x)).top(px(bar_y)).w(px(room)).flex().justify_center().child(bar))
             .children(camera.as_ref().map(|state| crate::webcam::bubble(state, true, Some(self.region.mark()), window, cx)))
+            .when(camera.as_ref().is_some_and(|state| crate::webcam::dragging(state, cx)), |root| root.child(div().absolute().inset_0().child(self.region.mark())))
             .when_some(camera.clone(), |root, state| {
                 let released = state.clone();
-                root.on_mouse_move(move |e: &MouseMoveEvent, _, cx| crate::webcam::pointer_moved(&state, e.position, cx))
-                    .on_mouse_up(MouseButton::Left, move |_, _, cx| crate::webcam::pointer_released(&released, cx))
+                root.on_mouse_move_all(move |e: &MouseMoveEvent, phase, _, _, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        crate::webcam::pointer_moved(&state, e.position, e.pressed_button, cx)
+                    }
+                })
+                .on_mouse_up_all(move |e: &gpui::MouseUpEvent, phase, _, _, cx| {
+                    if phase == DispatchPhase::Bubble && e.button == MouseButton::Left {
+                        crate::webcam::pointer_released(&released, cx)
+                    }
+                })
             })
     }
 }

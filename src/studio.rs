@@ -177,6 +177,25 @@ pub fn look_matches(preset: &serde_json::Value, current: &serde_json::Value) -> 
 
 /// Where the camera file starts against the screen, and the bubble's look
 /// at the time, which the studio starts from.
+/// The camera's alpha as an ffmpeg `geq` expression for a square of half
+/// side `half` and corner radius `r`: the squircle GPUI draws the preview
+/// with (`ui::SMOOTHING`, its "normalized superellipse": corners reaching
+/// `r * (1 + s)` with power `-ln 2 / ln(1 - 0.2929 / (1 + s))`), or a plain
+/// rounded square where those corners wouldn't fit, as GPUI falls back too
+/// (a circle stays a circle).
+fn camera_alpha(half: f64, r: f64) -> String {
+    let s = crate::ui::SMOOTHING as f64;
+    let reach = r * (1. + s);
+    if r > 0. && 2. * reach <= 2. * half {
+        let power = -(2f64.ln()) / (1. - 0.292_893_218_813_452_4 / (1. + s)).ln();
+        let inner = half - reach;
+        let axis = |v: &str| format!("pow(max(abs({v}+0.5-{half})-{inner},0)/{reach},{power})");
+        format!("255*clip(0.5-{reach}*(pow({}+{},{})-1),0,1)", axis("X"), axis("Y"), 1. / power)
+    } else {
+        format!("255*clip(0.5-(hypot(max(abs(X+0.5-{half})-{inner},0),max(abs(Y+0.5-{half})-{inner},0))-{r}),0,1)", inner = half - r)
+    }
+}
+
 pub fn save_camera(video: &Path, offset: f64, look: crate::webcam::Look) {
     let mut p = track::path_for(video).into_os_string();
     p.push(".camera.json");
@@ -1254,10 +1273,7 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         let (cx, cy, side, r) = camera_box(&l, project);
         let index = 2 + overlays.inputs.iter().filter(|a| a.as_os_str() == "-i").count();
         let half = side / 2.;
-        let alpha = format!(
-            "255*clip(0.5-(hypot(max(abs(X+0.5-{half})-{inner},0),max(abs(Y+0.5-{half})-{inner},0))-{r}),0,1)",
-            inner = half - r
-        );
+        let alpha = camera_alpha(half, r);
         format!(
             "[{index}:v]fps={fps},crop='min(iw,ih)':'min(iw,ih)',scale={side}:{side},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'[cam];[{last}][cam]overlay={cx}:{cy}:eof_action=pass[withcam];",
             fps = p.fps,

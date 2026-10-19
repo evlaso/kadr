@@ -61,15 +61,17 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     // A clicked window gets its rounded corners and a soft shadow on a
     // transparent background, like a macOS window shot.
     let shadow = (picked.window && window_shadow()).then(|| (crate::platform::window_rounding(), picked.mon.scale));
+    let (scale, logical) = (picked.mon.scale, settings.logical_size);
     // Encoding a big PNG takes a moment; keep the UI free.
     let saved = cx
         .background_executor()
         .spawn(async move {
             let image = picked.crop();
-            match shadow {
-                Some((rounding, scale)) => with_shadow(&image, rounding, scale).save(&target),
-                None => image.save(&target),
-            }
+            let image = match shadow {
+                Some((rounding, scale)) => with_shadow(&image, rounding, scale),
+                None => image,
+            };
+            save_png(image, scale, logical, &target)
         })
         .await;
     match saved {
@@ -79,6 +81,21 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
             None
         }
     }
+}
+
+/// Save a screenshot taken in screen pixels at `scale`: scaled down to 1×
+/// with `logical`, and with its density in the PNG either way.
+pub fn save_png(image: impl Into<image::DynamicImage>, scale: f64, logical: bool, path: &std::path::Path) -> image::ImageResult<()> {
+    let image: image::DynamicImage = image.into();
+    let (image, density) = if logical && (scale - 1.).abs() > 1e-3 {
+        let size = |n: u32| ((n as f64 / scale).round() as u32).max(1);
+        (image.resize_exact(size(image.width()), size(image.height()), image::imageops::FilterType::Lanczos3), 1.)
+    } else {
+        (image, if logical { 1. } else { scale })
+    };
+    let mut png = Vec::new();
+    image.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
+    std::fs::write(path, cards::with_density(png, density)).map_err(image::ImageError::IoError)
 }
 
 /// Window shots get a shadow (the `window_shadow` setting, on by default).
@@ -104,8 +121,18 @@ fn coverage(x: f32, y: f32, w: f32, h: f32, r: f32) -> f32 {
     (r - d + 0.5).clamp(0., 1.)
 }
 
+/// How far (x, y) lies outside a w × h rectangle with corners rounded by
+/// `r`, in pixels; 0 inside.
+fn outside(x: f32, y: f32, w: f32, h: f32, r: f32) -> f32 {
+    let r = r.min(w / 2.).min(h / 2.);
+    let (dx, dy) = ((r - x).max(x - (w - r)).max(0.), (r - y).max(y - (h - r)).max(0.));
+    ((dx * dx + dy * dy).sqrt() - r).max(0.)
+}
+
 /// A window shot with its corners rounded by `rounding` (logical pixels)
-/// and a soft shadow under it, on a transparent background.
+/// and a shadow under it like a macOS window's, on a transparent background:
+/// a wide faint shadow cast downwards, a little ambient one all around and a
+/// thin dark rim right at the edge, so the window doesn't sit in a grey haze.
 pub fn with_shadow(image: &image::RgbaImage, rounding: f32, scale: f64) -> image::RgbaImage {
     use image::imageops;
 
@@ -113,8 +140,10 @@ pub fn with_shadow(image: &image::RgbaImage, rounding: f32, scale: f64) -> image
     let (w, h) = image.dimensions();
     let (fw, fh) = (w as f32, h as f32);
     let radius = rounding * s;
-    let (blur, drop, opacity) = (20. * s, 10. * s, 0.5);
-    let margin = (blur * 2.5 + drop).ceil() as u32;
+    // (blur sigma, drop, opacity) of the cast and the ambient shadow.
+    let layers = [(20. * s, 18. * s, 0.22), (4. * s, 1. * s, 0.10)];
+    let (rim, rim_opacity) = (1. * s, 0.18);
+    let margin = (20. * s * 2.5 + 18. * s).ceil() as u32;
 
     let mut window = image.clone();
     if radius > 0.5 {
@@ -123,18 +152,30 @@ pub fn with_shadow(image: &image::RgbaImage, rounding: f32, scale: f64) -> image
         }
     }
 
-    // The shadow is the window's shape moved down and blurred, worked out at
+    // Each shadow is the window's shape moved down and blurred, worked out at
     // a quarter of the size: the blur is slow and comes out smooth anyway.
     const STEP: u32 = 4;
     let (cw, ch) = (w + 2 * margin, h + 2 * margin);
-    let mask = image::GrayImage::from_fn(cw.div_ceil(STEP), ch.div_ceil(STEP), |u, v| {
-        let x = (u * STEP) as f32 + STEP as f32 / 2. - margin as f32;
-        let y = (v * STEP) as f32 + STEP as f32 / 2. - margin as f32 - drop;
-        image::Luma([(255. * coverage(x, y, fw, fh, radius)).round() as u8])
+    let masks: Vec<_> = layers
+        .iter()
+        .map(|&(blur, drop, _)| {
+            let mask = image::GrayImage::from_fn(cw.div_ceil(STEP), ch.div_ceil(STEP), |u, v| {
+                let x = (u * STEP) as f32 + STEP as f32 / 2. - margin as f32;
+                let y = (v * STEP) as f32 + STEP as f32 / 2. - margin as f32 - drop;
+                image::Luma([(255. * coverage(x, y, fw, fh, radius)).round() as u8])
+            });
+            imageops::resize(&imageops::blur(&mask, blur / STEP as f32), cw, ch, imageops::FilterType::Triangle)
+        })
+        .collect();
+    let mut out = image::RgbaImage::from_fn(cw, ch, |x, y| {
+        let mut clear = 1.;
+        for (mask, &(_, _, opacity)) in masks.iter().zip(&layers) {
+            clear *= 1. - mask.get_pixel(x, y).0[0] as f32 / 255. * opacity;
+        }
+        let d = outside(x as f32 + 0.5 - margin as f32, y as f32 + 0.5 - margin as f32, fw, fh, radius);
+        clear *= 1. - rim_opacity * (-(d / rim).powi(2) / 2.).exp();
+        image::Rgba([0, 0, 0, (255. * (1. - clear)).round() as u8])
     });
-    let mask = imageops::blur(&mask, blur / STEP as f32);
-    let mask = imageops::resize(&mask, cw, ch, imageops::FilterType::Triangle);
-    let mut out = image::RgbaImage::from_fn(cw, ch, |x, y| image::Rgba([0, 0, 0, (mask.get_pixel(x, y).0[0] as f32 * opacity) as u8]));
     imageops::overlay(&mut out, &window, margin as i64, margin as i64);
     out
 }

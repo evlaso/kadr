@@ -1044,7 +1044,7 @@ impl StudioEditor {
                     let fit = side / iw.min(ih).max(1.);
                     let (w, h) = (iw * fit, ih * fit);
                     let shown = Bounds::new(point(bounds.origin.x - px((w - side) / 2.), bounds.origin.y - px((h - side) / 2.)), size(px(w), px(h)));
-                    let _ = window.paint_image(bounds, shown, px(r).into(), 0., data, 0, false);
+                    let _ = window.paint_image(bounds, shown, px(r).into(), crate::ui::SMOOTHING, data, 0, false);
                 },
             )
             .absolute()

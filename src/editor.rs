@@ -644,6 +644,11 @@ pub struct Editor {
     px_taken: (u32, u32),
     /// How `image` and `source` are turned; catches up with `doc.view`.
     shown: crop::Orientation,
+    /// A window shot's window inside its baked-in shadow, for how `source`
+    /// is turned; None when the picture has no such margin.
+    window: Option<(crop::Orientation, Option<crop::Rect>)>,
+    /// The crop was set to `window` by turning a background on.
+    window_fitted: bool,
     /// The crop mode, while it's on.
     cropping: Option<CropSession>,
     /// What the crop keeps to.
@@ -759,10 +764,16 @@ pub fn open(path: PathBuf, cx: &mut App) {
     let Some(mon) = util::focused_monitor() else { return };
     let (mw, mh) = (mon.w as f32, mon.h as f32);
 
-    // Real size on screen (screenshots are in physical pixels), shrunk to
-    // leave room for the toolbars and a backdrop.
-    let natural = (w as f32 / mon.scale as f32, h as f32 / mon.scale as f32);
-    let fit = ((mw - 160.) / natural.0).min((mh - 260. * kit::SCALE) / natural.1).min(1.0);
+    // Real size on screen (the PNG's density, else screenshots are in
+    // physical pixels), shrunk to leave room for the toolbars and a backdrop.
+    let density = cards::png_density(&bytes).unwrap_or(mon.scale) as f32;
+    let natural = (w as f32 / density, h as f32 / density);
+    // The window takes at most about two thirds of the screen, like
+    // CleanShot's; a bigger picture opens smaller than 100% to fit it with
+    // its work margin (`pad` below) and the bars.
+    let (max_w, max_h) = (mw * 0.7, mh * 0.72);
+    let grown = |n: f32| n + natural.0.max(natural.1) * WORK_PAD * 2.;
+    let fit = ((max_w - 48.) / grown(natural.0)).min((max_h - 48. - CHROME) / grown(natural.1)).min(1.0);
     let disp = (natural.0 * fit, natural.1 * fit);
 
     let image = Arc::new(Image::from_bytes(ImageFormat::Png, bytes.clone()));
@@ -770,7 +781,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
     // padding and the bars; the picture refits whenever the window resizes.
     let pad = disp.0.max(disp.1) * WORK_PAD * 2.;
     // Never a letterbox: at least a comfortable height, whatever the picture.
-    let size = ((disp.0 + pad + 48.).max(1180. * kit::SCALE).min(mw - 80.), (disp.1 + pad + 48. + CHROME).max(640. * kit::SCALE).min(mh - 80.));
+    let size = ((disp.0 + pad + 48.).max(1180. * kit::SCALE).min(mw - 80.), (disp.1 + pad + 48. + CHROME).max(640. * kit::SCALE).min(max_h.max(640. * kit::SCALE)).min(mh - 80.));
     let windowed = !cfg!(target_os = "linux") || crate::settings::Settings::load().editor_window;
     let layer = LayerSpec {
         namespace: "kadr-editor",
@@ -823,6 +834,8 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 original: None,
                 px_taken: (w, h),
                 shown: crop::Orientation::default(),
+                window: None,
+                window_fitted: false,
                 cropping: None,
                 aspect: crop::Aspect::Free,
                 snap: true,
@@ -1052,6 +1065,28 @@ impl Editor {
 
     fn crop_ratio(&self) -> Option<f32> {
         self.aspect.ratio(self.px)
+    }
+
+    /// A window shot carries its own shadow on a transparent margin; on a
+    /// background that margin would show as a band round it, so the picture
+    /// is cropped to the window while a background is on, and back after.
+    fn fit_window(&mut self) {
+        let Some(source) = self.source.clone() else { return };
+        if self.window.is_none_or(|(view, _)| view != self.shown) {
+            self.window = Some((self.shown, opaque_bounds(&source)));
+        }
+        let Some((_, Some(win))) = self.window else { return };
+        let crop = Some(((win.0, win.1), (win.2, win.3)));
+        // Once: Uncrop afterwards keeps the shadow.
+        if self.frame.on() && !self.window_fitted && self.cropping.is_none() && self.doc.crop.is_none() {
+            self.doc.crop = crop;
+            self.window_fitted = true;
+        } else if !self.frame.on() && self.window_fitted {
+            if self.doc.crop == crop {
+                self.doc.crop = None;
+            }
+            self.window_fitted = false;
+        }
     }
 
     /// The crop, or the whole picture when there's none.
@@ -1804,9 +1839,15 @@ impl Editor {
         cx.spawn(async move |_, cx| {
             let _hold = hold;
             let (drawn, framed) = (doc.clone(), frame.clone());
+            // The result keeps the original's density, less the image size.
+            let density = cards::png_density(&base).map(|d| d * drawn.scale.min(1.) as f64);
             let png = cx.background_executor().spawn(async move { compose(&src, &drawn, &framed) }).await;
             let Some(png) = png else {
                 return util::notify(t("common.couldnt_save"), &path.display().to_string());
+            };
+            let png = match density {
+                Some(d) => cards::with_density(png, d),
+                None => png,
             };
             match copy {
                 false => {
@@ -3091,6 +3132,9 @@ impl Editor {
             _ => CursorStyle::Crosshair,
         };
         let framed = self.frame.on();
+        // A window shot's see-through margin holds its own shadow; the
+        // stage's shadow and edge would show through it as a dark box.
+        let clear_edge = matches!(self.window, Some((_, Some(_))));
         let radius = if framed { self.disp.0.max(self.disp.1) * self.frame.radius } else { 6. };
         let picture = div()
             .absolute()
@@ -3100,7 +3144,7 @@ impl Editor {
             .h(px(self.disp.1))
             .rounded(px(radius))
             .overflow_hidden()
-            .when(!framed, |d| d.shadow(kit::shadow()))
+            .when(!framed && !clear_edge, |d| d.shadow(kit::shadow()))
             .when(framed && self.frame.shadow > 0., |d| {
                 let big = self.disp.0.max(self.disp.1);
                 d.shadow(vec![BoxShadow {
@@ -3115,7 +3159,7 @@ impl Editor {
             .children(blurs)
             // A hairline edge, so a dark screenshot doesn't melt into the
             // dark stage around it.
-            .when(!framed, |d| d.child(div().absolute().inset_0().rounded(px(radius)).border_1().border_color(cx.theme().colors().border)));
+            .when(!framed && !clear_edge, |d| d.child(div().absolute().inset_0().rounded(px(radius)).border_1().border_color(cx.theme().colors().border)));
 
         // The background preview mirrors what Save produces: around the
         // result, which may reach past the picture.
@@ -3163,6 +3207,7 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.fit_window();
         // The next screenshot starts with this background.
         let frame = self.frame.to_json();
         if frame != self.remembered {
@@ -3394,6 +3439,20 @@ fn segment_distance(p: P, a: P, b: P) -> f32 {
 /// The room around a picture of `size` to draw and crop in, in its pixels.
 fn work_margin(size: (u32, u32)) -> f32 {
     (size.0.max(size.1) as f32 * WORK_PAD).round()
+}
+
+/// The box of a picture's opaque pixels, when everything round it is see-
+/// through: a window shot's window inside its shadow (which never reaches
+/// full opacity), its rounded corners included.
+fn opaque_bounds(img: &RgbaImage) -> Option<crop::Rect> {
+    let (w, h) = img.dimensions();
+    let (mut l, mut t, mut r, mut b) = (w, h, 0, 0);
+    for (x, y, p) in img.enumerate_pixels() {
+        if p.0[3] == 255 {
+            (l, t, r, b) = (l.min(x), t.min(y), r.max(x + 1), b.max(y + 1));
+        }
+    }
+    (l < r && (l, t, r, b) != (0, 0, w, h)).then(|| (l as f32, t as f32, r as f32, b as f32))
 }
 
 /// What the result covers, in image pixels (whole, within the work area):
@@ -4088,6 +4147,16 @@ pub(crate) fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A window shot's shadow is cut off back to the window, corners and all.
+    #[test]
+    fn window_inside_its_shadow() {
+        let window = RgbaImage::from_pixel(300, 200, image::Rgba([40, 40, 40, 255]));
+        let shot = crate::capture::with_shadow(&window, 10., 1.);
+        let (l, t, r, b) = opaque_bounds(&shot).expect("a margin");
+        assert_eq!((r - l, b - t), (300., 200.));
+        assert_eq!(opaque_bounds(&window), None);
+    }
 
     /// A wobbly mouse trace, raw and smoothed, rendered side by side.
     #[test]

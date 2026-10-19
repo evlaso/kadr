@@ -180,6 +180,7 @@ pub fn start(area: Option<String>, cx: &mut App) {
         let shared = Arc::new(Shared { stop: AtomicBool::new(false), cancelled: AtomicBool::new(false), height: AtomicU32::new(0) });
 
         let mon = util::monitors().into_iter().find(|m| m.contains(x, y));
+        let mon_scale = mon.as_ref().map(|m| m.scale);
         let window = cx.update(|cx| open_bar(cx, mon, (x, y, w, h), shared.clone(), kit::hold(cx)));
         let _ = cx.update(|cx| cx.set_global(Session(Some((shared.clone(), window)))));
 
@@ -224,7 +225,8 @@ pub fn start(area: Option<String>, cx: &mut App) {
         let dir = settings.screenshot_dir();
         let _ = std::fs::create_dir_all(&dir);
         let path = crate::storage::capture_path(&dir, crate::storage::Capture::Screenshot, "png");
-        if let Err(e) = picture.save(&path) {
+        let scale = mon_scale.unwrap_or(1.);
+        if let Err(e) = capture::save_png(picture, scale, settings.logical_size, &path) {
             return util::notify(t("common.couldnt_save"), &e.to_string());
         }
         let _ = cx.update(|cx| capture::deliver(path, &settings, cx));

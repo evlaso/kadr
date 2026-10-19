@@ -62,6 +62,9 @@ pub struct Settings {
     pub name_template: String,
     /// Window captures keep the window's shadow on a transparent background.
     pub window_shadow: bool,
+    /// Screenshots are scaled down to logical pixels (1×), so a pixel of the
+    /// picture is a pixel of the design; off keeps every screen pixel.
+    pub logical_size: bool,
     /// 0 keeps cards until closed.
     pub card_seconds: u32,
     pub card_side: Side,
@@ -102,6 +105,7 @@ impl Default for Settings {
             after_video: After { card: true, copy: false, save: true, edit: false, pin: false },
             name_template: crate::storage::DEFAULT_NAME.into(),
             window_shadow: true,
+            logical_size: true,
             card_seconds: 10,
             card_side: Side::Left,
             tray: true,
@@ -141,6 +145,7 @@ impl Settings {
             after_video: After::load(&v["after_video"], After { card: bool_or("show_card", d.after_video.card), ..d.after_video }),
             name_template: v["name_template"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or(&d.name_template).to_owned(),
             window_shadow: bool_or("window_shadow", d.window_shadow),
+            logical_size: bool_or("logical_size", d.logical_size),
             card_seconds: num_or("card_seconds", d.card_seconds as u64) as u32,
             card_side: if v["card_side"].as_str() == Some("right") { Side::Right } else { Side::Left },
             tray: bool_or("tray", d.tray),
@@ -171,6 +176,7 @@ impl Settings {
             "after_video": self.after_video.json(),
             "name_template": self.name_template,
             "window_shadow": self.window_shadow,
+            "logical_size": self.logical_size,
             "card_seconds": self.card_seconds,
             "card_side": if self.card_side == Side::Right { "right" } else { "left" },
             "tray": self.tray,
