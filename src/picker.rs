@@ -42,9 +42,13 @@ pub struct Picked {
 impl Picked {
     /// The picked area cut from the frozen screen, in physical pixels.
     pub fn crop(&self) -> image::RgbaImage {
+        // Edges rounded on their own, as the compositor draws windows: rounding
+        // the size instead can take in a pixel of the border next to it.
         let s = self.mon.scale;
-        let (x, y) = (((self.area.0 - self.mon.x) as f64 * s).round() as u32, ((self.area.1 - self.mon.y) as f64 * s).round() as u32);
-        let (w, h) = ((self.area.2 as f64 * s).round() as u32, (self.area.3 as f64 * s).round() as u32);
+        let px = |v: i32| (v as f64 * s).round() as u32;
+        let (lx, ly) = (self.area.0 - self.mon.x, self.area.1 - self.mon.y);
+        let (x, y) = (px(lx), px(ly));
+        let (w, h) = (px(lx + self.area.2) - x, px(ly + self.area.3) - y);
         let (fw, fh) = self.frozen.dimensions();
         image::imageops::crop_imm(self.frozen.as_ref(), x.min(fw - 1), y.min(fh - 1), w.min(fw - x.min(fw - 1)).max(1), h.min(fh - y.min(fh - 1)).max(1)).to_image()
     }

@@ -360,7 +360,7 @@ impl SettingsView {
                 heading(t("settings.video")),
                 row(t("settings.recordings_folder"), t("settings.videos_by_default"), folder(cx, s.video_dir(), s.video_dir.is_some(), false)),
                 self.render_name(crate::storage::Capture::Recording, "mp4", cx),
-                row(t("settings.frame_rate"), t("settings.60_smoother_30_makes_smaller"), chips(cx, "fps", FPS.iter().map(|f| tr!("common.fps", f)).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
+                row(t("settings.frame_rate"), t("settings.frame_rate_hint"), chips(cx, "fps", FPS.iter().map(|&f| if f == 0 { t("settings.fps_source").to_string() } else { tr!("common.fps", f) }).collect(), FPS.iter().position(|&f| f == s.fps), |s, i| s.fps = FPS[i])),
                 row(t("settings.quality"), t("settings.higher_keeps_small_text_sharp"), chips(cx, "quality", QUALITIES.iter().map(|q| t(q.1).to_string()).collect(), Some(s.quality), |s, i| s.quality = i)),
                 row(t("settings.frame_around_area"), t("settings.outline_recorded_area_not_recorded"), switch("frame", s.region_frame, cx, |s, on| s.region_frame = on)),
             ],

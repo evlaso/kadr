@@ -150,6 +150,7 @@ pub fn monitors() -> Vec<Mon> {
                 h: (lh as f64 / scale) as i32,
                 phys: (pw, ph),
                 scale,
+                hz: m["refreshRate"].as_f64().unwrap_or(60.0),
                 focused: m["focused"].as_bool().unwrap_or(false),
             })
         })

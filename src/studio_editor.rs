@@ -60,7 +60,7 @@ const MAX_TIMELINE_ZOOM: f32 = 8.;
 const MIN_SEG: f64 = 0.3;
 const NEW_SEG: f64 = 2.0;
 const NEW_CUT: f64 = 1.0;
-const PLAY_FPS: u32 = 30;
+const PLAY_FPS: u32 = 60;
 const WALLPAPERS: usize = 12;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

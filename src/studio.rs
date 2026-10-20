@@ -61,7 +61,7 @@ pub const ASPECTS: [(&str, Option<f64>); 9] = [
 pub const ASPECT_ORDER: [&[usize]; 2] = [&[0, 2, 5, 6, 7, 1], &[3, 8, 4]];
 /// Export size by the output's short side.
 pub const RESOLUTIONS: [(&str, u32); 4] = [("720p", 720), ("1080p", 1080), ("1440p", 1440), ("4K", 2160)];
-pub const FRAME_RATES: [(&str, Option<u32>); 3] = [("studio.as_recorded", None), ("30", Some(30)), ("60", Some(60))];
+pub const FRAME_RATES: [(&str, Option<u32>); 4] = [("studio.as_recorded", None), ("30", Some(30)), ("60", Some(60)), ("120", Some(120))];
 /// Shortcut pill text height as a share of the output's short side.
 pub const KEY_SIZES: [(&str, f64); 3] = [("S", 0.015), ("M", 0.02), ("L", 0.026)];
 /// Slider ranges: padding (share of the short side), corner radius (pixels

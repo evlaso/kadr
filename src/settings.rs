@@ -18,7 +18,8 @@ pub enum Side {
 pub const QUALITIES: [(&str, &str); 4] = [("medium", "common.medium"), ("high", "common.high"), ("very_high", "settings.very_high"), ("ultra", "settings.maximum")];
 pub const CARD_SECONDS: [u32; 4] = [5, 10, 20, 0];
 pub const MAX_CARDS: [usize; 3] = [2, 4, 6];
-pub const FPS: [u32; 2] = [30, 60];
+/// Recording frame rates; 0 is the screen's own refresh rate.
+pub const FPS: [u32; 4] = [0, 30, 60, 120];
 
 /// What happens right after a capture, like CleanShot's "After capture"
 /// list; any number of them at once.
@@ -111,7 +112,7 @@ impl Default for Settings {
             tray: true,
             max_cards: 4,
             video_dir: None,
-            fps: 60,
+            fps: 0,
             quality: 2,
             region_frame: true,
             editor_window: true,

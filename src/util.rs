@@ -57,6 +57,8 @@ pub struct Mon {
     /// Physical mode size in pixels.
     pub phys: (i64, i64),
     pub scale: f64,
+    /// Refresh rate in Hz.
+    pub hz: f64,
     pub focused: bool,
 }
 

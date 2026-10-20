@@ -105,6 +105,14 @@ pub enum Target {
 }
 
 impl Target {
+    /// The monitor the area is on.
+    fn monitor<'a>(&self, mons: &'a [Mon]) -> Option<&'a Mon> {
+        match *self {
+            Target::Monitor(ref name) => mons.iter().find(|m| &m.name == name),
+            Target::Region { x, y, w, h } => mons.iter().find(|m| m.contains(x + w / 2, y + h / 2)),
+        }
+    }
+
     /// Recorded area in logical layout coordinates.
     fn rect(&self, mons: &[Mon]) -> (i32, i32, i32, i32) {
         match *self {
@@ -115,6 +123,18 @@ impl Target {
                 .map(|m| (m.x, m.y, m.w, m.h))
                 .unwrap_or_default(),
         }
+    }
+
+    /// The region shrunk onto whole screen pixels, so the video shows it edge
+    /// to edge. gpu-screen-recorder starts a region at floor(x * scale) and
+    /// rounds its size up to even pixels, padding with black or taking in the
+    /// next pixel, so on a fractional scale the edges have to land exactly.
+    fn fitted(self, mons: &[Mon]) -> Target {
+        let Target::Region { x, y, w, h } = self else { return self };
+        let Some(mon) = self.monitor(mons) else { return self };
+        let (fx, fw) = fit_span(x - mon.x, w, mon.scale);
+        let (fy, fh) = fit_span(y - mon.y, h, mon.scale);
+        Target::Region { x: mon.x + fx, y: mon.y + fy, w: fw, h: fh }
     }
 
     /// gpu-screen-recorder takes regions in logical coordinates and scales them itself.
@@ -129,6 +149,28 @@ impl Target {
             Target::Region { x, y, w, h } => vec!["-w".into(), format!("{w}x{h}+{x}+{y}")],
         }
     }
+}
+
+/// A logical span (start, length) on a monitor with this scale, moved and
+/// shrunk to the largest one inside the pixels it covers (as the compositor
+/// rounds them) that starts on a whole pixel and is an even number of pixels
+/// long.
+fn fit_span(start: i32, len: i32, scale: f64) -> (i32, i32) {
+    const EPS: f64 = 1e-3;
+    let phys = |v: i32| v as f64 * scale;
+    let (p0, p1) = (phys(start).round(), phys(start + len).round());
+    let mut first = (p0 / scale).floor() as i32;
+    while (phys(first) + EPS).floor() < p0 {
+        first += 1;
+    }
+    let from = (phys(first) + EPS).floor();
+    let most = ((p1 - from) / scale + EPS).floor() as i32;
+    let even = |n: i32| {
+        let v = phys(n);
+        (v - v.round()).abs() < EPS && v.round() as i64 % 2 == 0
+    };
+    let len = (most.saturating_sub(16).max(1)..=most).rev().find(|&n| even(n)).unwrap_or(most);
+    (first, len.max(1))
 }
 
 enum State {
@@ -522,7 +564,8 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         }
         Area::Pick => pick_target(cx).await.ok_or(None)?,
         Area::Fixed(target) => target,
-    };
+    }
+    .fitted(&mons);
 
     // 3, 2, 1 over the area; Esc there cancels.
     if !countdown(&target, opts.countdown, &mons, cx).await {
@@ -558,14 +601,22 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     };
 
     let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
-    let fps = settings.fps.to_string();
+    // Source: as often as the screen refreshes.
+    let rate = match settings.fps {
+        0 => target.monitor(&mons).map_or(60, |m| m.hz.round().max(1.) as u32),
+        n => n,
+    };
+    let fps = rate.to_string();
+    // NVENC's H.264 drops to a frame or two a second at 4K 240, while HEVC
+    // keeps up.
+    let codec = if rate > 144 { "hevc" } else { "auto" };
     let quality = crate::settings::QUALITIES[settings.quality].0;
     // Studio recordings leave the cursor out; the studio draws its own.
     let cursor_off = opts.studio.then(crate::platform::CursorOffCapture::start).flatten();
     if opts.studio {
         args.extend(["-cursor".into(), "no".into()]);
     }
-    for a in ["-k", "auto", "-f", &fps, "-q", quality, "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
+    for a in ["-k", codec, "-f", &fps, "-q", quality, "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
         args.push(a.into());
     }
     args.push(file.clone().into());
@@ -1017,5 +1068,33 @@ impl Render for Countdown {
                     .child(div().text_size(px(side * 0.46)).line_height(px(side * 0.56)).font_weight(gpui::FontWeight::SEMIBOLD).child(n.to_string()))
                     .child(Label::new(t("record.esc_cancel")).size(LabelSize::XSmall).color(Color::Muted)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_span;
+
+    #[test]
+    fn spans_land_on_whole_even_pixels() {
+        let s = 1.333_333_4;
+        // A window at 37 (49.33 px) whose content Hyprland draws from pixel 49:
+        // gpu-screen-recorder starts at floor(37 * s) = 49, and 1572 * s = 2096.
+        assert_eq!(fit_span(37, 1572, s), (37, 1572));
+        // Content from pixel 15 can't be reached (floor(11 * s) = 14), so it
+        // starts a pixel in, at 16, and stays inside the window's 1912.
+        assert_eq!(fit_span(11, 1423, s), (12, 1422));
+        for (start, len) in [(0, 2880), (300, 400), (460, 601), (7, 1000), (123, 457)] {
+            let (a, n) = fit_span(start, len, s);
+            let (p0, p1) = ((start as f64 * s).round(), ((start + len) as f64 * s).round());
+            let (from, size) = ((a as f64 * s + 1e-3).floor(), n as f64 * s);
+            assert!(from >= p0 && from + size <= p1 + 1e-3, "{start},{len} -> {a},{n}");
+            assert!((size - size.round()).abs() < 1e-3 && size.round() as i64 % 2 == 0, "{start},{len} -> {a},{n}");
+        }
+        assert_eq!(fit_span(0, 2880, s), (0, 2880));
+        // Whole pixels: only an odd length loses a pixel.
+        assert_eq!(fit_span(5, 101, 1.), (5, 100));
+        assert_eq!(fit_span(5, 101, 2.), (5, 101));
+        assert_eq!(fit_span(4, 100, 1.25).1 % 8, 0);
     }
 }
