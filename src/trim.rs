@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
-    App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Window, canvas, div, img,
+    App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, RenderImage, Window, canvas, div, img,
     point, px, rgba, size,
 };
 use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
@@ -41,8 +41,14 @@ pub struct Trimmer {
     video: (u32, u32),
     disp: (f32, f32),
     thumbs: Vec<Arc<Image>>,
-    preview: Option<Arc<Image>>,
+    preview: Option<ImageSource>,
     preview_at: f64,
+    /// Small frames shown at once while a handle is dragged.
+    scrub: Option<Arc<crate::scrub::Scrub>>,
+    /// The request whose frame (quick or exact) is on screen.
+    shown: u64,
+    /// Quick frames no longer on screen, freed from the atlas on render.
+    stale: Vec<Arc<RenderImage>>,
     start: f64,
     end: f64,
     drag: Option<End>,
@@ -59,12 +65,13 @@ struct Probe {
     w: u32,
     h: u32,
     duration: f64,
+    fps: f64,
 }
 
 async fn probe(path: &Path) -> Option<Probe> {
     let (ok, out) = util::output::<&OsStr>(&[
         "ffprobe".as_ref(), "-v".as_ref(), "error".as_ref(), "-select_streams".as_ref(), "v:0".as_ref(),
-        "-show_entries".as_ref(), "stream=width,height:format=duration".as_ref(), "-of".as_ref(), "json".as_ref(), path.as_os_str(),
+        "-show_entries".as_ref(), "stream=width,height,r_frame_rate:format=duration".as_ref(), "-of".as_ref(), "json".as_ref(), path.as_os_str(),
     ])
     .await?;
     let v: serde_json::Value = serde_json::from_str(&out).ok().filter(|_| ok)?;
@@ -72,6 +79,10 @@ async fn probe(path: &Path) -> Option<Probe> {
         w: v["streams"][0]["width"].as_u64()? as u32,
         h: v["streams"][0]["height"].as_u64()? as u32,
         duration: v["format"]["duration"].as_str()?.parse().ok()?,
+        fps: v["streams"][0]["r_frame_rate"].as_str().and_then(|r| {
+            let (a, b) = r.split_once('/')?;
+            Some(a.parse::<f64>().ok()? / b.parse::<f64>().ok()?.max(1.))
+        }).unwrap_or(60.),
     })
 }
 
@@ -94,6 +105,15 @@ pub(crate) async fn frame(path: &Path, t: f64, width: u32, tag: u64) -> Option<A
     let (ok, _) = util::output::<&OsStr>(&[
         "ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-ss".as_ref(), ss.as_ref(),
         "-i".as_ref(), path.as_os_str(), "-frames:v".as_ref(), "1".as_ref(), "-vf".as_ref(), scale.as_ref(), out.as_os_str(),
+    ])
+    .await?;
+    if let Some(image) = ok.then(|| load_png(&out)).flatten() {
+        return Some(image);
+    }
+    // At or past the end there's no frame to seek to: take the last one.
+    let (ok, _) = util::output::<&OsStr>(&[
+        "ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-sseof".as_ref(), "-0.5".as_ref(),
+        "-i".as_ref(), path.as_os_str(), "-update".as_ref(), "1".as_ref(), "-vf".as_ref(), scale.as_ref(), out.as_os_str(),
     ])
     .await?;
     ok.then(|| load_png(&out)).flatten()
@@ -139,14 +159,18 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 cx.new(|cx| {
                     let focus = cx.focus_handle();
                     window.focus(&focus, cx);
+                    let scrub = crate::scrub::Scrub::start(&path, p.fps);
                     Trimmer {
                         path,
                         duration: p.duration,
                         video: (p.w, p.h),
                         disp,
                         thumbs,
-                        preview,
+                        preview: preview.map(ImageSource::from),
                         preview_at: 0.,
+                        scrub,
+                        shown: 0,
+                        stale: Vec::new(),
                         start: 0.,
                         end: p.duration,
                         drag: None,
@@ -182,6 +206,23 @@ impl Trimmer {
         let id = self.request.get() + 1;
         self.request.set(id);
         let (path, width, request) = (self.path.clone(), (self.disp.0 * 2.) as u32, self.request.clone());
+        // The quick frame right away, unless a later one got there first.
+        if let Some(scrub) = self.scrub.clone() {
+            scrub.want(id);
+            cx.spawn(async move |this, cx| {
+                let Some(quick) = cx.background_executor().spawn(async move { scrub.frame(t, id) }).await else { return };
+                let _ = this.update(cx, |trim: &mut Trimmer, cx| {
+                    if id > trim.shown {
+                        trim.shown = id;
+                        if let Some(ImageSource::Render(old)) = trim.preview.replace(ImageSource::Render(quick)) {
+                            trim.stale.push(old);
+                        }
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
         cx.spawn(async move |this, cx| {
             // Let a drag settle a little before decoding.
             cx.background_executor().timer(Duration::from_millis(40)).await;
@@ -191,8 +232,11 @@ impl Trimmer {
             let image = frame(&path, t, width, id).await;
             if request.get() == id {
                 let _ = this.update(cx, |trim, cx| {
-                    if image.is_some() {
-                        trim.preview = image;
+                    if let Some(image) = image {
+                        trim.shown = id;
+                        if let Some(ImageSource::Render(old)) = trim.preview.replace(ImageSource::from(image)) {
+                            trim.stale.push(old);
+                        }
                     }
                     cx.notify();
                 });
@@ -389,7 +433,10 @@ impl Trimmer {
 }
 
 impl Render for Trimmer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        for old in self.stale.drain(..) {
+            let _ = window.drop_image(old);
+        }
         let preview = div()
             .relative()
             .w(px(self.disp.0))

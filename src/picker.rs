@@ -10,6 +10,7 @@
 //! P brings back the last area picked.
 
 use std::sync::Arc;
+use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::channel::oneshot;
@@ -91,6 +92,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     };
     let scale = mon.scale as f32;
     let screen = (mon.w as f32, mon.h as f32);
+    let origin = (mon.x as f32, mon.y as f32);
     cx.update(|cx| {
         kit::open_layer(cx, spec, move |window, cx| {
             cx.new(|cx| {
@@ -103,6 +105,9 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                     frozen: shown,
                     scale,
                     screen,
+                    origin,
+                    shift: false,
+                    watching: false,
                     windows,
                     snap,
                     windows_only: false,
@@ -118,6 +123,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                     moving: false,
                     last: None,
                     done: Some(tx),
+                    pending: None,
                     focus,
                 }
             })
@@ -235,6 +241,12 @@ struct Picker {
     scale: f32,
     /// The monitor's logical size.
     screen: (f32, f32),
+    /// The monitor's place in the layout.
+    origin: (f32, f32),
+    /// Shift was held at the last pointer event.
+    shift: bool,
+    /// Keeping the pointer on this monitor while dragging.
+    watching: bool,
     windows: Vec<Rect>,
     snap: bool,
     /// Space toggled: a click takes the window under it, nothing is drawn.
@@ -259,6 +271,10 @@ struct Picker {
     moving: bool,
     last: Option<(f32, f32)>,
     done: Option<oneshot::Sender<Option<(Rect, bool)>>>,
+    /// What a press picked, taken once the button is up: closing while it's
+    /// held hands the rest of the click to the window below (a terminal
+    /// then selects text and puts it on the clipboard over the shot).
+    pending: Option<Option<(Rect, bool)>>,
     focus: FocusHandle,
 }
 
@@ -369,14 +385,15 @@ impl Picker {
         self.clamp((x0, y0, x1 - x0, y1 - y0))
     }
 
-    fn mouse_down(&mut self, e: &MouseDownEvent, window: &mut Window) {
+    fn mouse_down(&mut self, e: &MouseDownEvent) {
         let p = local(e.position);
         self.last = Some(p);
         if self.adjust
             && let Some(sel) = self.selection
         {
             if e.click_count == 2 && inside(sel, p) {
-                return self.finish(Some(sel), false, window);
+                self.pending = Some(Some((sel, false)));
+                return;
             }
             if let Some(edges) = self.handle_at(p) {
                 self.drag = Some(Drag::Resize { edges, from: sel, start: p });
@@ -389,7 +406,7 @@ impl Picker {
         }
         if self.windows_only {
             if let Some(win) = self.hovered_window() {
-                self.finish(Some(win), true, window);
+                self.pending = Some(Some((win, true)));
             }
             return;
         }
@@ -400,46 +417,102 @@ impl Picker {
 
     fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
         let p = local(e.position);
-        if e.pressed_button == Some(MouseButton::Left) {
-            match self.drag {
-                Some(Drag::New(start)) if self.moving => {
-                    // Space: drag the whole selection along.
-                    if let (Some(last), Some(sel)) = (self.last, self.selection.as_mut()) {
-                        let (dx, dy) = (p.0 - last.0, p.1 - last.1);
-                        sel.0 += dx;
-                        sel.1 += dy;
-                        self.drag = Some(Drag::New((start.0 + dx, start.1 + dy)));
-                    }
-                }
-                Some(Drag::New(start)) => {
-                    let (mut dx, mut dy) = (p.0 - start.0, p.1 - start.1);
-                    if let Some(r) = self.ratio() {
-                        dy = dx.abs() / r * if dy < 0. { -1. } else { 1. };
-                    } else if e.modifiers.shift {
-                        let m = dx.abs().max(dy.abs());
-                        (dx, dy) = (m * dx.signum(), m * dy.signum());
-                    }
-                    let (x0, y0) = (start.0.min(start.0 + dx), start.1.min(start.1 + dy));
-                    self.selection = Some((x0, y0, dx.abs(), dy.abs()));
-                }
-                Some(Drag::Move(last)) => {
-                    if let Some(sel) = self.selection {
-                        self.selection = Some(self.clamp((sel.0 + p.0 - last.0, sel.1 + p.1 - last.1, sel.2, sel.3)));
-                    }
-                    self.drag = Some(Drag::Move(p));
-                }
-                Some(Drag::Resize { edges, from, start }) => self.selection = Some(self.resized(from, edges, (p.0 - start.0, p.1 - start.1))),
-                None => {}
-            }
+        self.shift = e.modifiers.shift;
+        // Not only while the button reads as pressed: GPUI forgets it when the
+        // pointer leaves the monitor, and the drag goes on once it's back.
+        if self.drag.is_some() {
+            self.drag_to(p);
+        } else {
+            self.last = Some(p);
         }
         self.cursor = Some(p);
-        self.last = Some(p);
         cx.notify();
+    }
+
+    fn drag_to(&mut self, p: (f32, f32)) {
+        // The pointer stops short of the right and bottom edges; within a
+        // pixel of them counts as on them.
+        let (sw, sh) = self.screen;
+        let p = (if p.0 >= sw - 1. { sw } else { p.0.max(0.) }, if p.1 >= sh - 1. { sh } else { p.1.max(0.) });
+        match self.drag {
+            Some(Drag::New(start)) if self.moving => {
+                // Space: drag the whole selection along.
+                if let (Some(last), Some(sel)) = (self.last, self.selection.as_mut()) {
+                    let (dx, dy) = (p.0 - last.0, p.1 - last.1);
+                    sel.0 += dx;
+                    sel.1 += dy;
+                    self.drag = Some(Drag::New((start.0 + dx, start.1 + dy)));
+                }
+            }
+            Some(Drag::New(start)) => {
+                let (mut dx, mut dy) = (p.0 - start.0, p.1 - start.1);
+                if let Some(r) = self.ratio() {
+                    dy = dx.abs() / r * if dy < 0. { -1. } else { 1. };
+                } else if self.shift {
+                    let m = dx.abs().max(dy.abs());
+                    (dx, dy) = (m * dx.signum(), m * dy.signum());
+                }
+                let (x0, y0) = (start.0.min(start.0 + dx), start.1.min(start.1 + dy));
+                self.selection = Some((x0, y0, dx.abs(), dy.abs()));
+            }
+            Some(Drag::Move(last)) => {
+                if let Some(sel) = self.selection {
+                    self.selection = Some(self.clamp((sel.0 + p.0 - last.0, sel.1 + p.1 - last.1, sel.2, sel.3)));
+                }
+                self.drag = Some(Drag::Move(p));
+            }
+            Some(Drag::Resize { edges, from, start }) => self.selection = Some(self.resized(from, edges, (p.0 - start.0, p.1 - start.1))),
+            None => {}
+        }
+        self.last = Some(p);
+    }
+
+    /// While dragging, keep the pointer on this monitor: the picker only
+    /// gets pointer events over itself, so past the edge the selection would
+    /// stop short, and a button let go on another monitor would never come.
+    /// Pushed past an edge, the selection takes it in whole.
+    fn watch_pointer(&mut self, cx: &mut Context<Self>) {
+        if self.drag.is_none() || self.watching {
+            return;
+        }
+        self.watching = true;
+        let ((ox, oy), (sw, sh)) = (self.origin, self.screen);
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(8)).await;
+                let pos = crate::platform::cursor_pos();
+                let going = this.update(cx, |picker, cx| {
+                    if picker.drag.is_none() {
+                        picker.watching = false;
+                        return false;
+                    }
+                    if let Some((x, y)) = pos {
+                        let (lx, ly) = (x as f32 - ox, y as f32 - oy);
+                        if lx < 0. || ly < 0. || lx >= sw || ly >= sh {
+                            let (cx0, cy0) = (lx.clamp(0., sw - 1.), ly.clamp(0., sh - 1.));
+                            crate::platform::move_cursor((ox + cx0) as f64, (oy + cy0) as f64);
+                            picker.drag_to((lx.clamp(0., sw), ly.clamp(0., sh)));
+                            picker.cursor = Some((cx0, cy0));
+                            cx.notify();
+                        }
+                    }
+                    true
+                });
+                if !matches!(going, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn mouse_up(&mut self, e: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         if e.button != MouseButton::Left {
             return;
+        }
+        if let Some(picked) = self.pending.take() {
+            let (rect, window_picked) = picked.map_or((None, false), |(r, w)| (Some(r), w));
+            return self.finish(rect, window_picked, window);
         }
         let Some(drag) = self.drag.take() else { return };
         if !matches!(drag, Drag::New(_)) {
@@ -801,11 +874,13 @@ impl Render for Picker {
                     this.moving = false;
                 }
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| {
-                this.mouse_down(e, window);
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                this.mouse_down(e);
+                this.watch_pointer(cx);
                 cx.notify();
             }))
-            .on_mouse_down(MouseButton::Right, cx.listener(|this, _, window, _| this.finish(None, false, window)))
+            // On release, for the same reason as `pending`.
+            .on_mouse_up(MouseButton::Right, cx.listener(|this, _, window, _| this.finish(None, false, window)))
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, e: &MouseUpEvent, window, cx| this.mouse_up(e, window, cx)))
             .child(scene)

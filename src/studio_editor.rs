@@ -180,6 +180,10 @@ pub struct StudioEditor {
     playing: bool,
     /// Played frames no longer on screen, freed from the atlas on render.
     stale: Vec<Arc<RenderImage>>,
+    /// Small frames shown at once while dragging over the timeline.
+    scrub: Option<Arc<crate::scrub::Scrub>>,
+    /// The seek whose frame (quick or exact) is on screen.
+    shown: u64,
     playhead: f64,
     /// The selected zoom segment, or the selected cut; never both.
     selected: Option<usize>,
@@ -259,6 +263,7 @@ fn open_as(video: PathBuf, card: bool, cx: &mut App) {
                     let cursor_shapes = studio::cursor_shapes(&track, &cursor, &probe);
                     let playhead = project.trim.0;
                     let video_path = video.clone();
+                    let scrub = crate::scrub::Scrub::start(&video_path, probe.fps_value());
                     let cam_file = Some(studio::camera_file(&video_path)).filter(|f| f.exists());
                     if let Some(file) = cam_file {
                         let at = playhead + studio::camera_offset(&video_path);
@@ -314,6 +319,8 @@ fn open_as(video: PathBuf, card: bool, cx: &mut App) {
                         cam_frame: None,
                         playing: false,
                         stale: Vec::new(),
+                        scrub,
+                        shown: 0,
                         playhead,
                         selected: None,
                         cut: None,
@@ -427,6 +434,23 @@ impl StudioEditor {
         self.request.set(id);
         let (video, width, request, at) = (self.video.clone(), (self.stage.0 * 2.) as u32, self.request.clone(), self.playhead);
         let (cam_file, cam_offset) = (self.cam_file.clone(), self.cam_offset);
+        // The quick frame right away, unless a later one got there first.
+        if let Some(scrub) = self.scrub.clone() {
+            scrub.want(id);
+            cx.spawn(async move |this, cx| {
+                let Some(quick) = cx.background_executor().spawn(async move { scrub.frame(at, id) }).await else { return };
+                let _ = this.update(cx, |editor: &mut StudioEditor, cx| {
+                    if id > editor.shown && !editor.playing {
+                        editor.shown = id;
+                        if let Some(ImageSource::Render(old)) = editor.frame.replace(ImageSource::Render(quick)) {
+                            editor.stale.push(old);
+                        }
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_millis(40)).await;
             if request.get() != id {
@@ -445,6 +469,7 @@ impl StudioEditor {
             }
             if request.get() == id && frame.is_some() {
                 let _ = this.update(cx, |editor, cx| {
+                    editor.shown = id;
                     if let Some(ImageSource::Render(old)) = std::mem::replace(&mut editor.frame, frame.map(ImageSource::from)) {
                         editor.stale.push(old);
                     }

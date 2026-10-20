@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
-    MouseButton, MouseDownEvent, ObjectFit, Stateful, hsla, Window, WindowHandle, div, ease_out_quint,
+    MouseButton, MouseDownEvent, MouseUpEvent, ObjectFit, Stateful, hsla, Window, WindowHandle, div, ease_out_quint,
     img, px, rgba,
 };
 use crate::ui::{Tooltip, prelude::*};
@@ -553,15 +553,20 @@ impl CardStack {
                 )
         });
 
-        // Double-click opens the editor (or the player).
+        // Double-click opens the editor (or the player), once the button is
+        // up: closing on the press hands the rest of the click to the window
+        // below, and a terminal there selects text onto the clipboard.
+        let press = cx.listener(move |this, e: &MouseDownEvent, _, _| {
+            if e.click_count != 2 {
+                this.swipe = Some((id, f32::from(e.position.x), 0.));
+            }
+        });
         let double_click = {
             let path = path.clone();
-            cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+            cx.listener(move |this, e: &MouseUpEvent, window, cx| {
                 if e.click_count == 2 {
                     this.remove(id, window, cx);
                     edit(path.clone(), cx);
-                } else {
-                    this.swipe = Some((id, f32::from(e.position.x), 0.));
                 }
             })
         };
@@ -583,7 +588,8 @@ impl CardStack {
             .child(edge())
             .child(self.region.mark())
             .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
-            .on_mouse_down(MouseButton::Left, double_click)
+            .on_mouse_down(MouseButton::Left, press)
+            .on_mouse_up(MouseButton::Left, double_click)
             // Drag the file out to a chat, browser or file manager.
             .on_drag(path, |_: &PathBuf, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(|path: &PathBuf, _, _| {

@@ -16,6 +16,7 @@ mod panel;
 mod pin;
 mod record;
 mod scroll;
+mod scrub;
 mod settings;
 mod storage;
 mod settings_view;

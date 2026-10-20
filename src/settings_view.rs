@@ -218,6 +218,8 @@ impl SettingsView {
             // editors' side panels.
             .border_r_1()
             .border_color(colors.border_variant)
+            // Under macOS's traffic lights.
+            .when(matches!(crate::platform::window_controls(), crate::platform::WindowControls::Left(_)), |d| d.pt(px(30.)))
             .child(
                 h_flex()
                     .mb_2()
@@ -260,15 +262,12 @@ impl SettingsView {
                 v_flex()
                     .px_2()
                     .pb_1()
-                    .gap_2()
                     .child(
                         h_flex()
                             .gap_1p5()
                             .child(Icon::new(IconName::Check).size(IconSize::XSmall).color(Color::Muted))
                             .child(Label::new(t("settings.changes_saved_right_away")).size(LabelSize::Small).color(Color::Muted)),
                     )
-                    // What it does, then the key, like the history's bar.
-                    .child(h_flex().gap_1p5().child(Label::new(t("common.close")).size(LabelSize::Small)).child(kit::keys("escape"))),
             )
     }
 
@@ -811,7 +810,9 @@ impl Render for SettingsView {
                                     .h_full()
                                     .relative()
                                     .child(div().id("body").size_full().overflow_y_scroll().track_scroll(&self.scroll).child(self.render_body(cx)))
-                                    .child(crate::ui::scrollbar(&self.scroll, &self.grab, cx)),
+                                    .child(crate::ui::scrollbar(&self.scroll, &self.grab, cx))
+                                    // The window's close button in the top right corner.
+                                    .children(kit::window_controls(true, cx).map(|c| h_flex().absolute().top_0().right_0().h(px(36.)).px_1().child(c))),
                             ),
                     ),
             )
