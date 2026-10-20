@@ -130,6 +130,9 @@ enum Drag {
 }
 
 pub struct StudioEditor {
+    /// Show the recording's card again on closing, unless an export
+    /// showed one.
+    card_on_close: bool,
     video: PathBuf,
     probe: Probe,
     track: Track,
@@ -204,6 +207,16 @@ pub struct StudioEditor {
 }
 
 pub fn open(video: PathBuf, cx: &mut App) {
+    open_as(video, false, cx);
+}
+
+/// Opened from a recording's card: closing without exporting brings the
+/// card back (an export shows its own).
+pub fn open_from_card(video: PathBuf, cx: &mut App) {
+    open_as(video, true, cx);
+}
+
+fn open_as(video: PathBuf, card: bool, cx: &mut App) {
     let hold = kit::hold(cx);
     cx.spawn(async move |cx| {
         let _hold = hold;
@@ -258,7 +271,16 @@ pub fn open(video: PathBuf, cx: &mut App) {
                         })
                         .detach();
                     }
+                    if card {
+                        cx.on_release(|editor: &mut StudioEditor, cx: &mut App| {
+                            if editor.card_on_close && editor.video.exists() {
+                                crate::cards::show(editor.video.clone(), cx);
+                            }
+                        })
+                        .detach();
+                    }
                     StudioEditor {
+                        card_on_close: card,
                         video,
                         probe,
                         track,
@@ -890,6 +912,8 @@ impl StudioEditor {
     }
 
     fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The export's own card follows.
+        self.card_on_close = false;
         window.remove_window();
         // Opened from a `.kadr`: the project file keeps up with the edit.
         if let Some(target) = crate::bundle::origin_of(&self.video) {

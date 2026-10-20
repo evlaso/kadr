@@ -180,6 +180,12 @@ impl Frame {
         self.backdrop != Backdrop::None
     }
 
+    /// A background without padding: what's drawn stops at the picture's
+    /// edge instead of growing the result past it.
+    fn clips(&self) -> bool {
+        self.on() && self.padding <= 0.0005
+    }
+
     /// The whole output's size and the picture's offset in it, for a picture
     /// of `w`×`h` (any unit).
     fn layout(&self, w: f32, h: f32) -> ((f32, f32), (f32, f32)) {
@@ -598,14 +604,24 @@ enum Drag {
     Move { index: usize, last: P, moved: bool },
     Handle { index: usize, handle: usize },
     Scale { index: usize, handle: usize, orig: Shape },
-    Crop { start: P },
+    Crop { start: P, grab: Grab },
     /// A box dragged over the empty canvas with the select tool: the shapes
     /// it touches get marked.
     Marquee { start: P, now: P },
     /// A crop's knob (corners, then edge middles) dragged, or the crop
     /// moved whole (`handle` None) from `from`.
-    CropEdit { handle: Option<usize>, orig: (f32, f32, f32, f32), from: P },
+    CropEdit { handle: Option<usize>, orig: (f32, f32, f32, f32), from: P, grab: Grab },
     Slider(Knob),
+}
+
+/// Where a crop drag started: the pointer on screen, the canvas scale then,
+/// and the picture point under it. The crop follows the pointer's travel at
+/// that scale, so it moves evenly whatever the room round it does.
+#[derive(Clone, Copy)]
+struct Grab {
+    at: (f32, f32),
+    scale: f32,
+    point: P,
 }
 
 enum Export {
@@ -643,7 +659,16 @@ const CROP_SNAP: f32 = 8.;
 
 pub struct Editor {
     path: PathBuf,
+    /// Show the file's card again on closing, unless a save showed one.
+    card_on_close: bool,
     image: Arc<Image>,
+    /// The picture as shown, its edge pixels repeated round it: drawn
+    /// scaled, GPUI blends a texture's outer texels with what lies past
+    /// them, a grey rim at the right and bottom; with the rim repeated and
+    /// only the picture painted, there's none. Until it's decoded, `image`.
+    picture: Option<Arc<gpui::RenderImage>>,
+    /// Pictures replaced by a turn, to free from the window's atlas.
+    stale_pictures: Vec<Arc<gpui::RenderImage>>,
     px: (u32, u32),
     /// Decoded picture as shown (turned as `shown` says), for pixelation and
     /// the final render.
@@ -771,6 +796,16 @@ pub struct Editor {
 
 /// Open a screenshot for annotation, or a `.kadr` project made here.
 pub fn open(path: PathBuf, cx: &mut App) {
+    open_as(path, false, cx);
+}
+
+/// Opened from a capture's card: closing without saving brings the card
+/// back (saving shows one for the result anyway).
+pub fn open_from_card(path: PathBuf, cx: &mut App) {
+    open_as(path, true, cx);
+}
+
+fn open_as(path: PathBuf, card: bool, cx: &mut App) {
     // A project file: its drawing on its picture; saving writes the result
     // next to it and the project again.
     let (path, bytes, mut restored, bundle) = if crate::bundle::is_bundle(&path) {
@@ -836,6 +871,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
                 let _ = this.update(cx, |editor: &mut Editor, cx| {
                     editor.original = decoded.clone();
                     editor.source = decoded;
+                    editor.set_picture();
                     // A reopened drawing may be on a turned picture.
                     editor.sync_view(cx);
                     editor.refresh_blurred(cx);
@@ -858,8 +894,19 @@ pub fn open(path: PathBuf, cx: &mut App) {
             };
             let reopened = frame.is_some();
             let frame = frame.unwrap_or_else(Frame::last);
+            if card {
+                cx.on_release(|editor: &mut Editor, cx: &mut App| {
+                    if editor.card_on_close && editor.path.exists() {
+                        cards::show(editor.path.clone(), cx);
+                    }
+                })
+                .detach();
+            }
             let mut editor = Editor {
                 path,
+                card_on_close: card,
+                picture: None,
+                stale_pictures: Vec::new(),
                 image,
                 px: (w, h),
                 source: None,
@@ -939,6 +986,23 @@ pub fn open(path: PathBuf, cx: &mut App) {
 }
 
 impl Editor {
+    /// The shown picture from `source`, padded with `PICTURE_PAD` repeated
+    /// edge pixels (see `picture`).
+    fn set_picture(&mut self) {
+        let Some(src) = self.source.clone() else { return };
+        let (w, h) = src.dimensions();
+        let n = PICTURE_PAD;
+        // GPUI's sprites are BGRA.
+        let padded = RgbaImage::from_fn(w + 2 * n, h + 2 * n, |x, y| {
+            let [r, g, b, a] = src.get_pixel(x.saturating_sub(n).min(w - 1), y.saturating_sub(n).min(h - 1)).0;
+            image::Rgba([b, g, r, a])
+        });
+        let picture = Arc::new(gpui::RenderImage::new([image::Frame::new(padded)]));
+        if let Some(old) = self.picture.replace(picture) {
+            self.stale_pictures.push(old);
+        }
+    }
+
     /// Screen pixels per image pixel.
     fn scale(&self) -> f32 {
         self.disp.0 / self.px.0 as f32
@@ -1031,6 +1095,7 @@ impl Editor {
         }
         self.image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
         self.source = Some(Arc::new(turned));
+        self.set_picture();
         self.shown = view;
         self.refresh_blurred(cx);
         self.edges = None;
@@ -1190,14 +1255,14 @@ impl Editor {
     fn drag_crop(&mut self, p: P, ctrl: bool) {
         let ratio = self.crop_ratio();
         let lines = self.snap_lines(ctrl);
-        let m = self.laid_margin();
+        let m = work_margin_at(self.px, MAX_REACH);
         let area = (-m, -m, self.px.0 as f32 + m, self.px.1 as f32 + m);
         let r = match self.drag {
-            Some(Drag::Crop { start }) => {
+            Some(Drag::Crop { start, .. }) => {
                 let p = if ratio.is_none() { (crop::snap(p.0, &lines.xs, lines.reach), crop::snap(p.1, &lines.ys, lines.reach)) } else { p };
                 rect(start, ratio.map_or(p, |k| crop::keep_ratio(start, p, k)))
             }
-            Some(Drag::CropEdit { handle, orig, from }) => crop::edit(orig, handle, p, from, ratio, area, &lines),
+            Some(Drag::CropEdit { handle, orig, from, .. }) => crop::edit(orig, handle, p, from, ratio, area, &lines),
             _ => return,
         };
         self.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
@@ -1288,7 +1353,7 @@ impl Editor {
     /// What Save produces, in image pixels: the crop, or the picture and
     /// everything drawn around it.
     fn extent(&self) -> (f32, f32, f32, f32) {
-        extent(&self.doc, self.px)
+        extent(&self.doc, self.px, !self.frame.clips())
     }
 
     fn current_color(&self) -> Hsla {
@@ -1421,12 +1486,14 @@ impl Editor {
                 let handle = self.crop_handle_at(p);
                 let inside = p.0 > orig.0 && p.0 < orig.2 && p.1 > orig.1 && p.1 < orig.3;
                 if handle.is_some() || inside {
-                    self.drag = Some(Drag::CropEdit { handle, orig, from: p });
+                    let grab = Grab { at: (f32::from(e.position.x), f32::from(e.position.y)), scale: self.scale(), point: p };
+                    self.drag = Some(Drag::CropEdit { handle, orig, from: p, grab });
                     return cx.notify();
                 }
             }
             self.doc.crop = Some((p, p));
-            self.drag = Some(Drag::Crop { start: p });
+            let grab = Grab { at: (f32::from(e.position.x), f32::from(e.position.y)), scale: self.scale(), point: p };
+            self.drag = Some(Drag::Crop { start: p, grab });
             return cx.notify();
         }
         self.marked.clear();
@@ -1531,6 +1598,17 @@ impl Editor {
         if let Some(Drag::Slider(knob)) = self.drag {
             return self.slide(knob, f32::from(e.position.x), cx);
         }
+        if let Some(Drag::Crop { grab, .. } | Drag::CropEdit { grab, .. }) = &self.drag {
+            let g = *grab;
+            let m = work_margin_at(self.px, MAX_REACH);
+            let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
+            let p = (
+                (g.point.0 + (x - g.at.0) / g.scale).clamp(-m, self.px.0 as f32 + m),
+                (g.point.1 + (y - g.at.1) / g.scale).clamp(-m, self.px.1 as f32 + m),
+            );
+            self.drag_crop(p, e.modifiers.control);
+            return cx.notify();
+        }
         let Some(p) = self.to_image(e.position, true) else { return };
         match &mut self.drag {
             Some(Drag::Move { index, last, moved }) => {
@@ -1547,7 +1625,7 @@ impl Editor {
                 let (index, handle) = (*index, *handle);
                 self.doc.shapes[index].scale_from(orig, handle, p);
             }
-            Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => self.drag_crop(p, e.modifiers.control),
+            Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => {}
             Some(Drag::Marquee { now, .. }) => *now = p,
             Some(Drag::Slider(_)) => {}
             Some(Drag::Draw) => {
@@ -1967,6 +2045,10 @@ impl Editor {
             Export::Save => (self.path.clone(), false),
             Export::Copy => (self.path.clone(), true),
         };
+        // A save shows the result's card itself.
+        if !copy {
+            self.card_on_close = false;
+        }
         let base = self.base.clone();
         let bundle = self.bundle.clone();
         window.remove_window();
@@ -3189,7 +3271,18 @@ impl Editor {
             Kind::Blur(_, Some(patch)) => {
                 let (l, t, r, b) = rect(shape.a, shape.b);
                 let (l, t, r, b) = (l.max(0.).floor(), t.max(0.).floor(), r.min(pw).ceil(), b.min(ph).ceil());
-                Some(img(patch.clone()).absolute().left(px(l * s)).top(px(t * s)).w(px((r - l) * s)).h(px((b - t) * s)).object_fit(ObjectFit::Fill))
+                // The patch comes padded (`hide_png`); the area clips it.
+                let pad = PATCH_PAD as f32 * s;
+                Some(
+                    div()
+                        .absolute()
+                        .left(px(l * s))
+                        .top(px(t * s))
+                        .w(px((r - l) * s))
+                        .h(px((b - t) * s))
+                        .overflow_hidden()
+                        .child(img(patch.clone()).absolute().left(px(-pad)).top(px(-pad)).w(px((r - l) * s + 2. * pad)).h(px((b - t) * s + 2. * pad)).object_fit(ObjectFit::Fill)),
+                )
             }
             _ => None,
         });
@@ -3398,7 +3491,23 @@ impl Editor {
                     inset: false,
                 }])
             })
-            .child(img(self.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(radius)))
+            .child(match self.picture.clone() {
+                // The padded picture, painted past the bounds by its rim so
+                // only the picture itself shows, rounded.
+                Some(picture) => {
+                    let rim = PICTURE_PAD as f32 * s;
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            let outer = Bounds::new(point(bounds.origin.x - px(rim), bounds.origin.y - px(rim)), gpui::size(bounds.size.width + px(2. * rim), bounds.size.height + px(2. * rim)));
+                            let _ = window.paint_image(bounds, outer, px(radius).into(), 0., picture.clone(), 0, false);
+                        },
+                    )
+                    .size_full()
+                    .into_any_element()
+                }
+                None => img(self.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(radius)).into_any_element(),
+            })
             .children(blurs)
             // A hairline edge, so a dark screenshot doesn't melt into the
             // dark stage around it.
@@ -3460,9 +3569,19 @@ impl Editor {
             .children(backdrop)
             .children(fill)
             .child(picture)
-            .children(pictures)
-            .child(strokes)
-            .children(labels)
+            .map(|d| {
+                // What's drawn, laid out over the whole canvas; on a
+                // background without padding, cut at the picture's edge
+                // (the crop's, if any), as Save cuts it.
+                let canvas_size = (self.disp.0 + 2. * off, self.disp.1 + 2. * off);
+                let drawn = div().absolute().w(px(canvas_size.0)).h(px(canvas_size.1)).children(pictures).child(strokes).children(labels);
+                if self.frame.clips() && self.cropping.is_none() {
+                    let (x, y) = (el * s + off, et * s + off);
+                    d.child(div().absolute().left(px(x)).top(px(y)).w(px((er - el) * s)).h(px((eb - et) * s)).overflow_hidden().child(drawn.left(px(-x)).top(px(-y))))
+                } else {
+                    d.child(drawn.left_0().top_0())
+                }
+            })
             .child(overlay)
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.mouse_down(e, cx)))
     }
@@ -3470,6 +3589,9 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        for old in self.stale_pictures.drain(..) {
+            let _ = window.drop_image(old);
+        }
         self.fit_window();
         // The next screenshot starts with this background.
         let frame = self.frame.to_json();
@@ -3782,13 +3904,14 @@ fn opaque_bounds(img: &RgbaImage) -> Option<crop::Rect> {
 }
 
 /// What the result covers, in image pixels (whole, within the work area):
-/// the crop, or else the picture and everything drawn around it.
-fn extent(doc: &Doc, size: (u32, u32)) -> (f32, f32, f32, f32) {
+/// the crop, or else the picture and, with `grow`, everything drawn round it.
+fn extent(doc: &Doc, size: (u32, u32), grow: bool) -> (f32, f32, f32, f32) {
     let (w, h) = (size.0 as f32, size.1 as f32);
     // A crop may reach as far as the crop mode lets it.
     let m = work_margin_at(size, MAX_REACH);
     let (l, t, r, b) = match doc.crop {
         Some((a, b)) => rect(a, b),
+        None if !grow => (0., 0., w, h),
         None => doc.shapes.iter().map(Shape::bounds).fold((0f32, 0f32, w, h), |e, s| (e.0.min(s.0), e.1.min(s.1), e.2.max(s.2), e.3.max(s.3))),
     };
     let (l, t) = (l.round().clamp(-m, w + m), t.round().clamp(-m, h + m));
@@ -3800,7 +3923,7 @@ fn extent(doc: &Doc, size: (u32, u32)) -> (f32, f32, f32, f32) {
 fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
     // The picture on a transparent canvas the size of the result, and the
     // shapes moved along with it.
-    let (l, t, r, b) = extent(doc, src.dimensions());
+    let (l, t, r, b) = extent(doc, src.dimensions(), !frame.clips());
     let (ew, eh) = ((r - l) as u32, (b - t) as u32);
     let canvas = match doc.fill {
         Some(fill) => {
@@ -4212,11 +4335,23 @@ pub(crate) fn metrics(size: f32) -> Metrics {
 
 /// The hidden a–b area of `src` as PNG bytes, for the canvas.
 fn hide_png(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<Vec<u8>> {
+    // Its edge pixels repeated round it: drawn scaled, GPUI blends a
+    // texture's outer texels with clear black, and the patch would show a
+    // grey rim; the canvas clips the repeat off instead.
     let patch = hide(src, a, b, how, size)?;
+    let (w, h) = patch.dimensions();
+    let n = PATCH_PAD;
+    let patch = RgbaImage::from_fn(w + 2 * n, h + 2 * n, |x, y| *patch.get_pixel(x.saturating_sub(n).min(w - 1), y.saturating_sub(n).min(h - 1)));
     let mut png = Vec::new();
     patch.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
     Some(png)
 }
+
+/// The repeated rim round the shown picture, in pixels.
+const PICTURE_PAD: u32 = 2;
+
+/// The repeated rim round a hidden area's patch on screen, in pixels.
+const PATCH_PAD: u32 = 2;
 
 /// The a–b area of `src` pixelated or blurred, placed at the area's top
 /// left corner clamped to the picture, as strong as `size` says (see
@@ -4486,6 +4621,18 @@ pub(crate) fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size:
 mod tests {
     use super::*;
 
+    /// Blurring a plain area leaves it plain: no darker rim where the blur
+    /// ran out of picture.
+    #[test]
+    fn blur_has_no_rim() {
+        let src = RgbaImage::from_pixel(400, 300, image::Rgba([255, 255, 255, 255]));
+        for (a, b) in [((100., 100.), (300., 250.)), ((0., 0.), (400., 300.))] {
+            let patch = hide(&src, a, b, Hide::Blur, 1.).unwrap();
+            let darkest = patch.pixels().map(|p| p.0[0].min(p.0[3])).min().unwrap();
+            assert!(darkest >= 250, "darkest {darkest} for {a:?}-{b:?}");
+        }
+    }
+
     /// A window shot's shadow is cut off back to the window, corners and all.
     #[test]
     fn window_inside_its_shadow() {
@@ -4570,6 +4717,21 @@ mod tests {
         let ((_, _), (left, top)) = frame.layout(217., 100.);
         let p = framed.get_pixel(left as u32 + 210, top as u32 + 50).0;
         assert!(p[0] > 150 && p[1] < 120, "red line on the backdrop: {p:?}");
+    }
+
+    /// On a background without padding, a stroke past the picture is cut
+    /// at its edge instead of growing the result.
+    #[test]
+    fn no_padding_cuts_the_drawing() {
+        let src = RgbaImage::from_pixel(200, 100, image::Rgba([200, 200, 200, 255]));
+        let doc = Doc { shapes: doc_line(), ..Doc::default() };
+        let frame = Frame { backdrop: Backdrop::Gradient(0), padding: 0., ..Frame::default() };
+        let out = image::load_from_memory(&compose(&src, &doc, &frame).unwrap()).unwrap().to_rgba8();
+        assert_eq!(out.dimensions(), (200, 100));
+        // With padding, it still grows.
+        let frame = Frame { padding: 0.1, ..frame };
+        let out = image::load_from_memory(&compose(&src, &doc, &frame).unwrap()).unwrap().to_rgba8();
+        assert!(out.width() > frame.layout(200., 100.).0 .0 as u32);
     }
 
     fn doc_line() -> Vec<Shape> {

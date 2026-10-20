@@ -158,10 +158,10 @@ pub fn after_capture(path: PathBuf, kind: Capture, cx: &mut App) {
                 pin::open(path.clone(), cx);
             }
             if after.edit {
-                editor::open(path, cx);
+                editor::open_from_card(path, cx);
             }
         }
-        Capture::Recording if after.edit => studio_editor::open(path, cx),
+        Capture::Recording if after.edit => studio_editor::open_from_card(path, cx),
         Capture::Recording => {}
     }
 }
@@ -285,6 +285,14 @@ fn add(card: Card, cx: &mut App) {
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
             let card = slot.take().expect("card");
+            // The same file's card already showing (back from the editor, or
+            // saved over): it takes the new picture in its place.
+            if !card.path.as_os_str().is_empty()
+                && let Some(shown) = stack.cards.iter_mut().find(|c| c.path == card.path)
+            {
+                *shown = Card { id: shown.id, ..card };
+                return cx.notify();
+            }
             stack.cards.push(card);
             if stack.cards.len() > stack.settings.max_cards {
                 stack.cards.remove(0);
@@ -451,7 +459,7 @@ impl CardStack {
                     .tip(Tooltip::text(if has_track { t("card.zooms_on_clicks_background_clicks") } else { t("card.background_padding_zooms_by_hand") }))
                     .on_click(act(|this, path, id, window, cx| {
                         this.remove(id, window, cx);
-                        studio_editor::open(path.to_owned(), cx);
+                        studio_editor::open_from_card(path.to_owned(), cx);
                     })),
             )
         } else {
@@ -808,7 +816,7 @@ fn edit(path: PathBuf, cx: &mut App) {
     if is_video(&path) {
         return util::open_file(&path);
     }
-    editor::open(path, cx);
+    editor::open_from_card(path, cx);
 }
 
 fn is_gif(path: &Path) -> bool {
