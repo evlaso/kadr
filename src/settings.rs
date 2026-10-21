@@ -103,7 +103,7 @@ impl Default for Settings {
         Settings {
             screenshot_dir: None,
             after_shot: After { card: true, copy: true, save: true, edit: false, pin: false },
-            after_video: After { card: true, copy: false, save: true, edit: false, pin: false },
+            after_video: After { card: true, copy: true, save: true, edit: false, pin: false },
             name_template: crate::storage::DEFAULT_NAME.into(),
             window_shadow: true,
             logical_size: true,

@@ -78,6 +78,12 @@ impl Running {
     /// The job is over: its card turns into the result's (or goes away),
     /// or the toast closes and the result gets a card of its own.
     pub fn finish(self, result: Option<std::path::PathBuf>, cx: &mut AsyncApp) {
+        // A finished export, trim or GIF is copied like a fresh recording.
+        if let Some(out) = &result
+            && crate::settings::Settings::load().after_video.copy
+        {
+            util::copy_file(out);
+        }
         if let Some(w) = self.window {
             let _ = w.update(cx, |_, window, _| window.remove_window());
         }
