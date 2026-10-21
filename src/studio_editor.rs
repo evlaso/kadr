@@ -72,6 +72,7 @@ enum Knob {
     CursorSize,
     CamSize,
     CamRound,
+    Volume,
     TimelineZoom,
     Zoom,
 }
@@ -548,6 +549,25 @@ impl StudioEditor {
         self.play_from(start, window, cx);
     }
 
+    /// Sound from `start`, keeping what `select` keeps (see `play_from`).
+    fn play_sound(&mut self, start: f64, select: &str) {
+        let mut filters = vec![format!("aselect='{select}',asetpts=N/SR/TB")];
+        filters.extend(self.project.audio_filters());
+        self.sound = (self.probe.audio && self.project.audio).then(|| Sound::play(&self.video, start, &filters.join(","))).flatten();
+    }
+
+    /// While playing, the sound starts over from the playhead with the new
+    /// volume and channels.
+    fn sound_changed(&mut self) {
+        if !self.playing {
+            return;
+        }
+        let start = self.playhead;
+        let kept: Vec<(f64, f64)> = self.project.kept().into_iter().filter(|&(_, b)| b > start + 0.01).map(|(a, b)| (a.max(start) - start, b - start)).collect();
+        self.sound = None;
+        self.play_sound(start, &studio::keep_expr(&kept));
+    }
+
     fn play_from(&mut self, start: f64, window: &mut Window, cx: &mut Context<Self>) {
         let id = self.request.get() + 1;
         self.request.set(id);
@@ -559,7 +579,8 @@ impl StudioEditor {
         let kept: Vec<(f64, f64)> = self.project.kept().into_iter().filter(|&(_, b)| b > start + 0.01).map(|(a, b)| (a.max(start) - start, b - start)).collect();
         let select = studio::keep_expr(&kept);
         // The previous one stops as this one starts.
-        self.sound = (self.probe.audio && self.project.audio).then(|| Sound::play(&self.video, start, &select)).flatten();
+        self.sound = None;
+        self.play_sound(start, &select);
 
         let even = |v: f64| ((v / 2.).round() * 2.).max(2.) as usize;
         let w = even((self.stage.0 as f64 * 1.5).min(self.probe.w));
@@ -742,6 +763,9 @@ impl StudioEditor {
     /// A drag on the timeline ended: cuts dragged onto each other join.
     fn drag_done(&mut self, cx: &mut Context<Self>) {
         let drag = self.drag.take();
+        if let Some(Drag::Slider(Knob::Volume)) = drag {
+            self.sound_changed();
+        }
         // A click on the cut row, not a drag: no cut, the playhead goes there.
         if let Some(Drag::CutNew { index, anchor }) = drag
             && self.project.cuts.get(index).is_some_and(|&(a, b)| b - a < 0.05)
@@ -944,6 +968,8 @@ impl StudioEditor {
             Knob::CursorSize => self.project.cursor_size = 0.5 + v * (MAX_CURSOR - 0.5),
             Knob::CamSize => self.project.cam_size = studio::MIN_CAM + v * (studio::MAX_CAM - studio::MIN_CAM),
             Knob::CamRound => self.project.cam_round = v,
+            // In steps of 5%, like the label shows it.
+            Knob::Volume => self.project.volume = (v * studio::MAX_VOLUME * 20.).round() / 20.,
             Knob::TimelineZoom => {
                 self.timeline_zoom = 1. + v as f32 * (MAX_TIMELINE_ZOOM - 1.);
                 return cx.notify();
@@ -2051,10 +2077,20 @@ impl StudioEditor {
         let gif = self.project.format == Format::Gif;
         let mut items = vec![self.switch_row("audio", t("studio.audio"), Some(t("studio.microphone_system_as_recorded")), self.project.audio && !gif, !gif, Rc::new(|this, on, cx| {
             this.project.audio = on;
+            this.sound_changed();
             this.changed(cx);
         }), cx)];
         if gif {
             items.push(Self::note(t("studio.gifs_have_no_audio")));
+        } else if self.project.audio {
+            let volume = self.project.volume;
+            items.push(self.labeled_slider(t("studio.volume"), Knob::Volume, volume / studio::MAX_VOLUME, format!("{}%", (volume * 100.).round()), 4, cx));
+            let channels = vec![t("studio.stereo").into(), t("studio.mono").into()];
+            items.push(Self::group(t("studio.channels"), vec![self.choices("audio-channels", channels, self.project.mono as usize, Rc::new(|this, i, cx| {
+                this.project.mono = i == 1;
+                this.sound_changed();
+                this.changed(cx);
+            }), cx)]));
         }
         items
     }
@@ -2526,23 +2562,23 @@ impl crate::presets::HasPresets for StudioEditor {
 struct Sound(std::process::Child);
 
 impl Sound {
-    /// From `start`, keeping what `select` keeps (on a clock starting at 0
+    /// From `start` through the audio filters `af` (on a clock starting at 0
     /// there), so it runs through cuts along with the picture. Where ffmpeg
-    /// can't play sound itself, ffplay plays it all.
-    fn play(video: &std::path::Path, start: f64, select: &str) -> Option<Sound> {
+    /// can't play sound itself, ffplay does.
+    fn play(video: &std::path::Path, start: f64, af: &str) -> Option<Sound> {
         let ss = format!("{start:.3}");
         let mut cmd = match crate::platform::sound_output() {
             Some(output) => {
                 let mut cmd = std::process::Command::new("ffmpeg");
                 cmd.args(["-nostdin", "-loglevel", "quiet", "-ss", &ss, "-i"])
                     .arg(video)
-                    .args(["-vn", "-af", &format!("aselect='{select}',asetpts=N/SR/TB")])
+                    .args(["-vn", "-af", af])
                     .args(output);
                 cmd
             }
             None => {
                 let mut cmd = std::process::Command::new("ffplay");
-                cmd.args(["-nodisp", "-autoexit", "-vn", "-loglevel", "quiet", "-ss", &ss, "-i"]).arg(video);
+                cmd.args(["-nodisp", "-autoexit", "-vn", "-loglevel", "quiet", "-ss", &ss, "-af", af, "-i"]).arg(video);
                 cmd
             }
         };

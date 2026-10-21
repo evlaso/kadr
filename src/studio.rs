@@ -63,6 +63,8 @@ pub const ASPECT_ORDER: [&[usize]; 2] = [&[0, 2, 5, 6, 7, 1], &[3, 8, 4]];
 pub const RESOLUTIONS: [(&str, u32); 4] = [("720p", 720), ("1080p", 1080), ("1440p", 1440), ("4K", 2160)];
 pub const FRAME_RATES: [(&str, Option<u32>); 4] = [("studio.as_recorded", None), ("30", Some(30)), ("60", Some(60)), ("120", Some(120))];
 /// Shortcut pill text height as a share of the output's short side.
+/// The loudest the audio goes, as a multiple of the recording's.
+pub const MAX_VOLUME: f64 = 2.0;
 pub const KEY_SIZES: [(&str, f64); 3] = [("S", 0.015), ("M", 0.02), ("L", 0.026)];
 /// Slider ranges: padding (share of the short side), corner radius (pixels
 /// at 1080p) and shadow strength.
@@ -119,6 +121,10 @@ pub struct Project {
     pub trim: (f64, f64),
     pub cuts: Vec<(f64, f64)>,
     pub audio: bool,
+    /// Loudness, 1 = as recorded.
+    pub volume: f64,
+    /// Both channels mixed into one, heard the same on either side.
+    pub mono: bool,
     /// Indexes into `ASPECTS`, `RESOLUTIONS` and `FRAME_RATES`.
     pub aspect: usize,
     pub resolution: usize,
@@ -234,10 +240,15 @@ impl Project {
         PathBuf::from(p)
     }
 
-    /// The saved edit, or segments placed on the recording's clicks.
+    /// The saved edit, or segments placed on the clicks of a studio recording.
     pub fn load(video: &Path, track: &Track, p: &Probe) -> Project {
         let saved = std::fs::read_to_string(Self::path(video)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
         let mut d = Project::auto(track, p);
+        // Recorded with studio mode off: start untouched, zooms only on request.
+        if !track.cursor_hidden {
+            d.segments.clear();
+            d.clicks = false;
+        }
         if let Some(look) = camera_look(video) {
             (d.cam_anchor, d.cam_size, d.cam_round) = (look.anchor, look.size.clamp(MIN_CAM, MAX_CAM), look.round);
         }
@@ -285,6 +296,8 @@ impl Project {
             trim,
             cuts: if v["cuts"].is_array() { v["cuts"].as_array().into_iter().flatten().filter_map(pair).collect() } else { d.cuts.clone() },
             audio: v["audio"].as_bool().unwrap_or(d.audio),
+            volume: v["volume"].as_f64().unwrap_or(d.volume).clamp(0.0, MAX_VOLUME),
+            mono: v["mono"].as_bool().unwrap_or(d.mono),
             aspect: index("aspect", d.aspect, ASPECTS.len()),
             resolution: index("resolution", d.resolution, RESOLUTIONS.len()),
             frame_rate: index("frame_rate", d.frame_rate, FRAME_RATES.len()),
@@ -335,6 +348,8 @@ impl Project {
             "trim": [self.trim.0, self.trim.1],
             "cuts": self.cuts.iter().map(|c| [c.0, c.1]).collect::<Vec<_>>(),
             "audio": self.audio,
+            "volume": self.volume,
+            "mono": self.mono,
             "aspect": self.aspect,
             "resolution": self.resolution,
             "frame_rate": self.frame_rate,
@@ -372,6 +387,19 @@ impl Project {
     }
 
     /// Keep this look for the next recording.
+    /// ffmpeg audio filters for the volume and channels; empty as recorded.
+    pub fn audio_filters(&self) -> Vec<String> {
+        let mut f = Vec::new();
+        if self.mono {
+            // Stereo first, so a mono recording has both channels to mix.
+            f.push("aformat=channel_layouts=stereo,pan=mono|c0=0.5*c0+0.5*c1".to_owned());
+        }
+        if (self.volume - 1.0).abs() > 0.001 {
+            f.push(format!("volume={:.2}", self.volume));
+        }
+        f
+    }
+
     pub fn remember_look(&self) {
         let _ = std::fs::create_dir_all(util::config_dir());
         let _ = std::fs::write(last_look_path(), self.look().to_string());
@@ -427,6 +455,8 @@ impl Project {
             trim: (0., p.duration),
             cuts: Vec::new(),
             audio: true,
+            volume: 1.0,
+            mono: false,
             aspect: 0,
             // 1440p for big recordings, like before.
             resolution: if p.h >= 1400.0 || p.w >= 2500.0 { 2 } else { 1 },
@@ -1171,8 +1201,8 @@ fn motion_ranges(camera: &Camera, cursor: Option<&[(f64, f64, f64)]>, p: &Probe)
 
 /// What a preset or the remembered look carries: everything but the edit
 /// (zooms, trim, cuts).
-const LOOK_KEYS: [&str; 25] = [
-    "backdrop", "wallpaper", "pad", "radius", "shadow", "clicks", "keys", "keys_top", "keys_size", "audio", "aspect", "resolution",
+const LOOK_KEYS: [&str; 27] = [
+    "backdrop", "wallpaper", "pad", "radius", "shadow", "clicks", "keys", "keys_top", "keys_size", "audio", "volume", "mono", "aspect", "resolution",
     "frame_rate", "format", "quality", "cursor", "cursor_style", "cursor_size", "cursor_smooth", "cursor_motion", "motion_blur", "cam", "cam_round",
     "cam_size", "cam_anchor",
 ];
@@ -1304,7 +1334,11 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         tail += &format!(",select='{}',setpts=N/({})/TB", keep_expr(&kept), out_fps);
     }
     let audio = p.audio && project.audio && project.format == Format::Mp4;
-    let audio_graph = if audio && !whole { format!(";[0:a]aselect='{}',asetpts=N/SR/TB[aout]", keep_expr(&kept)) } else { String::new() };
+    let mut audio_filters = project.audio_filters();
+    if !whole {
+        audio_filters.insert(0, format!("aselect='{}',asetpts=N/SR/TB", keep_expr(&kept)));
+    }
+    let audio_graph = if audio && !audio_filters.is_empty() { format!(";[0:a]{}[aout]", audio_filters.join(",")) } else { String::new() };
 
     // libplacebo asserts on some fractional crop sizes, so the crop is kept to
     // whole, even pixels.
@@ -1387,7 +1421,7 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         }
         argv.extend::<[&OsStr; 2]>(["-/filter_complex".as_ref(), script.as_os_str()]);
         argv.extend::<[&OsStr; 2]>(["-map".as_ref(), "[out]".as_ref()]);
-        match (audio, whole) {
+        match (audio, audio_graph.is_empty()) {
             (false, _) => argv.push("-an".as_ref()),
             (true, true) => argv.extend(["-map", "0:a?", "-c:a", "aac", "-b:a", "160k"].map(OsStr::new)),
             (true, false) => argv.extend(["-map", "[aout]", "-c:a", "aac", "-b:a", "160k"].map(OsStr::new)),
