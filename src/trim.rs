@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
-    App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource, KeyDownEvent,
+    Animation, AnimationExt, App, BorderStyle, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, RenderImage, Window, canvas, div, img,
     point, px, rgba, size,
 };
@@ -22,8 +22,8 @@ use crate::kit::{self, LayerSpec};
 use crate::{job, track, util};
 use crate::i18n::t;
 
-const THUMBS: usize = 14;
-const STRIP_HEIGHT: f32 = 56.;
+pub(crate) const THUMBS: usize = 14;
+pub(crate) const STRIP_HEIGHT: f32 = 56.;
 const GIF_WIDTHS: [u32; 3] = [480, 720, 960];
 const GIF_FPS: [u32; 3] = [10, 15, 24];
 /// Shortest selection, in seconds.
@@ -42,6 +42,9 @@ pub struct Trimmer {
     disp: (f32, f32),
     thumbs: Vec<Arc<Image>>,
     preview: Option<ImageSource>,
+    /// The quick frame a sharp one fades in over, and that fade's number.
+    under: Option<ImageSource>,
+    fade: usize,
     preview_at: f64,
     /// Small frames shown at once while a handle is dragged.
     scrub: Option<Arc<crate::scrub::Scrub>>,
@@ -92,22 +95,41 @@ fn temp_dir() -> PathBuf {
     dir
 }
 
-fn load_png(path: &Path) -> Option<Arc<Image>> {
+fn load(path: &Path, format: ImageFormat) -> Option<Arc<Image>> {
     let bytes = std::fs::read(path).ok()?;
     let _ = std::fs::remove_file(path);
-    Some(Arc::new(Image::from_bytes(ImageFormat::Png, bytes)))
+    Some(Arc::new(Image::from_bytes(format, bytes)))
 }
+
+/// The frame at `t`, decoded off the main thread, so it shows the moment it
+/// is swapped in (a plain image would be blank until GPUI decodes it).
+pub(crate) async fn sharp_frame(path: &Path, t: f64, width: u32, tag: u64, executor: gpui::BackgroundExecutor) -> Option<Arc<gpui::RenderImage>> {
+    let image = frame(path, t, width, tag).await?;
+    executor
+        .spawn(async move {
+            let mut rgba = image::load_from_memory(image.bytes()).ok()?.to_rgba8();
+            for px in rgba.pixels_mut() {
+                px.0.swap(0, 2);
+            }
+            Some(Arc::new(gpui::RenderImage::new([image::Frame::new(rgba)])))
+        })
+        .await
+}
+
+/// How long a sharp frame takes to fade in over the quick one.
+pub(crate) const FADE: Duration = Duration::from_millis(160);
 
 /// One frame at `t` seconds, `width` pixels wide.
 pub(crate) async fn frame(path: &Path, t: f64, width: u32, tag: u64) -> Option<Arc<Image>> {
-    let out = temp_dir().join(format!("frame-{tag}.png"));
+    // BMP: nothing to compress or unpack, a third quicker than PNG.
+    let out = temp_dir().join(format!("frame-{tag}.bmp"));
     let (ss, scale) = (format!("{t:.3}"), format!("scale={width}:-2"));
     let (ok, _) = util::output::<&OsStr>(&[
         "ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-ss".as_ref(), ss.as_ref(),
         "-i".as_ref(), path.as_os_str(), "-frames:v".as_ref(), "1".as_ref(), "-vf".as_ref(), scale.as_ref(), out.as_os_str(),
     ])
     .await?;
-    if let Some(image) = ok.then(|| load_png(&out)).flatten() {
+    if let Some(image) = ok.then(|| load(&out, ImageFormat::Bmp)).flatten() {
         return Some(image);
     }
     // At or past the end there's no frame to seek to: take the last one.
@@ -116,20 +138,54 @@ pub(crate) async fn frame(path: &Path, t: f64, width: u32, tag: u64) -> Option<A
         "-i".as_ref(), path.as_os_str(), "-update".as_ref(), "1".as_ref(), "-vf".as_ref(), scale.as_ref(), out.as_os_str(),
     ])
     .await?;
-    ok.then(|| load_png(&out)).flatten()
+    ok.then(|| load(&out, ImageFormat::Bmp)).flatten()
 }
 
-/// Evenly spaced thumbnails for the filmstrip.
+/// Evenly spaced thumbnails for the filmstrip: the keyframe at or before
+/// each point, all fetched at once. Decoding the whole video for exact
+/// frames took seconds (a minute of CPU for a long 4K recording); the
+/// studio swaps in exact ones from its scrub frames once those are made.
 pub(crate) async fn filmstrip(path: &Path, duration: f64) -> Vec<Arc<Image>> {
     let dir = temp_dir();
-    let pattern = dir.join("thumb-%02d.png");
-    let filter = format!("fps={}/{:.3},scale=-2:{}", THUMBS, duration.max(0.1), (STRIP_HEIGHT * 2.) as u32);
-    let _ = util::output::<&OsStr>(&[
-        "ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-i".as_ref(), path.as_os_str(),
-        "-vf".as_ref(), filter.as_ref(), "-frames:v".as_ref(), "14".as_ref(), pattern.as_os_str(),
-    ])
-    .await;
-    (1..=THUMBS).filter_map(|i| load_png(&dir.join(format!("thumb-{i:02}.png")))).collect()
+    let scale = format!("scale=-2:{}", (STRIP_HEIGHT * 2.) as u32);
+    let shots = (0..THUMBS).map(|i| {
+        let out = dir.join(format!("thumb-{:02}.png", i + 1));
+        let ss = format!("{:.3}", (i as f64 + 0.5) * duration.max(0.1) / THUMBS as f64);
+        let scale = scale.clone();
+        async move {
+            let _ = util::output::<&OsStr>(&[
+                "ffmpeg".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-noaccurate_seek".as_ref(),
+                "-skip_frame".as_ref(), "nokey".as_ref(), "-ss".as_ref(), ss.as_ref(), "-i".as_ref(), path.as_os_str(),
+                "-frames:v".as_ref(), "1".as_ref(), "-vf".as_ref(), scale.as_ref(), out.as_os_str(),
+            ])
+            .await;
+            load(&out, ImageFormat::Png)
+        }
+    });
+    futures::future::join_all(shots).await.into_iter().flatten().collect()
+}
+
+/// Swap a filmstrip's keyframes for exact frames once the scrub frames
+/// are made.
+pub(crate) fn exact_strip<T: 'static>(scrub: Option<Arc<crate::scrub::Scrub>>, n: usize, field: fn(&mut T) -> &mut Vec<Arc<Image>>, cx: &mut gpui::Context<T>) {
+    let Some(scrub) = scrub.filter(|_| n > 0) else { return };
+    cx.spawn(async move |this, cx| {
+        let strip = loop {
+            let scrub = scrub.clone();
+            if let Some(strip) = cx.background_executor().spawn(async move { scrub.strip(n, (STRIP_HEIGHT * 2.) as u32) }).await {
+                break strip;
+            }
+            if this.upgrade().is_none() {
+                return;
+            }
+            cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
+        };
+        let _ = this.update(cx, |view, cx| {
+            *field(view) = strip.into_iter().map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png))).collect();
+            cx.notify();
+        });
+    })
+    .detach();
 }
 
 /// Open the trimming modal for a recording.
@@ -143,8 +199,7 @@ pub fn open(path: PathBuf, cx: &mut App) {
         let Some(mon) = util::focused_monitor() else { return };
         let fit = (mon.w as f32 * 0.7 / p.w as f32).min(mon.h as f32 * 0.5 / p.h as f32);
         let disp = ((p.w as f32 * fit).max(560.), p.h as f32 * fit);
-        let thumbs = filmstrip(&path, p.duration).await;
-        let preview = frame(&path, 0., (disp.0 * 2.) as u32, 0).await;
+        let (thumbs, preview) = futures::join!(filmstrip(&path, p.duration), sharp_frame(&path, 0., (disp.0 * 2.) as u32, 0, cx.background_executor().clone()));
         let _ = cx.update(|cx| {
             let spec = LayerSpec {
                 namespace: "kadr-trim",
@@ -160,13 +215,16 @@ pub fn open(path: PathBuf, cx: &mut App) {
                     let focus = cx.focus_handle();
                     window.focus(&focus, cx);
                     let scrub = crate::scrub::Scrub::start(&path, p.fps);
+                    exact_strip(scrub.clone(), thumbs.len(), |trimmer: &mut Trimmer| &mut trimmer.thumbs, cx);
                     Trimmer {
                         path,
                         duration: p.duration,
                         video: (p.w, p.h),
                         disp,
                         thumbs,
-                        preview: preview.map(ImageSource::from),
+                        preview: preview.map(ImageSource::Render),
+                        under: None,
+                        fade: 0,
                         preview_at: 0.,
                         scrub,
                         shown: 0,
@@ -200,6 +258,21 @@ impl Trimmer {
         }
     }
 
+    /// Put a frame up. `fade`: a sharp frame fading in over the quick one,
+    /// rather than snapping.
+    fn show(&mut self, frame: ImageSource, fade: bool) {
+        if let Some(ImageSource::Render(old)) = self.under.take() {
+            self.stale.push(old);
+        }
+        let old = self.preview.replace(frame);
+        if fade && old.is_some() {
+            self.under = old;
+            self.fade += 1;
+        } else if let Some(ImageSource::Render(old)) = old {
+            self.stale.push(old);
+        }
+    }
+
     /// Show the frame at `t`, keeping only the newest request.
     fn show_frame(&mut self, t: f64, cx: &mut Context<Self>) {
         self.preview_at = t;
@@ -214,9 +287,7 @@ impl Trimmer {
                 let _ = this.update(cx, |trim: &mut Trimmer, cx| {
                     if id > trim.shown {
                         trim.shown = id;
-                        if let Some(ImageSource::Render(old)) = trim.preview.replace(ImageSource::Render(quick)) {
-                            trim.stale.push(old);
-                        }
+                        trim.show(ImageSource::Render(quick), false);
                         cx.notify();
                     }
                 });
@@ -229,14 +300,12 @@ impl Trimmer {
             if request.get() != id {
                 return;
             }
-            let image = frame(&path, t, width, id).await;
+            let image = sharp_frame(&path, t, width, id, cx.background_executor().clone()).await;
             if request.get() == id {
                 let _ = this.update(cx, |trim, cx| {
                     if let Some(image) = image {
                         trim.shown = id;
-                        if let Some(ImageSource::Render(old)) = trim.preview.replace(ImageSource::from(image)) {
-                            trim.stale.push(old);
-                        }
+                        trim.show(ImageSource::Render(image), true);
                     }
                     cx.notify();
                 });
@@ -445,7 +514,16 @@ impl Render for Trimmer {
             .overflow_hidden()
             .bg(gpui::black())
             .shadow(kit::shadow())
-            .children(self.preview.clone().map(|p| img(p).size_full().object_fit(ObjectFit::Contain)))
+            .children(self.under.clone().map(|p| img(p).absolute().inset_0().size_full().object_fit(ObjectFit::Contain)))
+            .children(self.preview.clone().map(|p| {
+                let image = img(p).absolute().inset_0().size_full().object_fit(ObjectFit::Contain);
+                // Over the quick frame, the sharp one fades in.
+                if self.under.is_some() {
+                    image.with_animation(("fade", self.fade), Animation::new(FADE), |el, d| el.opacity(d)).into_any_element()
+                } else {
+                    image.into_any_element()
+                }
+            }))
             .child(
                 div()
                     .absolute()

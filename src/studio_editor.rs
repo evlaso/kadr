@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
+    Animation, AnimationExt, App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, RenderImage,
     Window, canvas, div, img, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
@@ -171,6 +171,9 @@ pub struct StudioEditor {
     timeline_scroll: gpui::ScrollHandle,
     timeline_grab: Rc<Cell<Option<f32>>>,
     frame: Option<ImageSource>,
+    /// The quick frame a sharp one fades in over, and that fade's number.
+    under: Option<ImageSource>,
+    fade: usize,
     /// The camera recorded alongside (studio mode), where its frame 0 sits
     /// on the recording's clock, and its frame at the playhead.
     cam_file: Option<PathBuf>,
@@ -178,6 +181,8 @@ pub struct StudioEditor {
     cam_frame: Option<ImageSource>,
     /// Playing inside the editor; any seek stops it.
     playing: bool,
+    /// The recording's sound while playing.
+    sound: Option<Sound>,
     /// Played frames no longer on screen, freed from the atlas on render.
     stale: Vec<Arc<RenderImage>>,
     /// Small frames shown at once while dragging over the timeline.
@@ -248,8 +253,13 @@ fn open_as(video: PathBuf, card: bool, cx: &mut App) {
         let chrome_h = 2. * STAGE_PAD + 260. * kit::SCALE + 80.;
         let stage_w = (mon.w as f32 - 80. - 2. * STAGE_PAD - SIDEBAR).min((mon.h as f32 - chrome_h) * 16. / 9.).min(mon.w as f32 * 0.5);
         let stage = (stage_w, stage_w * 9. / 16.);
-        let thumbs = trim::filmstrip(&video, probe.duration).await;
-        let frame = trim::frame(&video, project.trim.0, (stage.0 * 2.) as u32, 0).await;
+        // All at once: the window waits for the slowest, not their sum.
+        // The first frame comes while the window is made (setting up the
+        // graphics takes as long); the filmstrip follows.
+        let frame = cx.background_executor().spawn({
+            let (video, at, width, executor) = (video.clone(), project.trim.0, (stage.0 * 2.) as u32, cx.background_executor().clone());
+            async move { trim::sharp_frame(&video, at, width, 0, executor).await }
+        });
         let walls = wallpaper_thumbs().await;
         let _ = cx.update(|cx| {
             let size = (stage.0 + 2. * STAGE_PAD + SIDEBAR, stage.1 + chrome_h - 80.);
@@ -264,6 +274,31 @@ fn open_as(video: PathBuf, card: bool, cx: &mut App) {
                     let playhead = project.trim.0;
                     let video_path = video.clone();
                     let scrub = crate::scrub::Scrub::start(&video_path, probe.fps_value());
+                    cx.spawn(async move |this, cx| {
+                        let frame = frame.await;
+                        let _ = this.update(cx, |editor: &mut StudioEditor, cx| {
+                            // Unless a seek got there first.
+                            if editor.frame.is_none() {
+                                editor.frame = frame.map(ImageSource::Render);
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .detach();
+                    let duration = probe.duration;
+                    let strip_of = video_path.clone();
+                    cx.spawn(async move |this, cx| {
+                        let thumbs = trim::filmstrip(&strip_of, duration).await;
+                        let _ = this.update(cx, |editor: &mut StudioEditor, cx| {
+                            // Unless the exact frames came first.
+                            if editor.thumbs.is_empty() {
+                                editor.thumbs = thumbs;
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .detach();
+                    trim::exact_strip(scrub.clone(), trim::THUMBS, |editor: &mut StudioEditor| &mut editor.thumbs, cx);
                     let cam_file = Some(studio::camera_file(&video_path)).filter(|f| f.exists());
                     if let Some(file) = cam_file {
                         let at = playhead + studio::camera_offset(&video_path);
@@ -294,7 +329,7 @@ fn open_as(video: PathBuf, card: bool, cx: &mut App) {
                         cursor,
                         cursor_motion,
                         cursor_shapes,
-                        thumbs,
+                        thumbs: Vec::new(),
                         walls,
                         presets: crate::presets::Presets::new(studio::presets(), studio::save_presets, cx),
                         side_scroll: gpui::ScrollHandle::new(),
@@ -313,11 +348,14 @@ fn open_as(video: PathBuf, card: bool, cx: &mut App) {
                             .collect(),
                         timeline_scroll: gpui::ScrollHandle::new(),
                         timeline_grab: Default::default(),
-                        frame: frame.map(ImageSource::from),
+                        frame: None,
+                        under: None,
+                        fade: 0,
                         cam_file: Some(studio::camera_file(&video_path)).filter(|f| f.exists()),
                         cam_offset: studio::camera_offset(&video_path),
                         cam_frame: None,
                         playing: false,
+                        sound: None,
                         stale: Vec::new(),
                         scrub,
                         shown: 0,
@@ -427,8 +465,24 @@ impl StudioEditor {
         w * (t / self.probe.duration.max(0.001)) as f32
     }
 
+    /// Put a frame on the stage. `fade`: a sharp frame fading in over the
+    /// quick one, rather than snapping.
+    fn show(&mut self, frame: ImageSource, fade: bool) {
+        if let Some(ImageSource::Render(old)) = self.under.take() {
+            self.stale.push(old);
+        }
+        let old = self.frame.replace(frame);
+        if fade && old.is_some() {
+            self.under = old;
+            self.fade += 1;
+        } else if let Some(ImageSource::Render(old)) = old {
+            self.stale.push(old);
+        }
+    }
+
     fn seek(&mut self, t: f64, cx: &mut Context<Self>) {
         self.playing = false;
+        self.sound = None;
         self.playhead = t.clamp(0., self.probe.duration);
         let id = self.request.get() + 1;
         self.request.set(id);
@@ -442,9 +496,7 @@ impl StudioEditor {
                 let _ = this.update(cx, |editor: &mut StudioEditor, cx| {
                     if id > editor.shown && !editor.playing {
                         editor.shown = id;
-                        if let Some(ImageSource::Render(old)) = editor.frame.replace(ImageSource::Render(quick)) {
-                            editor.stale.push(old);
-                        }
+                        editor.show(ImageSource::Render(quick), false);
                         cx.notify();
                     }
                 });
@@ -456,7 +508,7 @@ impl StudioEditor {
             if request.get() != id {
                 return;
             }
-            let frame = trim::frame(&video, at, width, id).await;
+            let frame = trim::sharp_frame(&video, at, width, id, cx.background_executor().clone()).await;
             let cam = match &cam_file {
                 Some(file) => trim::frame(file, at + cam_offset, 480, id).await,
                 None => None,
@@ -470,8 +522,8 @@ impl StudioEditor {
             if request.get() == id && frame.is_some() {
                 let _ = this.update(cx, |editor, cx| {
                     editor.shown = id;
-                    if let Some(ImageSource::Render(old)) = std::mem::replace(&mut editor.frame, frame.map(ImageSource::from)) {
-                        editor.stale.push(old);
+                    if let Some(frame) = frame {
+                        editor.show(ImageSource::Render(frame), true);
                     }
                     cx.notify();
                 });
@@ -498,6 +550,8 @@ impl StudioEditor {
         self.request.set(id);
         self.playing = true;
         self.playhead = start;
+        // The previous one stops as this one starts.
+        self.sound = (self.probe.audio && self.project.audio).then(|| Sound::play(&self.video, start)).flatten();
 
         let even = |v: f64| ((v / 2.).round() * 2.).max(2.) as usize;
         let w = even((self.stage.0 as f64 * 1.5).min(self.probe.w));
@@ -591,9 +645,7 @@ impl StudioEditor {
                             false
                         }
                         Some(_) => {
-                            if let Some(ImageSource::Render(old)) = editor.frame.replace(ImageSource::Render(shown)) {
-                                editor.stale.push(old);
-                            }
+                            editor.show(ImageSource::Render(shown), false);
                             if let Some(cam) = cam.clone()
                                 && let Some(ImageSource::Render(old)) = editor.cam_frame.replace(ImageSource::Render(cam))
                             {
@@ -1044,11 +1096,13 @@ impl StudioEditor {
             })
             .bg(gpui::black())
             .when(self.placing, |d| d.cursor(CursorStyle::Crosshair))
-            .children(self.frame.clone().map(|frame| {
+            .children(self.under.clone().into_iter().chain(self.frame.clone()).enumerate().map(|(i, frame)| {
+                // Over the quick frame, the sharp one fades in.
+                let fading = i == 1;
                 // The zoomed frame is bigger than the box, and GPUI clips
                 // children to rectangles; painting it ourselves rounds the
                 // visible part to the box's corners.
-                canvas(
+                let painted = canvas(
                     |_, _, _| {},
                     move |bounds, _, window, cx| {
                         let data = match frame.clone() {
@@ -1063,7 +1117,13 @@ impl StudioEditor {
                 )
                 .absolute()
                 .inset_0()
-                .size_full()
+                .size_full();
+                let layer = div().absolute().inset_0().child(painted);
+                if fading {
+                    layer.with_animation(("fade", self.fade), Animation::new(trim::FADE), |el, d| el.opacity(d)).into_any_element()
+                } else {
+                    layer.into_any_element()
+                }
             }))
             .children(self.render_cursor(left, top, scale))
             .child(tracker)
@@ -2410,5 +2470,30 @@ impl crate::presets::HasPresets for StudioEditor {
     fn apply_look(&mut self, look: &serde_json::Value, cx: &mut Context<Self>) {
         self.project = self.project.with_look(look, &self.probe);
         self.changed(cx);
+    }
+}
+
+
+/// The recording's sound from a point on, through ffplay; stops when dropped.
+struct Sound(std::process::Child);
+
+impl Sound {
+    fn play(video: &std::path::Path, start: f64) -> Option<Sound> {
+        std::process::Command::new("ffplay")
+            .args(["-nodisp", "-autoexit", "-vn", "-loglevel", "quiet", "-ss", &format!("{start:.3}"), "-i"])
+            .arg(video)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()
+            .map(Sound)
+    }
+}
+
+impl Drop for Sound {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }

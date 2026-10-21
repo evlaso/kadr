@@ -129,6 +129,24 @@ pub fn move_cursor(x: f64, y: f64) {
     let _ = hypr(&format!("eval hl.dispatch(hl.dsp.cursor.move({{x = {}, y = {}}}))", x.round(), y.round()));
 }
 
+/// Whether ffmpeg can decode on an NVIDIA card (NVDEC through CUDA).
+pub fn cuda() -> bool {
+    Path::new("/proc/driver/nvidia/version").exists()
+}
+
+/// Run a background job (ffmpeg making preview frames) below everything
+/// the user is doing.
+pub fn low_priority(cmd: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: nice(2) only, between fork and exec.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::nice(10);
+            Ok(())
+        });
+    }
+}
+
 pub fn cursor_pos() -> Option<(f64, f64)> {
     let out = hypr("cursorpos")?;
     let (x, y) = out.trim().split_once(',')?;

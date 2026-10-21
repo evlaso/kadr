@@ -7,14 +7,14 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use gpui::{
-    AnyElement, App, BackgroundExecutor, ClickEvent, Context, FocusHandle, Image, ImageFormat, KeyDownEvent, MouseButton,
-    MouseDownEvent, ObjectFit, ScrollHandle, SharedString, Window, div, img, px,
+    AnyElement, App, ClickEvent, Context, FocusHandle, KeyDownEvent, MouseButton,
+    MouseDownEvent, ObjectFit, RenderImage, ScrollHandle, SharedString, Window, div, img, px,
     rgba,
 };
 use crate::ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit;
-use crate::{editor, pin, trim, util};
+use crate::{editor, pin, util};
 use crate::i18n::t;
 
 /// Tiles are at least this wide; a row stretches them to fill the window.
@@ -24,6 +24,8 @@ const THUMB_ASPECT: f32 = 1.6;
 /// Stored thumbnail size, sharp up to twice the smallest tile.
 const THUMB: (u32, u32) = (420, 262);
 const GAP: f32 = 12.;
+/// The grid's padding above and below.
+const PAD_Y: f32 = 12.;
 /// Thumbnail corners, and how far in its round buttons and badge sit:
 /// circles of radius `RADIUS - INSET` stay concentric with the corner.
 const RADIUS: f32 = 14.;
@@ -72,8 +74,8 @@ struct Item {
 /// recording's length.
 #[derive(Clone)]
 struct Thumb {
-    sharp: Arc<Image>,
-    blurred: Arc<Image>,
+    sharp: Arc<RenderImage>,
+    blurred: Arc<RenderImage>,
     seconds: Option<f64>,
 }
 
@@ -96,6 +98,13 @@ pub struct History {
     focus: FocusHandle,
     /// The search's caret is showing: it blinks while the window is active.
     caret: bool,
+    /// The tile under the pointer: only it carries the hover buttons.
+    hovered: Option<usize>,
+    /// Only the rows in view are laid out, between two spacers: the
+    /// distance from one row to the next, measured, and which child of the
+    /// grid was the first tile last time.
+    pitch: Option<f32>,
+    first_child: usize,
 }
 
 /// Files kadr and Omarchy save, newest first.
@@ -130,19 +139,19 @@ fn scan() -> Vec<Item> {
     items
 }
 
-/// Cached, card-shaped thumbnail; generated (image crate or ffmpeg) on a miss.
-async fn thumbnail(path: PathBuf, modified: SystemTime, video: bool, executor: BackgroundExecutor) -> Option<Thumb> {
+/// Cached, card-shaped thumbnail; generated (image crate or ffmpeg) on a
+/// miss. Decoded here, off the main thread, so a tile shows it at once.
+async fn thumbnail(path: PathBuf, modified: SystemTime, video: bool) -> Option<Thumb> {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut h);
     modified.hash(&mut h);
     THUMB.hash(&mut h);
     let dir = util::cache_dir().join("thumbs");
-    let (sharp_file, blur_file, length_file) = (dir.join(format!("{:016x}.png", h.finish())), dir.join(format!("{:016x}-blur.png", h.finish())), dir.join(format!("{:016x}.len", h.finish())));
-    let image = |bytes: Vec<u8>| Arc::new(Image::from_bytes(ImageFormat::Png, bytes));
-    if let (Ok(sharp), Ok(blurred)) = (std::fs::read(&sharp_file), std::fs::read(&blur_file)) {
+    let (sharp_file, length_file) = (dir.join(format!("{:016x}.png", h.finish())), dir.join(format!("{:016x}.len", h.finish())));
+    if let Some(sharp) = std::fs::read(&sharp_file).ok().and_then(|b| image::load_from_memory(&b).ok()) {
         let seconds = std::fs::read_to_string(&length_file).ok().and_then(|s| s.trim().parse().ok());
-        return Some(Thumb { sharp: image(sharp), blurred: image(blurred), seconds });
+        return Some(Thumb::new(sharp, seconds));
     }
     let _ = std::fs::create_dir_all(&dir);
     let (source, seconds) = if video {
@@ -163,26 +172,31 @@ async fn thumbnail(path: PathBuf, modified: SystemTime, video: bool, executor: B
     } else {
         (std::fs::read(&path).ok()?, None)
     };
-    let (sharp, blurred) = executor.spawn(async move { crop_thumb(&source) }).await?;
-    let _ = std::fs::write(&sharp_file, &sharp);
-    let _ = std::fs::write(&blur_file, &blurred);
+    let sharp = image::load_from_memory(&source).ok()?.resize_to_fill(THUMB.0, THUMB.1, image::imageops::FilterType::Triangle);
+    let mut png = Vec::new();
+    if sharp.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_ok() {
+        let _ = std::fs::write(&sharp_file, &png);
+    }
     if let Some(s) = seconds {
         let _ = std::fs::write(&length_file, s.to_string());
     }
-    Some(Thumb { sharp: image(sharp), blurred: image(blurred), seconds })
+    Some(Thumb::new(sharp, seconds))
 }
 
-/// The tile picture and its blurred copy, as PNGs.
-fn crop_thumb(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    let src = image::load_from_memory(bytes).ok()?;
-    let thumb = src.resize_to_fill(THUMB.0, THUMB.1, image::imageops::FilterType::Triangle);
-    let blurred = thumb.resize_exact(THUMB.0 / 4, THUMB.1 / 4, image::imageops::FilterType::Triangle).blur(3.).resize_exact(THUMB.0, THUMB.1, image::imageops::FilterType::Triangle);
-    let encode = |img: &image::DynamicImage| {
-        let mut png = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-        Some(png)
-    };
-    Some((encode(&thumb)?, encode(&blurred)?))
+impl Thumb {
+    /// The blurred copy stays small: the GPU stretches it over the tile,
+    /// which a blur hides.
+    fn new(sharp: image::DynamicImage, seconds: Option<f64>) -> Thumb {
+        let blurred = sharp.resize_exact(THUMB.0 / 4, THUMB.1 / 4, image::imageops::FilterType::Triangle).blur(3.);
+        let render = |img: image::DynamicImage| {
+            let mut img = img.to_rgba8();
+            for px in img.pixels_mut() {
+                px.0.swap(0, 2);
+            }
+            Arc::new(RenderImage::new([image::Frame::new(img)]))
+        };
+        Thumb { sharp: render(sharp), blurred: render(blurred), seconds }
+    }
 }
 
 /// How long the search's caret stays on and off.
@@ -200,16 +214,44 @@ pub fn open(cx: &mut App) {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
             let items = scan();
-            // Thumbnails stream in, newest first.
-            let jobs: Vec<(usize, PathBuf, SystemTime, bool)> = items.iter().enumerate().map(|(i, it)| (i, it.path.clone(), it.modified, it.kind != Kind::Shot)).collect();
-            cx.spawn(async move |this, cx| {
-                for (i, path, modified, video) in jobs {
-                    let thumb = thumbnail(path.clone(), modified, video, cx.background_executor().clone()).await;
-                    let alive = this.update(cx, |history: &mut History, cx| {
-                        if let Some(item) = history.items.get_mut(i).filter(|it| it.path == path) {
-                            item.thumb = thumb;
-                            cx.notify();
+            // Thumbnails stream in, newest first, made by a few workers at
+            // once and handed to the window in batches.
+            let jobs: std::collections::VecDeque<(usize, PathBuf, SystemTime, bool)> =
+                items.iter().enumerate().map(|(i, it)| (i, it.path.clone(), it.modified, it.kind != Kind::Shot)).collect();
+            let jobs = Arc::new(std::sync::Mutex::new(jobs));
+            let (tx, mut rx) = futures::channel::mpsc::unbounded();
+            let workers = std::thread::available_parallelism().map_or(2, |n| n.get() / 2).clamp(1, 6);
+            for _ in 0..workers {
+                let (jobs, tx) = (jobs.clone(), tx.clone());
+                cx.background_executor()
+                    .spawn(async move {
+                        loop {
+                            let Some((i, path, modified, video)) = jobs.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else { break };
+                            let thumb = thumbnail(path.clone(), modified, video).await;
+                            // The window is gone.
+                            if tx.unbounded_send((i, path, thumb)).is_err() {
+                                break;
+                            }
                         }
+                    })
+                    .detach();
+            }
+            drop(tx);
+            cx.spawn(async move |this, cx| {
+                use futures::StreamExt;
+                while let Some(first) = rx.next().await {
+                    cx.background_executor().timer(std::time::Duration::from_millis(40)).await;
+                    let mut batch = vec![first];
+                    while let Ok(more) = rx.try_recv() {
+                        batch.push(more);
+                    }
+                    let alive = this.update(cx, |history: &mut History, cx| {
+                        for (i, path, thumb) in batch {
+                            if let Some(item) = history.items.get_mut(i).filter(|it| it.path == path) {
+                                item.thumb = thumb;
+                            }
+                        }
+                        cx.notify();
                     });
                     if alive.is_err() {
                         break;
@@ -235,7 +277,7 @@ pub fn open(cx: &mut App) {
                 }
             })
             .detach();
-            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus, caret: true }
+            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus, caret: true, hovered: None, pitch: None, first_child: 0 }
         })
     });
 }
@@ -294,7 +336,15 @@ impl History {
         let count = self.visible().len();
         if count > 0 {
             self.selected = index.min(count - 1);
-            self.scroll.scroll_to_item(self.selected);
+            // The tile may not be laid out, so scroll by its row.
+            let pitch = self.row_pitch();
+            let top = PAD_Y + (self.selected / self.columns.max(1)) as f32 * pitch;
+            let bottom = top + pitch - GAP + 2. * PAD_Y;
+            let (scrolled, seen) = (-f32::from(self.scroll.offset().y), f32::from(self.scroll.bounds().size.height));
+            let to = if top - PAD_Y < scrolled { Some(top - PAD_Y) } else if bottom > scrolled + seen { Some(bottom - seen) } else { None };
+            if let Some(to) = to {
+                self.scroll.set_offset(gpui::point(px(0.), px(-to.max(0.))));
+            }
         }
     }
 
@@ -307,11 +357,12 @@ impl History {
                 window.remove_window();
                 editor::open(path, cx);
             }
-            (Kind::Video, true) => {
+            // Recordings open in the studio, like from their card.
+            (Kind::Video, _) => {
                 window.remove_window();
-                trim::open(path, cx);
+                crate::studio_editor::open(path, cx);
             }
-            _ => util::open_file(&path),
+            (Kind::Gif, _) => util::open_file(&path),
         }
     }
 
@@ -415,11 +466,15 @@ impl History {
         cx.notify();
     }
 
-    fn render_item(&self, index: usize, position: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn row_pitch(&self) -> f32 {
+        // Until measured: the ring, the line under it and the gap.
+        self.pitch.unwrap_or(self.item_width / THUMB_ASPECT + 10. + 24. + GAP)
+    }
+
+    fn render_item(&self, index: usize, position: usize, hover: bool, cx: &mut Context<Self>) -> AnyElement {
         let item = &self.items[index];
         let selected = if self.picked.is_empty() { position == self.selected } else { self.picked.contains(&index) };
         let colors = cx.theme().colors();
-        let group: SharedString = format!("item-{index}").into();
         let path = item.path.clone();
         let (width, height) = (self.item_width, self.item_width / THUMB_ASPECT);
         // Hover looks like the thumbnail card: the picture blurs, white
@@ -440,11 +495,9 @@ impl History {
             pill(div().id((id, index))).size(px(BUTTON)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tip(Tooltip::text(tip))
         };
         let wide = |id: &'static str, label: &'static str| pill(div().id((id, index))).h(px(28.)).px_3().child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)));
-        let overlay = div()
+        let overlay = hover.then(|| div()
             .absolute()
             .inset_0()
-            .opacity(0.)
-            .group_hover(group.clone(), |s| s.opacity(1.))
             .children(item.thumb.as_ref().map(|t| img(t.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
             .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x00000052)))
             .child(
@@ -460,7 +513,7 @@ impl History {
                     })))
                     .when(item.kind != Kind::Gif, |col| {
                         col.child(
-                            wide(if item.kind == Kind::Shot { "edit" } else { "trim" }, if item.kind == Kind::Shot { t("card.edit") } else { t("common.trim") })
+                            wide(if item.kind == Kind::Shot { "edit" } else { "studio" }, if item.kind == Kind::Shot { t("card.edit") } else { t("common.studio") })
                                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_item(index, true, window, cx))),
                         )
                     }),
@@ -476,7 +529,7 @@ impl History {
                     window.remove_window();
                     pin::open(path, cx);
                 }))))
-            });
+            }));
 
         // A recording's length (or "GIF") on a frosted pill.
         let badge = match item.kind {
@@ -511,7 +564,7 @@ impl History {
             // the window behind them.
             .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x0000001f)))
             .children(badge)
-            .child(overlay)
+            .children(overlay)
             // The hairline last, so the hover doesn't cover it.
             .child(div().absolute().inset_0().rounded(px(RADIUS)).border_1().border_color(colors.border));
         // The selected thumbnail gets an accent ring, like Finder's.
@@ -524,10 +577,17 @@ impl History {
         };
         v_flex()
             .id(("item", index))
-            .group(group)
             .w(px(width + 10.))
             .gap_0p5()
             .cursor_pointer()
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if *hovered {
+                    this.hovered = Some(index);
+                } else if this.hovered == Some(index) {
+                    this.hovered = None;
+                }
+                cx.notify();
+            }))
             .child(ring)
             .child({
                 let (day, time) = day_and_time(item.modified);
@@ -605,7 +665,25 @@ impl Render for History {
                 }
             });
 
-        let grid: Vec<AnyElement> = visible.iter().enumerate().map(|(pos, &i)| self.render_item(i, pos, cx)).collect();
+        // Only the rows in view, and one either side, are laid out; spacers
+        // stand in for the rest so the scrollbar stays true.
+        if let (Some(a), Some(b)) = (self.scroll.bounds_for_item(self.first_child), self.scroll.bounds_for_item(self.first_child + self.columns))
+            && b.top() > a.top()
+        {
+            self.pitch = Some(f32::from(b.top() - a.top()));
+        }
+        let pitch = self.row_pitch();
+        let columns = self.columns.max(1);
+        let total = visible.len().div_ceil(columns);
+        let scrolled = (-f32::from(self.scroll.offset().y) - PAD_Y).max(0.);
+        let seen = f32::from(self.scroll.bounds().size.height).max(f32::from(viewport.height));
+        let rows = ((scrolled / pitch).floor() as usize).saturating_sub(1).min(total)..(((scrolled + seen) / pitch).ceil() as usize + 1).min(total);
+        let spacer = |rows: usize| (rows > 0).then(|| div().w_full().h(px(rows as f32 * pitch - GAP)).into_any_element());
+        let hovered = self.hovered.filter(|_| window.is_window_hovered());
+        let mut grid: Vec<AnyElement> = spacer(rows.start).into_iter().collect();
+        self.first_child = grid.len();
+        grid.extend(visible[rows.start * columns..(rows.end * columns).min(visible.len())].iter().enumerate().map(|(k, &i)| self.render_item(i, rows.start * columns + k, hovered == Some(i), cx)));
+        grid.extend(spacer(total - rows.end));
         let empty = grid.is_empty();
         let body = div()
             .id("grid")
@@ -613,7 +691,7 @@ impl Render for History {
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .px_4()
-            .py_3()
+            .py(px(PAD_Y))
             .flex()
             .flex_wrap()
             .content_start()
@@ -672,7 +750,7 @@ impl Render for History {
                             .border_t_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(hint("enter", t("common.open")))
-                            .child(hint("e", t("history.editor_trim")))
+                            .child(hint("e", t("history.editor_studio")))
                             .child(hint("ctrl-c", t("common.copy")))
                             .child(hint("delete", t("history.delete_selected")))
                             .child(hint("p", t("history.pin")))

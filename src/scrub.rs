@@ -17,10 +17,12 @@ use crate::util;
 const WIDTH: u32 = 1280;
 
 pub struct Scrub {
+    video: PathBuf,
     dir: PathBuf,
     fps: f64,
-    /// ffmpeg while it's still writing frames.
-    child: Mutex<Option<Child>>,
+    /// ffmpeg while it's still writing frames, and whether it decodes on
+    /// the graphics card (falls back to the CPU if that fails).
+    child: Mutex<Option<(Child, bool)>>,
     /// The newest request, so a fast drag doesn't queue up stale decodes.
     latest: AtomicU64,
 }
@@ -40,32 +42,50 @@ impl Scrub {
         let dir = root.join(format!("{own}{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         std::fs::create_dir_all(&dir).ok()?;
         let fps = if fps.is_finite() { fps.clamp(1., 60.) } else { 60. };
-        let child = Command::new("ffmpeg")
-            .args(["-nostdin", "-loglevel", "error", "-i"])
-            .arg(video)
-            .args(["-an", "-vf", &format!("fps={fps},scale='min({WIDTH},iw)':-2"), "-q:v", "6", "-start_number", "0"])
-            .arg(dir.join("%06d.jpg"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok();
-        Some(Arc::new(Scrub { dir, fps, child: Mutex::new(child), latest: AtomicU64::new(0) }))
+        let gpu = crate::platform::cuda();
+        let child = spawn(video, &dir, fps, gpu).map(|c| (c, gpu));
+        Some(Arc::new(Scrub { video: video.to_owned(), dir, fps, child: Mutex::new(child), latest: AtomicU64::new(0) }))
     }
 
     fn path(&self, n: usize) -> PathBuf {
         self.dir.join(format!("{n:06}.jpg"))
     }
 
-    fn finished(&self) -> bool {
+    pub fn finished(&self) -> bool {
         let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
-        match child.as_mut().map(|c| c.try_wait()) {
-            Some(Ok(None)) => false,
+        match child.as_mut().map(|(c, gpu)| (c.try_wait(), *gpu)) {
+            Some((Ok(None), _)) => false,
+            // The card couldn't decode it: again on the CPU.
+            Some((Ok(Some(status)), true)) if !status.success() => {
+                let _ = std::fs::remove_dir_all(&self.dir);
+                let _ = std::fs::create_dir_all(&self.dir);
+                *child = spawn(&self.video, &self.dir, self.fps, false).map(|c| (c, false));
+                child.is_none()
+            }
             _ => {
                 *child = None;
                 true
             }
         }
+    }
+
+    /// `n` frames evenly spread over the video, `height` pixels tall, as
+    /// PNGs, once all are made: exact frames for the filmstrip.
+    pub fn strip(&self, n: usize, height: u32) -> Option<Vec<Vec<u8>>> {
+        if !self.finished() {
+            return None;
+        }
+        let made = std::fs::read_dir(&self.dir).ok()?.count();
+        (made > 0).then_some(())?;
+        (0..n)
+            .map(|i| {
+                let k = ((i as f64 + 0.5) * made as f64 / n as f64) as usize;
+                let small = image::open(self.path(k.min(made - 1))).ok()?.resize(u32::MAX, height, image::imageops::FilterType::Triangle);
+                let mut png = Vec::new();
+                small.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+                Some(png)
+            })
+            .collect()
     }
 
     /// Note request `id` as the newest; call before `frame`.
@@ -100,9 +120,32 @@ impl Scrub {
     }
 }
 
+/// ffmpeg writing the frames, at low priority so it never slows the rest.
+/// On an NVIDIA card it decodes and scales there, a quarter of the CPU.
+fn spawn(video: &Path, dir: &Path, fps: f64, gpu: bool) -> Option<Child> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-nostdin", "-loglevel", "error"]);
+    if gpu {
+        cmd.args(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]);
+    }
+    cmd.arg("-i").arg(video);
+    let filter = if gpu {
+        format!("fps={fps},scale_cuda=w='min({WIDTH},iw)':h=-2,hwdownload,format=nv12")
+    } else {
+        format!("fps={fps},scale='min({WIDTH},iw)':-2")
+    };
+    cmd.args(["-an", "-vf", &filter, "-q:v", "6", "-start_number", "0"])
+        .arg(dir.join("%06d.jpg"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    crate::platform::low_priority(&mut cmd);
+    cmd.spawn().ok()
+}
+
 impl Drop for Scrub {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some((mut child, _)) = self.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = child.kill();
             let _ = child.wait();
         }

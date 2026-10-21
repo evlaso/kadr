@@ -81,6 +81,12 @@ pub fn hypr(_request: &str) -> Option<String> {
 
 pub fn move_cursor(_x: f64, _y: f64) {}
 
+pub fn cuda() -> bool {
+    false
+}
+
+pub fn low_priority(_cmd: &mut std::process::Command) {}
+
 pub fn cursor_pos() -> Option<(f64, f64)> {
     None
 }
