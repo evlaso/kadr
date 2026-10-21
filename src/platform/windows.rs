@@ -85,6 +85,10 @@ pub fn cuda() -> bool {
     false
 }
 
+pub fn sound_output() -> Option<[&'static str; 3]> {
+    None
+}
+
 pub fn low_priority(_cmd: &mut std::process::Command) {}
 
 pub fn cursor_pos() -> Option<(f64, f64)> {

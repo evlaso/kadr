@@ -76,11 +76,16 @@ pub const AUDIO_BITRATE: f64 = 160_000.;
 /// The drawn cursor: the pointer's own shapes, a dot, or the shapes in
 /// inverted colours (white with a dark rim). Indexes are saved.
 pub const CURSOR_STYLES: [&str; 3] = ["common.arrow", "studio.dot", "studio.light_arrow"];
-/// Motion blur, like a camera shutter: the moving picture is rendered at
-/// `SUBFRAMES` times the frame rate while the camera or the cursor moves
-/// fast, and this many sub-frames are averaged into each frame (0 is off).
+/// Motion blur, like a camera shutter open this many quarters of the
+/// recording's frame time (0 is off): the picture is rendered at up to
+/// `SUBFRAMES` times the frame rate, and while the camera or the cursor moves
+/// fast the sub-frames that fall in the shutter are averaged.
 pub const MOTION_BLUR: [(&str, usize); 3] = [("studio.off", 0), ("studio.light", 2), ("studio.strong", 4)];
 const SUBFRAMES: usize = 4;
+/// Motion blur renders at most this many frames a second.
+const MAX_SUBFRAME_RATE: f64 = 240.;
+/// Exports go no higher: "as recorded" for a 240 Hz recording means 120.
+pub const MAX_EXPORT_FPS: f64 = 120.;
 pub const MAX_CURSOR: f64 = 3.;
 /// Drawn cursor height at size 1, in logical screen pixels.
 const CURSOR_BASE: f64 = 22.;
@@ -374,6 +379,12 @@ impl Project {
 
     /// Zoom on clicks: a stretch per burst of clicks, held while typing.
     pub fn auto(track: &Track, p: &Probe) -> Project {
+        // The look last used in the studio carries over.
+        let look = std::fs::read_to_string(last_look_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        Self::auto_with(track, p, look)
+    }
+
+    fn auto_with(track: &Track, p: &Probe, look: Option<serde_json::Value>) -> Project {
         let settings = Settings::load();
         let (rx, ry, rw, rh) = track.rect;
         let (sx, sy) = (p.w / rw.max(1.0), p.h / rh.max(1.0));
@@ -433,8 +444,7 @@ impl Project {
             cam_size: 0.26,
             cam_anchor: 4,
         };
-        // The look last used in the studio carries over.
-        let mut project = match std::fs::read_to_string(last_look_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
+        let mut project = match look {
             Some(look) => project.with_look(&look, p),
             None => project,
         };
@@ -491,7 +501,7 @@ impl Project {
 
     /// Output frame rate.
     pub fn fps(&self, p: &Probe) -> f64 {
-        FRAME_RATES[self.frame_rate.min(FRAME_RATES.len() - 1)].1.map_or_else(|| p.fps_value(), f64::from)
+        FRAME_RATES[self.frame_rate.min(FRAME_RATES.len() - 1)].1.map_or_else(|| p.fps_value().min(MAX_EXPORT_FPS), f64::from)
     }
 
     /// Target video bitrate of the export, bits per second.
@@ -525,6 +535,19 @@ impl Project {
     pub fn next_kept(&self, t: f64) -> Option<f64> {
         self.kept().into_iter().find(|&(_, b)| t < b - 0.02).map(|(a, _)| t.max(a))
     }
+}
+
+/// Where `played` seconds of playback land in the video, playing only the
+/// `kept` stretches in order; None past the last.
+pub fn played_to_source(kept: &[(f64, f64)], played: f64) -> Option<f64> {
+    let mut left = played;
+    for &(a, b) in kept {
+        if left < b - a {
+            return Some(a + left);
+        }
+        left -= b - a;
+    }
+    None
 }
 
 #[derive(Clone, Debug)]
@@ -1181,7 +1204,7 @@ pub fn save_presets(presets: &[(String, serde_json::Value)]) {
 }
 
 /// `select` expression keeping the given stretches.
-fn keep_expr(kept: &[(f64, f64)]) -> String {
+pub(crate) fn keep_expr(kept: &[(f64, f64)]) -> String {
     kept.iter().map(|(a, b)| format!("between(t,{a:.3},{b:.3})")).collect::<Vec<_>>().join("+")
 }
 
@@ -1198,6 +1221,10 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     }
     let whole = kept.len() == 1 && kept[0].0 <= 0.01 && kept[0].1 >= p.duration - 0.01;
     let length = project.kept_duration();
+    // Everything runs at the export's rate from the start (a 240 fps
+    // recording exported at 60 used to go through every step at 240), and
+    // cut pieces are dropped before the heavy steps, not after.
+    let rate = project.fps(&p);
 
     let tmp = util::runtime_dir().join(format!("kadr-studio-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
@@ -1221,42 +1248,60 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
     } else {
         None
     };
-    // Motion blur: the moving picture (not the still backdrop) is rendered
-    // at several times the frame rate, so the camera and the cursor take
-    // in-between positions; while they move fast those sub-frames are
-    // averaged, then the rate comes back down.
+    // Motion blur: the picture is rendered at several times the frame rate,
+    // so the camera and the cursor take in-between positions; while they
+    // move fast those sub-frames are averaged, then the rate comes back down.
     let shutter = MOTION_BLUR[project.motion_blur.min(MOTION_BLUR.len() - 1)].1;
-    let ranges = if shutter > 1 { motion_ranges(&camera, cursor.as_ref().map(|c| c.path.as_slice()), &p) } else { Vec::new() };
-    let supersample = (!ranges.is_empty()).then(|| format!("{}", p.fps_value() * SUBFRAMES as f64));
-    let blur = supersample.as_ref().map(|_| {
-        let weights = vec!["1"; shutter].join(" ");
-        // tmix can't be switched on and off in time (it would mix in frames
-        // from before the pause), so it always runs and its result is laid
-        // over the sharp picture only while things move.
+    let blur_rate = (rate * SUBFRAMES as f64).min(MAX_SUBFRAME_RATE).max(rate);
+    // Sub-frames in the shutter; under two (a 240 fps recording's shutter is
+    // a 960th of a second) there's nothing to blur.
+    let frames = (shutter as f64 * blur_rate / (SUBFRAMES as f64 * p.fps_value().max(1.))).round() as usize;
+    let ranges = if frames >= 2 { motion_ranges(&camera, cursor.as_ref().map(|c| c.path.as_slice()), &p) } else { Vec::new() };
+    // The rate everything before the blur runs at.
+    let work = if ranges.is_empty() { rate } else { blur_rate };
+    let wp = Probe { fps: format!("{work}"), ..p.clone() };
+    let out_fps = format!("{rate}");
+    let ranges_in: Vec<(f64, f64)> = ranges.iter().map(|&(a, b)| ((a - frames as f64 / work).max(0.), b)).collect();
+    let blur = (!ranges.is_empty()).then(|| {
+        let weights = vec!["1"; frames].join(" ");
+        // In YUV (a third of the work of RGBA), before the backdrop goes
+        // under at the export's rate. tmix can't be switched on and off in
+        // time (it would mix in frames from before the pause), so it always
+        // runs and its result is laid over the sharp picture only while
+        // things move.
         format!(
-            "[fg0]split[sub][mix];[sub]fps={rate}[sharp];[mix]tmix=frames={shutter}:weights='{weights}',fps={rate}[blurred];[sharp][blurred]overlay=0:0:enable='{}'[fg];",
+            "[fg0]split[sub][mix];[sub]fps={out_fps}[sharp];[mix]select='{}',tmix=frames={frames}:weights='{weights}',fps={out_fps}[blurred];[sharp][blurred]overlay=0:0:enable='{}'[fg];",
+            keep_expr(&ranges_in),
             keep_expr(&ranges),
-            rate = p.fps
         )
     });
+    // Sub-frames only where they're blurred (and just before, for the
+    // first average): elsewhere one in `ratio` goes on.
+    let ratio = work / rate;
+    let thin = (!ranges.is_empty() && (ratio - ratio.round()).abs() < 1e-6).then(|| format!("(not(mod(n,{}))+{})", ratio.round(), keep_expr(&ranges_in)));
+    let first = match (thin, whole) {
+        (None, true) => format!("fps={}", wp.fps),
+        (None, false) => format!("fps={},select='{}'", wp.fps, keep_expr(&kept)),
+        (Some(thin), true) => format!("fps={},select='{thin}'", wp.fps),
+        (Some(thin), false) => format!("fps={},select='{thin}*({})'", wp.fps, keep_expr(&kept)),
+    };
     let style = overlays::Style {
         clicks: project.clicks,
         keys: project.keys,
         keys_top: project.keys_top,
         keys_size: KEY_SIZES[project.keys_size.min(KEY_SIZES.len() - 1)].1,
         cursor,
-        supersample,
+        first,
     };
-    let overlays = overlays::build(&track, &p, &l, &tmp, &style).map_err(|e| e.to_string())?;
+    let overlays = overlays::build(&track, &wp, &l, &tmp, &style).map_err(|e| e.to_string())?;
 
     // Trim and cuts drop frames at the end and close the gaps; a fixed
     // export rate goes last.
+    // The backdrop runs on through the gaps (showing the last picture), so
+    // those frames go here and the rest close up.
     let mut tail = String::new();
     if !whole {
-        tail += &format!(",select='{}',setpts=N/({})/TB", keep_expr(&kept), p.fps);
-    }
-    if let Some(fps) = FRAME_RATES[project.frame_rate.min(FRAME_RATES.len() - 1)].1 {
-        tail += &format!(",fps={fps}");
+        tail += &format!(",select='{}',setpts=N/({})/TB", keep_expr(&kept), out_fps);
     }
     let audio = p.audio && project.audio && project.format == Format::Mp4;
     let audio_graph = if audio && !whole { format!(";[0:a]aselect='{}',asetpts=N/SR/TB[aout]", keep_expr(&kept)) } else { String::new() };
@@ -1276,19 +1321,25 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         let alpha = camera_alpha(half, r);
         format!(
             "[{index}:v]fps={fps},crop='min(iw,ih)':'min(iw,ih)',scale={side}:{side},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'[cam];[{last}][cam]overlay={cx}:{cy}:eof_action=pass[withcam];",
-            fps = p.fps,
+            fps = out_fps,
             last = overlays.last,
         )
     });
     let last = if cam.is_some() { "withcam".to_owned() } else { overlays.last.clone() };
+    // A picture that fills the frame (no padding, square corners) hides the
+    // backdrop: laying it over that took a third of the export. Otherwise
+    // it goes on in YUV, not RGBA.
+    let covers = l.x == 0 && l.y == 0 && l.w == l.ow && l.h == l.oh && rounding <= 0.;
+    let compose = if covers { "[fg]null[framed];" } else { "[1:v]format=yuv420p[bgy];[bgy][fg]overlay=0:0:shortest=1[framed];" };
     let graph = format!(
         "{pre}[{src}]libplacebo=w={ow}:h={oh}:pos_x={px}:pos_y={py}:pos_w={pw}:pos_h={ph}\
          :crop_w='2*floor(iw/({zexpr})/2)':crop_h='2*floor(ih/({zexpr})/2)'\
          :crop_x='floor(clip({xe}-cw/2,0,iw-cw))':crop_y='floor(clip({ye}-ch/2,0,ih-ch))'\
-         :corner_rounding={rounding:.4}:fillcolor=black@0:format=rgba[{fg}];{blur}\
-         [1:v][fg]overlay=0:0:shortest=1[framed];{post}{cam}[{last}]format=yuv420p{tail}[out]{audio_graph}",
+         :corner_rounding={rounding:.4}:fillcolor=black@0:format={format}[fg0];{blur}{compose}\
+         {post}{cam}[{last}]format=yuv420p{tail}[out]{audio_graph}",
         pre = overlays.pre, src = overlays.src, post = overlays.post, cam = cam.clone().unwrap_or_default(),
-        fg = if blur.is_some() { "fg0" } else { "fg" }, blur = blur.clone().unwrap_or_default(),
+        format = if covers { "yuv420p" } else { "yuva420p" },
+        blur = blur.clone().unwrap_or_else(|| "[fg0]null[fg];".into()),
         ow = l.ow, oh = l.oh, px = l.x, py = l.y, pw = l.w, ph = l.h,
         xe = expr(&x, 1), ye = expr(&y, 1),
     );
@@ -1309,16 +1360,27 @@ async fn run(video: &Path, project: &Project, out: &Path, preview: bool, progres
         [vec!["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "30", "-b:v", "0"], vec!["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]]
     } else {
         [
-            vec!["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-b:v", &b, "-maxrate", &max, "-bufsize", &buf],
+            // p4: the same quality as p5 here (SSIM 0.9779 against 0.9780)
+            // at the same size, in two thirds of the time.
+            vec!["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-b:v", &b, "-maxrate", &max, "-bufsize", &buf],
             vec!["-c:v", "libx264", "-preset", "veryfast", "-b:v", &b, "-maxrate", &max, "-bufsize", &buf],
         ]
     };
-    for encoder in encoders {
+    // On an NVIDIA card: decoded there first, then as before if that fails.
+    let attempts = encoders.iter().enumerate().flat_map(|(i, e)| {
+        let gpu = i == 0 && crate::platform::cuda();
+        [(true, e), (false, e)].into_iter().filter(move |(g, _)| !g || gpu)
+    });
+    for (gpu_decode, encoder) in attempts {
         let mut argv: Vec<&OsStr> = vec![
             "ffmpeg".as_ref(), "-hide_banner".as_ref(), "-y".as_ref(), "-loglevel".as_ref(), "error".as_ref(),
             "-i".as_ref(), video.as_os_str(),
-            "-loop".as_ref(), "1".as_ref(), "-framerate".as_ref(), p.fps.as_ref(), "-i".as_ref(), bg.as_os_str(),
+            "-loop".as_ref(), "1".as_ref(), "-framerate".as_ref(), out_fps.as_ref(), "-i".as_ref(), bg.as_os_str(),
         ];
+        if gpu_decode {
+            // The recording decoded on the graphics card: a fraction of the CPU.
+            argv.splice(5..5, ["-hwaccel".as_ref(), "cuda".as_ref()]);
+        }
         argv.extend(overlays.inputs.iter().map(OsString::as_os_str));
         if cam.is_some() {
             argv.extend::<[&OsStr; 4]>(["-ss".as_ref(), cam_start.as_ref(), "-i".as_ref(), cam_file.as_os_str()]);
@@ -1411,15 +1473,15 @@ mod overlays {
         /// Pill text height as a share of the output's short side.
         pub keys_size: f64,
         pub cursor: Option<Cursor>,
-        /// Frame rate to render the moving picture at, for motion blur.
-        pub supersample: Option<String>,
+        /// Filters first on the recording: the working rate, the cuts.
+        pub first: String,
     }
 
     pub fn build(track: &Track, p: &Probe, l: &Layout, tmp: &Path, style: &Style) -> std::io::Result<Overlays> {
         let (clicks, keys) = (style.clicks, style.keys);
         let mut o = Overlays { inputs: Vec::new(), pre: String::new(), src: "0:v".into(), post: String::new(), last: "framed".into() };
-        if let Some(rate) = &style.supersample {
-            let _ = write!(o.pre, "[0:v]fps={rate}[ss];");
+        if !style.first.is_empty() {
+            let _ = write!(o.pre, "[0:v]{}[ss];", style.first);
             o.src = "ss".into();
         }
         let mut next_input = 2;
@@ -1498,7 +1560,7 @@ mod overlays {
             }
             next_input += 1;
         }
-        if o.src != "0:v" {
+        if o.src != "0:v" && o.src != "ss" {
             // Overlay can hand on frames with alpha; libplacebo's crop path
             // asserts on those, so go back to plain YUV first.
             let _ = write!(o.pre, "[{}]format=yuv420p[clicked];", o.src);
@@ -1637,15 +1699,22 @@ mod tests {
     #[test]
     fn auto_segments_merge_close_clicks() {
         let track = Track { rect: (0., 0., 1920., 1080.), clicks: vec![(1.0, 100., 100.), (2.0, 200., 200.), (8.0, 300., 300.)], ..Default::default() };
-        let project = Project::auto(&track, &probe());
+        let project = Project::auto_with(&track, &probe(), None);
         assert_eq!(project.segments.len(), 2);
         assert_eq!((project.segments[0].start, project.segments[0].end), (1.0, 2.0 + HOLD));
         assert!(project.clicks && !project.keys);
     }
 
     #[test]
+    fn playback_runs_through_cuts() {
+        // 1.5 s in is half a second after the cut.
+        assert_eq!(super::played_to_source(&[(0., 1.), (2., 3.)], 1.5), Some(2.5));
+        assert_eq!(super::played_to_source(&[(0., 1.), (2., 3.)], 2.5), None);
+    }
+
+    #[test]
     fn trim_and_cuts_leave_the_rest() {
-        let mut project = Project::auto(&Track::default(), &probe());
+        let mut project = Project::auto_with(&Track::default(), &probe(), None);
         project.trim = (1., 9.);
         project.cuts = vec![(3., 4.), (0., 1.5), (8.5, 12.)];
         assert_eq!(project.kept(), vec![(1.5, 3.), (4., 8.5)]);
@@ -1658,12 +1727,12 @@ mod tests {
 
     #[test]
     fn a_look_moves_between_projects_without_the_edit() {
-        let mut source = Project::auto(&Track::default(), &probe());
+        let mut source = Project::auto_with(&Track::default(), &probe(), None);
         source.padding = 0.02;
         source.aspect = 4;
         source.cursor_size = 2.5;
         source.cuts = vec![(1., 2.)];
-        let mut target = Project::auto(&Track::default(), &probe());
+        let mut target = Project::auto_with(&Track::default(), &probe(), None);
         target.trim = (1., 9.);
         let moved = target.with_look(&source.look(), &probe());
         assert_eq!((moved.padding, moved.aspect, moved.cursor_size), (0.02, 4, 2.5));
@@ -1687,7 +1756,7 @@ mod tests {
 
     #[test]
     fn overlapping_cuts_join() {
-        let mut project = Project::auto(&Track::default(), &probe());
+        let mut project = Project::auto_with(&Track::default(), &probe(), None);
         project.cuts = vec![(5., 6.), (1., 2.), (1.5, 3.), (3., 4.), (8., 7.5)];
         project.merge_cuts();
         assert_eq!(project.cuts, vec![(1., 4.), (5., 6.), (7.5, 8.)]);

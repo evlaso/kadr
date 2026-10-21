@@ -134,6 +134,11 @@ pub fn cuda() -> bool {
     Path::new("/proc/driver/nvidia/version").exists()
 }
 
+/// ffmpeg's output for playing sound straight to the speakers.
+pub fn sound_output() -> Option<[&'static str; 3]> {
+    Some(["-f", "pulse", "kadr"])
+}
+
 /// Run a background job (ffmpeg making preview frames) below everything
 /// the user is doing.
 pub fn low_priority(cmd: &mut std::process::Command) {

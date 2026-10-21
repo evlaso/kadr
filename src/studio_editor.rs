@@ -32,10 +32,11 @@ use crate::i18n::t;
 
 const FILMSTRIP: f32 = 52.;
 const RULER: f32 = 22.;
-/// The zoom lane, above the filmstrip, and the row under the filmstrip for
-/// the cuts' badges.
+/// The zoom lane, under the filmstrip.
 const LANE: f32 = 34.;
-const BADGE_ROW: f32 = 28.;
+/// The bottom row, that cuts are drawn on, and its gap above.
+const CUT_LANE: f32 = 26.;
+const CUT_GAP: f32 = 6.;
 /// The section rail at the left, and the panel beside it.
 const RAIL: f32 = 52.;
 const PANEL: f32 = 264.;
@@ -126,6 +127,8 @@ enum Drag {
     Trim { start: bool },
     CutMove { index: usize, grab: f64 },
     CutEdge { index: usize, start: bool },
+    /// A cut being drawn across the cut row from where the press was.
+    CutNew { index: usize, anchor: f64 },
     Slider(Knob),
 }
 
@@ -550,20 +553,26 @@ impl StudioEditor {
         self.request.set(id);
         self.playing = true;
         self.playhead = start;
+        // What's kept from here on, on the clock of the decoders below (they
+        // start at 0 at `start`): one stream each, cut pieces dropped by
+        // ffmpeg, so playback runs through a cut without stopping.
+        let kept: Vec<(f64, f64)> = self.project.kept().into_iter().filter(|&(_, b)| b > start + 0.01).map(|(a, b)| (a.max(start) - start, b - start)).collect();
+        let select = studio::keep_expr(&kept);
         // The previous one stops as this one starts.
-        self.sound = (self.probe.audio && self.project.audio).then(|| Sound::play(&self.video, start)).flatten();
+        self.sound = (self.probe.audio && self.project.audio).then(|| Sound::play(&self.video, start, &select)).flatten();
 
         let even = |v: f64| ((v / 2.).round() * 2.).max(2.) as usize;
         let w = even((self.stage.0 as f64 * 1.5).min(self.probe.w));
         let h = even(w as f64 * self.probe.h / self.probe.w);
         let (mut tx, mut rx) = futures::channel::mpsc::channel::<Vec<u8>>(4);
         let video = self.video.clone();
+        let cam_select = select.clone();
         std::thread::spawn(move || {
             use std::io::Read;
             let Ok(mut child) = std::process::Command::new("ffmpeg")
                 .args(["-nostdin", "-loglevel", "error", "-ss", &format!("{start:.3}"), "-i"])
                 .arg(&video)
-                .args(["-an", "-vf", &format!("fps={PLAY_FPS},scale={w}:{h}"), "-f", "rawvideo", "-pix_fmt", "bgra", "-"])
+                .args(["-an", "-vf", &format!("fps={PLAY_FPS},select='{select}',setpts=N/{PLAY_FPS}/TB,scale={w}:{h}"), "-f", "rawvideo", "-pix_fmt", "bgra", "-"])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
                 .spawn()
@@ -591,7 +600,7 @@ impl StudioEditor {
                 let Ok(mut child) = std::process::Command::new("ffmpeg")
                     .args(["-nostdin", "-loglevel", "error", "-ss", &format!("{from:.3}"), "-i"])
                     .arg(&file)
-                    .args(["-an", "-vf", &format!("fps={PLAY_FPS},crop='min(iw,ih)':'min(iw,ih)',scale={CAM}:{CAM}"), "-f", "rawvideo", "-pix_fmt", "bgra", "-"])
+                    .args(["-an", "-vf", &format!("fps={PLAY_FPS},select='{cam_select}',setpts=N/{PLAY_FPS}/TB,crop='min(iw,ih)':'min(iw,ih)',scale={CAM}:{CAM}"), "-f", "rawvideo", "-pix_fmt", "bgra", "-"])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null())
                     .spawn()
@@ -633,18 +642,13 @@ impl StudioEditor {
                 }
                 let Some(frame) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else { return };
                 let shown = Arc::new(RenderImage::new([image::Frame::new(frame)]));
-                let t = start + n as f64 / PLAY_FPS as f64;
-                let keep_going = this.update_in(cx, |editor, window, cx| {
+                let t = studio::played_to_source(&kept, n as f64 / PLAY_FPS as f64).map(|t| start + t);
+                let keep_going = this.update_in(cx, |editor, _, cx| {
                     if request.get() != id {
                         return false;
                     }
-                    match editor.project.next_kept(t) {
-                        // Into a cut: start again after it.
-                        Some(next) if next > t + 0.05 => {
-                            editor.play_from(next, window, cx);
-                            false
-                        }
-                        Some(_) => {
+                    match t {
+                        Some(t) => {
                             editor.show(ImageSource::Render(shown), false);
                             if let Some(cam) = cam.clone()
                                 && let Some(ImageSource::Render(old)) = editor.cam_frame.replace(ImageSource::Render(cam))
@@ -737,7 +741,17 @@ impl StudioEditor {
 
     /// A drag on the timeline ended: cuts dragged onto each other join.
     fn drag_done(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.drag.take(), Some(Drag::CutMove { .. } | Drag::CutEdge { .. })) {
+        let drag = self.drag.take();
+        // A click on the cut row, not a drag: no cut, the playhead goes there.
+        if let Some(Drag::CutNew { index, anchor }) = drag
+            && self.project.cuts.get(index).is_some_and(|&(a, b)| b - a < 0.05)
+        {
+            self.project.cuts.remove(index);
+            self.cut = None;
+            self.seek(anchor, cx);
+            return self.changed(cx);
+        }
+        if matches!(drag, Some(Drag::CutMove { .. } | Drag::CutEdge { .. } | Drag::CutNew { .. })) {
             let selected = self.cut.and_then(|i| self.project.cuts.get(i).copied());
             self.project.merge_cuts();
             self.cut = selected.and_then(|(a, b)| {
@@ -758,7 +772,7 @@ impl StudioEditor {
         self.aspect_open = false;
 
         if y >= strip_top && y < strip_top + FILMSTRIP {
-            // The filmstrip: trim handles, then cuts, else the playhead.
+            // The filmstrip: its trim handles, else the playhead.
             let (a, b) = (self.x_of(self.project.trim.0), self.x_of(self.project.trim.1));
             if (local - a).abs() <= EDGE + 3. {
                 self.drag = Some(Drag::Trim { start: true });
@@ -768,25 +782,25 @@ impl StudioEditor {
                 self.drag = Some(Drag::Trim { start: false });
                 return cx.notify();
             }
-            let hit = self.project.cuts.iter().enumerate().rev().find_map(|(i, &(s, e))| {
-                let (a, b) = (self.x_of(s), self.x_of(e));
-                if (local - a).abs() <= EDGE {
-                    Some(Drag::CutEdge { index: i, start: true })
-                } else if (local - b).abs() <= EDGE {
-                    Some(Drag::CutEdge { index: i, start: false })
-                } else if local > a && local < b {
-                    Some(Drag::CutMove { index: i, grab: t - s })
-                } else {
-                    None
-                }
+        }
+        let cut_top = lane_top + LANE + CUT_GAP;
+        if (cut_top..cut_top + CUT_LANE).contains(&y) {
+            // The cut row: edges resize, bodies move, a drag on empty space
+            // cuts that stretch out.
+            let hit = self.project.cuts.iter().enumerate().rev().find_map(|(i, &(s, e))| block_hit(local, self.x_of(s), self.x_of(e)).map(|part| match part {
+                Part::Start => Drag::CutEdge { index: i, start: true },
+                Part::End => Drag::CutEdge { index: i, start: false },
+                Part::Body => Drag::CutMove { index: i, grab: t - s },
+            }));
+            let drag = hit.unwrap_or_else(|| {
+                self.project.cuts.push((t, t));
+                Drag::CutNew { index: self.project.cuts.len() - 1, anchor: t }
             });
-            if let Some(drag) = hit {
-                if let Drag::CutEdge { index, .. } | Drag::CutMove { index, .. } = drag {
-                    self.select_cut(Some(index));
-                }
-                self.drag = Some(drag);
-                return cx.notify();
+            if let Drag::CutEdge { index, .. } | Drag::CutMove { index, .. } | Drag::CutNew { index, .. } = drag {
+                self.select_cut(Some(index));
             }
+            self.drag = Some(drag);
+            return cx.notify();
         }
         if !(lane_top..lane_top + LANE).contains(&y) {
             // The ruler, the filmstrip's free parts and the gaps: the playhead.
@@ -794,18 +808,11 @@ impl StudioEditor {
             return self.seek(t, cx);
         }
         // The zoom lane: edges resize, bodies move, empty space adds.
-        let hit = self.project.segments.iter().enumerate().rev().find_map(|(i, s)| {
-            let (a, b) = (self.x_of(s.start), self.x_of(s.end));
-            if (local - a).abs() <= EDGE {
-                Some(Drag::Edge { index: i, start: true })
-            } else if (local - b).abs() <= EDGE {
-                Some(Drag::Edge { index: i, start: false })
-            } else if local > a && local < b {
-                Some(Drag::Move { index: i, grab: t - s.start })
-            } else {
-                None
-            }
-        });
+        let hit = self.project.segments.iter().enumerate().rev().find_map(|(i, s)| block_hit(local, self.x_of(s.start), self.x_of(s.end)).map(|part| match part {
+            Part::Start => Drag::Edge { index: i, start: true },
+            Part::End => Drag::Edge { index: i, start: false },
+            Part::Body => Drag::Move { index: i, grab: t - s.start },
+        }));
         match hit {
             Some(drag) => {
                 if let Drag::Edge { index, .. } | Drag::Move { index, .. } = drag {
@@ -831,25 +838,26 @@ impl StudioEditor {
     fn timeline_cursor_at(&self, x: f32, y: f32) -> CursorStyle {
         let (ox, w, lane_top, strip_top) = self.timeline.get();
         let local = x - ox;
-        if local < -EDGE || local > w + EDGE || y < lane_top - RULER - 6. || y > strip_top + FILMSTRIP + BADGE_ROW {
+        let cut_top = lane_top + LANE + CUT_GAP;
+        if local < -EDGE || local > w + EDGE || y < strip_top - RULER - 6. || y > cut_top + CUT_LANE {
             return CursorStyle::Arrow;
         }
-        let near = |t: f64| (local - self.x_of(t)).abs() <= EDGE;
-        if (strip_top..strip_top + FILMSTRIP).contains(&y) {
-            if near(self.project.trim.0) || near(self.project.trim.1) || self.project.cuts.iter().any(|&(a, b)| near(a) || near(b)) {
-                return CursorStyle::ResizeLeftRight;
+        let near = |t: f64| (local - self.x_of(t)).abs() <= EDGE + 3.;
+        if (strip_top..strip_top + FILMSTRIP).contains(&y) && (near(self.project.trim.0) || near(self.project.trim.1)) {
+            return CursorStyle::ResizeLeftRight;
+        }
+        let over = |blocks: Vec<(f64, f64)>, empty: CursorStyle| {
+            match blocks.into_iter().find_map(|(a, b)| block_hit(local, self.x_of(a), self.x_of(b))) {
+                Some(Part::Body) => CursorStyle::OpenHand,
+                Some(_) => CursorStyle::ResizeLeftRight,
+                None => empty,
             }
-            if self.project.cuts.iter().any(|&(a, b)| local > self.x_of(a) && local < self.x_of(b)) {
-                return CursorStyle::OpenHand;
-            }
+        };
+        if (cut_top..cut_top + CUT_LANE).contains(&y) {
+            return over(self.project.cuts.clone(), CursorStyle::Crosshair);
         }
         if (lane_top..lane_top + LANE).contains(&y) {
-            if self.project.segments.iter().any(|s| near(s.start) || near(s.end)) {
-                return CursorStyle::ResizeLeftRight;
-            }
-            if self.project.segments.iter().any(|s| local > self.x_of(s.start) && local < self.x_of(s.end)) {
-                return CursorStyle::OpenHand;
-            }
+            return over(self.project.segments.iter().map(|s| (s.start, s.end)).collect(), CursorStyle::PointingHand);
         }
         CursorStyle::PointingHand
     }
@@ -914,6 +922,12 @@ impl StudioEditor {
                 let at = if start { cut.0 } else { cut.1 };
                 self.changed(cx);
                 self.seek(at, cx);
+            }
+            Some(Drag::CutNew { index, anchor }) => {
+                let t = t.clamp(0., d);
+                self.project.cuts[index] = (anchor.min(t), anchor.max(t));
+                self.changed(cx);
+                self.seek(t, cx);
             }
             Some(Drag::Slider(knob)) => self.slide(knob, x, cx),
             None => {}
@@ -1237,8 +1251,8 @@ impl StudioEditor {
         )
     }
 
-    /// The timeline, like CleanShot's: a ruler, the zoom lane, then the
-    /// filmstrip (trim and cuts, each cut a gap with a badge under it).
+    /// The timeline: a ruler, the filmstrip (with the trim handles, cut
+    /// pieces dimmed), the zoom lane, and the row cuts are drawn on.
     fn render_timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let status = cx.theme().status();
@@ -1248,8 +1262,8 @@ impl StudioEditor {
             c.alpha = alpha;
             c
         };
-        let (grid, tick, block, gap_edge) = (faint(0.05), faint(0.22), faint(0.2), faint(0.22));
-        let (lane_bg, gap_bg) = (colors.element_background, colors.panel_background);
+        let (grid, tick, block) = (faint(0.05), faint(0.22), faint(0.2));
+        let lane_bg = colors.element_background;
         let (handle_color, red) = (status.warning, status.error);
         let thumbs = self.thumbs.iter().map(|t| img(t.clone()).flex_1().h_full().object_fit(ObjectFit::Cover));
         let d = self.probe.duration.max(0.001);
@@ -1263,9 +1277,14 @@ impl StudioEditor {
         let step = [0.5, 1., 2., 5., 10., 15., 30., 60., 120., 300.].into_iter().find(|s| shown / s <= 12.).unwrap_or(600.);
         let marks: Vec<f64> = (0..).map(|i| i as f64 * step).take_while(|&t| t <= d).collect();
         let ticks = marks.clone();
-        let lane_y = RULER + 6.;
-        let strip_y = lane_y + LANE + 8.;
-        let height = strip_y + FILMSTRIP + BADGE_ROW;
+        // The frames first, then the zooms, then the cuts.
+        let strip_y = RULER + 6.;
+        let lane_y = strip_y + FILMSTRIP + 8.;
+        let cut_y = lane_y + LANE + CUT_GAP;
+        let height = cut_y + CUT_LANE + 4.;
+        // The cut row stands out while its section is open.
+        let cut_lane_bg = if self.section == Section::Cut { colors.element_selected } else { lane_bg };
+        let cut_color = status.error;
 
         // Grid, lane, blocks, trim, cuts and the playhead are painted; text
         // goes on top.
@@ -1305,17 +1324,22 @@ impl StudioEditor {
                     let grip = gpui::hsla(0., 0., 0., 0.5);
                     window.paint_quad(fill(Bounds::new(point(hx + px(3.5), strip_top + px(FILMSTRIP / 2. - 7.)), size(px(1.), px(14.))), grip));
                 }
-                // Cut pieces: gaps in the strip, outlined when chosen.
+                // Cut pieces: dimmed in the strip, so what goes stays
+                // visible; blocks on the cut row under it.
+                let cut_top = lane_top + px(LANE + CUT_GAP);
+                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, cut_top), size(w, px(CUT_LANE))), px(7.), cut_lane_bg, px(0.), cut_lane_bg, BorderStyle::Solid));
                 for &(a, b, selected) in &cuts {
-                    let rect = Bounds::new(point(at(a), strip_top - px(1.)), size((at(b) - at(a)).max(px(2.)), px(FILMSTRIP + 2.)));
-                    window.paint_quad(fill(rect, gap_bg));
-                    let edge = Bounds::new(point(at(a) + px(2.), strip_top + px(2.)), size((at(b) - at(a) - px(4.)).max(px(1.)), px(FILMSTRIP - 4.)));
-                    let (color, width) = if selected { (accent, 2.) } else { (gap_edge, 1.) };
-                    window.paint_quad(crate::ui::quad(edge, px(6.), gpui::transparent_black(), px(width), color, BorderStyle::Dashed));
+                    let width = (at(b) - at(a)).max(px(2.));
+                    window.paint_quad(fill(Bounds::new(point(at(a), strip_top), size(width, px(FILMSTRIP))), shade));
+                    let mut soft = cut_color;
+                    soft.alpha = 0.28;
+                    let block = Bounds::new(point(at(a), cut_top + px(2.)), size(width.max(px(4.)), px(CUT_LANE - 4.)));
+                    let body = if selected { cut_color } else { soft };
+                    window.paint_quad(crate::ui::quad(block, px(5.), body, px(1.), cut_color, BorderStyle::Solid));
                 }
                 // The playhead: a red line with a rounded head on the ruler.
                 let x = at(playhead);
-                window.paint_quad(fill(Bounds::new(point(x - px(1.), y0 + px(6.)), size(px(2.), px(height - 6. - BADGE_ROW + 4.))), red));
+                window.paint_quad(fill(Bounds::new(point(x - px(1.), y0 + px(6.)), size(px(2.), px(height - 6.))), red));
                 window.paint_quad(crate::ui::quad(Bounds::new(point(x - px(6.), y0), size(px(12.), px(14.))), px(6.), red, px(0.), red, BorderStyle::Solid));
             },
         )
@@ -1342,34 +1366,42 @@ impl StudioEditor {
                         .text_xs()
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(if on { gpui::white() } else { colors.text })
-                        .child(tr!("studio.zoom_block", format!("{}", (s.zoom * 100.).round()))),
+                        .child(format!("{}%", (s.zoom * 100.).round())),
                 )
                 .when(s.focus.is_some(), |d| d.child(Icon::new(IconName::Crosshair).size(IconSize::XSmall).color(if on { Color::Custom(gpui::white()) } else { Color::Muted })))
         });
-        // A badge under each cut: the scissors and how long it is.
+        // On each cut block, the scissors and how long it is, where it fits.
         let badges = self.project.cuts.iter().enumerate().map(|(i, &(a, b))| {
-            let mid = ((a + b) / 2. / d) as f32;
+            let (l, r) = ((a.min(b) / d) as f32, (a.max(b) / d) as f32);
             let on = self.cut == Some(i);
-            div().absolute().left(relative(mid)).ml(px(-40.)).w(px(80.)).top(px(strip_y + FILMSTRIP + 5.)).flex().justify_center().child(
-                h_flex()
-                    .id(SharedString::from(format!("cut-badge-{i}")))
-                    .h(px(20.))
-                    .px_1p5()
-                    .gap_1()
-                    .rounded(px(6.))
-                    .bg(if on { accent } else { colors.element_selected })
-                    .cursor_pointer()
-                    .child(Icon::new(IconName::Scissors).size(IconSize::XSmall).color(if on { Color::Custom(gpui::white()) } else { Color::Default }))
-                    .child(div().text_xs().text_color(if on { gpui::white() } else { colors.text }).child(seconds((b - a).abs())))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.select_cut(Some(i));
-                            cx.notify();
-                        }),
-                    ),
-            )
+            let ink = if on { gpui::white() } else { colors.text };
+            div()
+                .absolute()
+                .left(relative(l))
+                .w(relative((r - l).max(0.)))
+                .top(px(cut_y))
+                .h(px(CUT_LANE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .overflow_hidden()
+                .child(Icon::new(IconName::Scissors).size(IconSize::XSmall).color(Color::Custom(ink)))
+                .child(div().text_xs().whitespace_nowrap().text_color(ink).child(seconds((b - a).abs())))
+        });
+        let cut_hint = self.project.cuts.is_empty().then(|| {
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(px(cut_y))
+                .h(px(CUT_LANE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .child(Icon::new(IconName::Scissors).size(IconSize::XSmall).color(Color::Placeholder))
+                .child(Label::new(t("studio.drag_to_cut")).size(LabelSize::XSmall).color(Color::Placeholder))
         });
         let ruler = marks.into_iter().map(|t| div().absolute().top(px(2.)).left(relative((t / d) as f32)).ml_1().child(Label::new(ruler_label(t, step)).size(LabelSize::XSmall).color(Color::Muted)));
         let hint = self.project.segments.is_empty().then(|| {
@@ -1392,7 +1424,7 @@ impl StudioEditor {
             .h(px(height))
             .cursor(match self.drag {
                 Some(Drag::Move { .. } | Drag::CutMove { .. }) => CursorStyle::ClosedHand,
-                Some(Drag::Edge { .. } | Drag::CutEdge { .. } | Drag::Trim { .. }) => CursorStyle::ResizeLeftRight,
+                Some(Drag::Edge { .. } | Drag::CutEdge { .. } | Drag::CutNew { .. } | Drag::Trim { .. }) => CursorStyle::ResizeLeftRight,
                 _ => self.timeline_cursor,
             })
             .children(ruler)
@@ -1400,6 +1432,7 @@ impl StudioEditor {
             .children(hint)
             .child(painter)
             .children(labels)
+            .children(cut_hint)
             .children(badges)
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.timeline_down(e, cx)));
         div()
@@ -2238,15 +2271,7 @@ impl StudioEditor {
     }
 
     fn cut_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut items = vec![
-            wide(Button::new("cut", t("studio.cut_at_playhead"))
-                .style(ButtonStyle::Filled)
-                .start_icon(Icon::new(IconName::Scissors).size(IconSize::Small))
-                .key_binding(kit::keys("x"))
-                .on_click(cx.listener(|this, _, _, cx| this.add_cut(cx)))
-            ),
-            Self::note(t("studio.filmstrips_yellow_edges_trim_start")),
-        ];
+        let mut items = vec![Self::note(t("studio.cut_how")), Self::note(t("studio.filmstrips_yellow_edges_trim_start"))];
         if let Some((index, (a, b))) = self.cut.and_then(|i| self.project.cuts.get(i).map(|c| (i, *c))) {
             items.push(Self::group(
                 t("studio.selected_cut"),
@@ -2279,6 +2304,29 @@ impl StudioEditor {
             );
         }
         items
+    }
+}
+
+/// Which part of a block on the timeline (from `a` to `b`, in pixels) the
+/// pointer at `x` is on.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Part {
+    Start,
+    End,
+    Body,
+}
+
+fn block_hit(x: f32, a: f32, b: f32) -> Option<Part> {
+    // A narrow block keeps a middle to grab: its edges share what's there.
+    let edge = EDGE.min(((b - a) / 3.).max(2.));
+    if x < a - edge || x > b + edge {
+        None
+    } else if (x - a).abs() <= edge && (x - a).abs() <= (x - b).abs() {
+        Some(Part::Start)
+    } else if (x - b).abs() <= edge {
+        Some(Part::End)
+    } else {
+        Some(Part::Body)
     }
 }
 
@@ -2478,16 +2526,27 @@ impl crate::presets::HasPresets for StudioEditor {
 struct Sound(std::process::Child);
 
 impl Sound {
-    fn play(video: &std::path::Path, start: f64) -> Option<Sound> {
-        std::process::Command::new("ffplay")
-            .args(["-nodisp", "-autoexit", "-vn", "-loglevel", "quiet", "-ss", &format!("{start:.3}"), "-i"])
-            .arg(video)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()
-            .map(Sound)
+    /// From `start`, keeping what `select` keeps (on a clock starting at 0
+    /// there), so it runs through cuts along with the picture. Where ffmpeg
+    /// can't play sound itself, ffplay plays it all.
+    fn play(video: &std::path::Path, start: f64, select: &str) -> Option<Sound> {
+        let ss = format!("{start:.3}");
+        let mut cmd = match crate::platform::sound_output() {
+            Some(output) => {
+                let mut cmd = std::process::Command::new("ffmpeg");
+                cmd.args(["-nostdin", "-loglevel", "quiet", "-ss", &ss, "-i"])
+                    .arg(video)
+                    .args(["-vn", "-af", &format!("aselect='{select}',asetpts=N/SR/TB")])
+                    .args(output);
+                cmd
+            }
+            None => {
+                let mut cmd = std::process::Command::new("ffplay");
+                cmd.args(["-nodisp", "-autoexit", "-vn", "-loglevel", "quiet", "-ss", &ss, "-i"]).arg(video);
+                cmd
+            }
+        };
+        cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok().map(Sound)
     }
 }
 
@@ -2495,5 +2554,24 @@ impl Drop for Sound {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Part, block_hit};
+
+    #[test]
+    fn narrow_blocks_keep_a_middle() {
+        // Wide: the edges within reach, the body between.
+        assert_eq!(block_hit(100., 100., 300.), Some(Part::Start));
+        assert_eq!(block_hit(295., 100., 300.), Some(Part::End));
+        assert_eq!(block_hit(200., 100., 300.), Some(Part::Body));
+        assert_eq!(block_hit(50., 100., 300.), None);
+        // Six pixels wide (a second of a long recording): its middle still
+        // moves it instead of grabbing an edge.
+        assert_eq!(block_hit(103., 100., 106.), Some(Part::Body));
+        assert_eq!(block_hit(100., 100., 106.), Some(Part::Start));
+        assert_eq!(block_hit(106., 100., 106.), Some(Part::End));
     }
 }
