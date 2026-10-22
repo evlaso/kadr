@@ -41,6 +41,8 @@ type P = (f32, f32);
 const WIDTHS: (f32, f32) = (2., 16.);
 const FONT_SIZES: (f32, f32) = (12., 56.);
 const COUNTER_SIZES: (f32, f32) = (18., 52.);
+/// The cursor tool's arrow height, small to large, in screen pixels.
+const CURSOR_SIZES: (f32, f32) = (18., 72.);
 /// Where the size slider starts.
 const WEIGHT: f32 = 0.22;
 
@@ -222,13 +224,14 @@ enum Tool {
     Marker,
     Text,
     Counter,
+    Cursor,
     Blur,
     Spotlight,
     Crop,
 }
 
 impl Tool {
-    const ALL: [Tool; 12] = [
+    const ALL: [Tool; 13] = [
         Tool::Select,
         Tool::Arrow,
         Tool::Line,
@@ -238,6 +241,7 @@ impl Tool {
         Tool::Marker,
         Tool::Text,
         Tool::Counter,
+        Tool::Cursor,
         Tool::Blur,
         Tool::Spotlight,
         Tool::Crop,
@@ -249,7 +253,7 @@ impl Tool {
         &[Tool::Select],
         &[Tool::Arrow, Tool::Line, Tool::Rect, Tool::Ellipse],
         &[Tool::Pen, Tool::Marker],
-        &[Tool::Text, Tool::Counter],
+        &[Tool::Text, Tool::Counter, Tool::Cursor],
         &[Tool::Blur, Tool::Spotlight],
         &[Tool::Crop],
     ];
@@ -265,6 +269,7 @@ impl Tool {
             Tool::Marker => Icon::from_path("icons/kadr/marker.svg"),
             Tool::Text => Icon::new(IconName::CaseSensitive),
             Tool::Counter => Icon::from_path("icons/kadr/counter.svg"),
+            Tool::Cursor => Icon::from_path("icons/kadr/cursor.svg"),
             Tool::Blur => Icon::from_path("icons/kadr/pixelate.svg"),
             Tool::Spotlight => Icon::from_path("icons/kadr/spotlight.svg"),
             Tool::Crop => Icon::from_path("icons/kadr/crop.svg"),
@@ -282,6 +287,7 @@ impl Tool {
             Tool::Marker => t("editor.highlighter"),
             Tool::Text => t("common.text"),
             Tool::Counter => t("editor.step_numbers"),
+            Tool::Cursor => t("editor.cursor"),
             Tool::Blur => t("editor.hide_tool"),
             Tool::Spotlight => t("editor.spotlight_dim_everything_around"),
             Tool::Crop => t("common.trim"),
@@ -300,6 +306,7 @@ impl Tool {
             Tool::Marker => "h",
             Tool::Text => "t",
             Tool::Counter => "n",
+            Tool::Cursor => "m",
             Tool::Blur => "b",
             Tool::Spotlight => "s",
             Tool::Crop => "c",
@@ -317,6 +324,9 @@ enum Kind {
     Marker(Vec<P>),
     Text(String),
     Counter(u32),
+    /// A macOS-like pointer, by `cursors` name, its hotspot at `a` and its
+    /// arrow `size` tall.
+    Cursor(&'static str),
     /// Hidden by pixelating or blurring; the patch, once computed for the
     /// current position.
     Blur(Hide, Option<Arc<Image>>),
@@ -324,6 +334,193 @@ enum Kind {
     Spotlight,
     /// Another picture dropped or pasted on top, filling the a–b box.
     Picture(Picture),
+}
+
+impl Kind {
+    /// Drawn as lines and fills: what `draw_vector` and `paint_shape` draw.
+    fn is_vector(&self) -> bool {
+        matches!(self, Kind::Arrow | Kind::Rect | Kind::Ellipse | Kind::Line | Kind::Pen(_) | Kind::Marker(_))
+    }
+}
+
+/// The finished strokes drawn once into a picture, so a frame paints that
+/// instead of outlining every stroke again; the shapes stay shapes. Redrawn
+/// in the background whenever they change, while the canvas paints what the
+/// picture lacks on top of it.
+#[derive(Default)]
+struct Strokes {
+    shown: Option<StrokesImage>,
+    busy: bool,
+    /// The shape being moved or resized, drawn on its own: moving only
+    /// shifts it, resizing stretches it until it's drawn again.
+    lifted: Option<Lifted>,
+    lift_busy: bool,
+    /// Replaced pictures, for the next frame to free.
+    retired: Vec<Arc<gpui::RenderImage>>,
+}
+
+struct Lifted {
+    index: usize,
+    /// The shape as drawn, and the picture's top left in image pixels.
+    shape: Shape,
+    at: P,
+    /// The picture's size in image pixels.
+    size: P,
+    image: Arc<gpui::RenderImage>,
+}
+
+/// How far `now` is `then` moved, if it's only moved.
+fn moved_by(now: &Shape, then: &Shape) -> Option<P> {
+    let d = (now.a.0 - then.a.0, now.a.1 - then.a.1);
+    // Loose enough for the rounding a long drag piles up.
+    let near = |p: P, q: P| (p.0 - q.0 - d.0).abs() < 0.05 && (p.1 - q.1 - d.1).abs() < 0.05;
+    let same = near(now.b, then.b)
+        && now.size == then.size
+        && now.filled == then.filled
+        && now.color == then.color
+        && match (now.bend, then.bend) {
+            (Some(p), Some(q)) => near(p, q),
+            (None, None) => true,
+            _ => false,
+        }
+        && match (&now.kind, &then.kind) {
+            (Kind::Pen(p), Kind::Pen(q)) | (Kind::Marker(p), Kind::Marker(q)) => p.len() == q.len() && p.iter().zip(q).all(|(p, q)| near(*p, *q)),
+            (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
+        };
+    same.then_some(d)
+}
+
+struct StrokesImage {
+    /// It holds the vector shapes before `count`, but `skip`.
+    count: usize,
+    skip: Option<usize>,
+    hash: u64,
+    /// Its pixels per image pixel, and the box it covers in image pixels:
+    /// round the strokes, so it doesn't change with the room round the
+    /// picture.
+    density: f32,
+    at: P,
+    size: P,
+    image: Arc<gpui::RenderImage>,
+}
+
+/// A fingerprint of the vector shapes before `count`, but `skip`.
+fn strokes_hash(shapes: &[Shape], count: usize, skip: Option<usize>) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut mix = |v: u32| h = (h ^ v as u64).wrapping_mul(0x100000001b3);
+    for (i, sh) in shapes.iter().enumerate().take(count) {
+        if Some(i) == skip || !sh.kind.is_vector() {
+            continue;
+        }
+        mix(i as u32);
+        let tag = match &sh.kind {
+            Kind::Arrow => 1,
+            Kind::Rect => 2,
+            Kind::Ellipse => 3,
+            Kind::Line => 4,
+            Kind::Pen(_) => 5,
+            _ => 6,
+        };
+        mix(tag);
+        let rgb = crate::ui::rgb_of(sh.color);
+        for v in [sh.a.0, sh.a.1, sh.b.0, sh.b.1, sh.size, rgb.r, rgb.g, rgb.b, sh.color.alpha] {
+            mix(v.to_bits());
+        }
+        mix(sh.filled as u32);
+        if let Some(bend) = sh.bend {
+            mix(bend.0.to_bits());
+            mix(bend.1.to_bits());
+        }
+        if let Kind::Pen(points) | Kind::Marker(points) = &sh.kind {
+            mix(points.len() as u32);
+            for p in points {
+                mix(p.0.to_bits());
+                mix(p.1.to_bits());
+            }
+        }
+    }
+    h
+}
+
+/// What a cursor shape is called in the toolbar.
+fn cursor_label(name: &str) -> &'static str {
+    match name {
+        "pointer" => t("editor.cursor_pointer"),
+        "text" => t("editor.cursor_text"),
+        "grab" => t("editor.cursor_grab"),
+        "grabbing" => t("editor.cursor_grabbing"),
+        "crosshair" => t("editor.cursor_crosshair"),
+        "wait" => t("editor.cursor_wait"),
+        "not-allowed" => t("editor.cursor_not_allowed"),
+        _ => t("editor.cursor_arrow"),
+    }
+}
+
+/// A cursor shape with its arrow `height` pixels tall, as GPUI wants an image.
+fn cursor_image(name: &str, height: f32) -> Option<Arc<gpui::RenderImage>> {
+    let (hot, (w, h)) = crate::cursors::geometry(name, height);
+    let (w, h) = (w.ceil().max(1.) as u32, h.ceil().max(1.) as u32);
+    let mut pm = tiny_skia::Pixmap::new(w, h)?;
+    crate::cursors::draw(name, height, hot, &mut pm.as_mut());
+    let mut data = pm.take();
+    for px in data.chunks_exact_mut(4) {
+        px.swap(0, 2);
+        let a = px[3] as u32;
+        if a > 0 && a < 255 {
+            for c in &mut px[..3] {
+                *c = (*c as u32 * 255 / a).min(255) as u8;
+            }
+        }
+    }
+    let image = RgbaImage::from_raw(w, h, data)?;
+    Some(Arc::new(gpui::RenderImage::new([image::Frame::new(image)])))
+}
+
+/// The box round `shapes` in image pixels, with room for their line ends.
+fn shapes_box(shapes: &[Shape]) -> Option<(P, P)> {
+    let (l, t, r, b) = shapes.iter().map(|sh| {
+        let (l, t, r, b) = sh.bounds();
+        let pad = sh.size + 2.;
+        (l - pad, t - pad, r + pad, b + pad)
+    }).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))?;
+    Some(((l.floor(), t.floor()), ((r - l).ceil() + 1., (b - t).ceil() + 1.)))
+}
+
+/// Pixels per image pixel for a picture of a `size` box: `wanted`, within
+/// what a texture holds.
+fn box_density(size: P, wanted: f32) -> f32 {
+    wanted.min(8192. / size.0.max(size.1).max(1.)).min((24e6 / (size.0 * size.1).max(1.)).sqrt())
+}
+
+/// The shapes' picture round them, at about `density`, as GPUI wants an
+/// image: BGRA, not premultiplied. Also the box it covers and its density.
+fn strokes_image(shapes: &[Shape], density: f32) -> Option<(P, P, f32, Arc<gpui::RenderImage>)> {
+    let (at, size) = shapes_box(shapes)?;
+    let density = box_density(size, density);
+    shapes_image(shapes, at, size, density).map(|(_, image)| (at, size, density, image))
+}
+
+/// The shapes in the `size` box at `at` (image pixels), at `density`.
+fn shapes_image(shapes: &[Shape], at: P, size: P, density: f32) -> Option<(u32, Arc<gpui::RenderImage>)> {
+    let w = (size.0 * density).ceil().max(1.) as u32;
+    let h = (size.1 * density).ceil().max(1.) as u32;
+    let mut pm = tiny_skia::Pixmap::new(w, h)?;
+    let tf = tiny_skia::Transform::from_row(density, 0., 0., density, -at.0 * density, -at.1 * density);
+    for shape in shapes {
+        draw_vector(&mut pm, shape, tf);
+    }
+    let mut data = pm.take();
+    for px in data.chunks_exact_mut(4) {
+        px.swap(0, 2);
+        let a = px[3] as u32;
+        if a > 0 && a < 255 {
+            for c in &mut px[..3] {
+                *c = (*c as u32 * 255 / a).min(255) as u8;
+            }
+        }
+    }
+    let image = RgbaImage::from_raw(w, h, data)?;
+    Some((w, Arc::new(gpui::RenderImage::new([image::Frame::new(image)]))))
 }
 
 /// How the hide tool covers what's under it.
@@ -422,6 +619,11 @@ impl Shape {
                 let r = self.size / 2.;
                 (self.a.0 - r, self.a.1 - r, self.a.0 + r, self.a.1 + r)
             }
+            Kind::Cursor(name) => {
+                let ((hx, hy), (w, h)) = crate::cursors::geometry(name, self.size);
+                let (l, t) = (self.a.0 - hx, self.a.1 - hy);
+                (l, t, l + w, t + h)
+            }
             Kind::Line | Kind::Arrow => {
                 let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
                 for p in self.path() {
@@ -484,7 +686,7 @@ impl Shape {
 
     /// Shapes whose corner handles scale them rather than move a point.
     fn scales(&self) -> bool {
-        matches!(self.kind, Kind::Text(_) | Kind::Counter(_) | Kind::Pen(_) | Kind::Marker(_) | Kind::Picture(_))
+        matches!(self.kind, Kind::Text(_) | Kind::Counter(_) | Kind::Cursor(_) | Kind::Pen(_) | Kind::Marker(_) | Kind::Picture(_))
     }
 
     /// Scale `orig` by dragging corner `handle` to `p`, the opposite corner
@@ -566,6 +768,7 @@ impl Shape {
         self.size = match self.kind {
             Kind::Text(_) => sized(FONT_SIZES, weight),
             Kind::Counter(_) => sized(COUNTER_SIZES, weight),
+            Kind::Cursor(_) => sized(CURSOR_SIZES, weight),
             Kind::Marker(_) => sized(WIDTHS, weight) * 3.,
             // A hidden area keeps the slider's position as its strength.
             Kind::Blur(..) => {
@@ -669,6 +872,8 @@ pub struct Editor {
     picture: Option<Arc<gpui::RenderImage>>,
     /// Pictures replaced by a turn, to free from the window's atlas.
     stale_pictures: Vec<Arc<gpui::RenderImage>>,
+    /// The finished strokes as one picture, for the canvas to show.
+    strokes: Rc<RefCell<Strokes>>,
     px: (u32, u32),
     /// Decoded picture as shown (turned as `shown` says), for pixelation and
     /// the final render.
@@ -694,6 +899,8 @@ pub struct Editor {
     /// at. A canvas growing round the picture (a crop pulled out) leaves the
     /// picture where it is.
     view_pan: (f32, f32),
+    /// While a crop is dragged past the stage, how far the view follows it.
+    crop_shift: (f32, f32),
     /// The stage's bounds in the window, last laid out: x, y, w, h.
     stage_box: Rc<Cell<(f32, f32, f32, f32)>>,
     /// Space is held: a press pans the stage.
@@ -752,6 +959,12 @@ pub struct Editor {
     /// Pointer shape over a handle or a shape, while no button is held.
     hover: Option<CursorStyle>,
     text_style: TextStyle,
+    /// The cursor tool's shape, by `cursors` name.
+    cursor_kind: &'static str,
+    /// The cursor tool's shapes for its toolbar, drawn once.
+    cursor_icons: Vec<(&'static str, Arc<gpui::RenderImage>)>,
+    /// Cursors drawn on the canvas, by shape and height in device pixels.
+    cursor_images: RefCell<HashMap<(&'static str, u32), Arc<gpui::RenderImage>>>,
     /// Canvas zoom on top of fitting the window; 1 fits.
     zoom: f32,
     /// The picture's real size on screen (100%).
@@ -788,6 +1001,8 @@ pub struct Editor {
     /// The colour dropdown in the toolbar is open.
     colors_open: bool,
     colors_menu: crate::ui::MenuBounds,
+    cursors_open: bool,
+    cursors_menu: crate::ui::MenuBounds,
     /// The "⋯" menu with the style controls, when the toolbar is too narrow.
     more_open: bool,
     size: (f32, f32),
@@ -907,6 +1122,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 card_on_close: card,
                 picture: None,
                 stale_pictures: Vec::new(),
+                strokes: Default::default(),
                 image,
                 px: (w, h),
                 source: None,
@@ -917,6 +1133,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 crop_room: std::cell::Cell::new(0.),
                 laid_margin: std::cell::Cell::new(0.),
                 view_pan: (0., 0.),
+                crop_shift: (0., 0.),
                 stage_box: Rc::new(Cell::new((0., 0., 0., 0.))),
                 space: false,
                 pan: None,
@@ -949,6 +1166,10 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 bundle,
                 hover: None,
                 text_style: TextStyle::Plain,
+                cursor_kind: crate::cursors::STAMPS[0],
+                // Their squares fill 22px slots at twice the pixels.
+                cursor_icons: crate::cursors::STAMPS.iter().filter_map(|&name| Some((name, cursor_image(name, crate::cursors::height_for(name, 44.))?))).collect(),
+                cursor_images: Default::default(),
                 zoom: 1.,
                 real: natural,
                 remembered: frame.to_json(),
@@ -969,6 +1190,8 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 windowed,
                 colors_open: false,
                 colors_menu: Default::default(),
+                cursors_open: false,
+                cursors_menu: Default::default(),
                 more_open: false,
                 size,
                 focus,
@@ -1523,6 +1746,12 @@ impl Editor {
                 self.selected = self.editing;
                 return cx.notify();
             }
+            Tool::Cursor => {
+                self.checkpoint();
+                self.doc.shapes.push(Shape { kind: Kind::Cursor(self.cursor_kind), a: p, b: p, color, size: sized(CURSOR_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain, bend: None });
+                self.selected = Some(self.doc.shapes.len() - 1);
+                return cx.notify();
+            }
             Tool::Counter => {
                 let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
                 self.checkpoint();
@@ -1670,6 +1899,9 @@ impl Editor {
             }
             Some(Drag::Move { index, .. } | Drag::Handle { index, .. } | Drag::Scale { index, .. }) => self.refresh_patch(index, cx),
             Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => {
+                // The view stays where the crop took it.
+                self.view_pan = (self.view_pan.0 + self.crop_shift.0, self.view_pan.1 + self.crop_shift.1);
+                self.crop_shift = (0., 0.);
                 if let Some((a, b)) = self.doc.crop
                     && ((a.0 - b.0).abs() < 4. || (a.1 - b.1).abs() < 4.)
                 {
@@ -1752,6 +1984,7 @@ impl Editor {
             ("space", false, false) => self.space = true,
             // Esc steps back: the colour menu, the selection, then the editor.
             ("escape", _, _) if self.colors_open => self.colors_open = false,
+            ("escape", _, _) if self.cursors_open => self.cursors_open = false,
             ("escape", _, _) if !self.marked.is_empty() => self.marked.clear(),
             ("escape", _, _) if self.selected.is_some() => self.selected = None,
             ("a", true, _) if self.cropping.is_none() => {
@@ -1919,6 +2152,17 @@ impl Editor {
         {
             self.checkpoint();
             self.doc.shapes[index].text = style;
+        }
+    }
+
+    /// The cursor tool's shape; restyles the selected cursor too.
+    fn pick_cursor(&mut self, name: &'static str) {
+        self.cursor_kind = name;
+        if let Some(index) = self.selected
+            && matches!(self.doc.shapes[index].kind, Kind::Cursor(_))
+        {
+            self.checkpoint();
+            self.doc.shapes[index].kind = Kind::Cursor(name);
         }
     }
 
@@ -2411,6 +2655,71 @@ impl Editor {
                 .child(option("text-outline", TextStyle::Outline, t("editor.outlined")))
                 .child(Divider::vertical().h_5().mx_1())
         });
+        // Which pointer, for the cursor tool or a selected cursor.
+        let picked_cursor = self.selected.and_then(|i| self.doc.shapes.get(i)).and_then(|sh| match sh.kind {
+            Kind::Cursor(name) => Some(name),
+            _ => None,
+        });
+        // In a dropdown under the current one, like the colours.
+        let cursor_options = (self.tool == Tool::Cursor || picked_cursor.is_some()).then(|| {
+            let current = picked_cursor.unwrap_or(self.cursor_kind);
+            let icon = |name: &str| {
+                self.cursor_icons.iter().find(|(n, _)| *n == name).map(|(_, image)| img(gpui::ImageSource::Render(image.clone())).size(px(22.)).object_fit(ObjectFit::Contain))
+            };
+            let options = self.cursor_icons.iter().map(|(name, image)| {
+                let name = *name;
+                ButtonLike::new(("cursor-kind", name.as_ptr() as usize))
+                    .style(if current == name { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(current == name)
+                    .child(img(gpui::ImageSource::Render(image.clone())).size(px(22.)).object_fit(ObjectFit::Contain))
+                    .tip(Tooltip::text(cursor_label(name)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.pick_cursor(name);
+                        this.cursors_open = false;
+                        cx.notify();
+                    }))
+            }).collect::<Vec<_>>();
+            h_flex()
+                .child(
+                    div()
+                        .relative()
+                        .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                            if this.cursors_open && !this.cursors_menu.get().contains(&e.position) {
+                                this.cursors_open = false;
+                                cx.notify();
+                            }
+                        }))
+                        .child(
+                            ButtonLike::new("cursor-kinds")
+                                .style(if self.cursors_open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                                .size(ButtonSize::Large)
+                                .toggle_state(self.cursors_open)
+                                .child(h_flex().gap_0p5().children(icon(current)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                                .tip(Tooltip::text(cursor_label(current)))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cursors_open = !this.cursors_open;
+                                    cx.notify();
+                                })),
+                        )
+                        .when(self.cursors_open, |d| {
+                            d.child(gpui::deferred(
+                                h_flex()
+                                    .id("cursor-menu")
+                                    .occlude()
+                                    .absolute()
+                                    .top(px(38.))
+                                    .right_0()
+                                    .gap_0p5()
+                                    .p_1()
+                                    .elevation_3(cx)
+                                    .children(options)
+                                    .child(crate::ui::track_bounds(&self.cursors_menu)),
+                            ))
+                        }),
+                )
+                .child(Divider::vertical().h_5().mx_1())
+        });
         // Pixelate or blur, and hiding what looks private, for the hide tool.
         let hiding = self.tool == Tool::Blur || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
         let hide_options = hiding.then(|| {
@@ -2478,6 +2787,7 @@ impl Editor {
                         .p_2()
                         .elevation_3(cx)
                         .children(hide_options)
+                        .children(cursor_options)
                         .children(text_options)
                         .children(fill_toggle)
                         .child(palette)
@@ -2507,7 +2817,7 @@ impl Editor {
                     .children(menu),
             )
         } else {
-            h_flex().gap_0p5().children(hide_options).children(text_options).children(fill_toggle).child(palette).child(weights)
+            h_flex().gap_0p5().children(hide_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette).child(weights)
         };
 
         // The window's controls (or room for them), the modes and history at
@@ -3257,7 +3567,7 @@ impl Editor {
 
     /// Picture with blur patches, vector shapes, text and counters, then the
     /// crop shade and the selection on top.
-    fn render_canvas(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_canvas(&self, scale_factor: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.scale();
         // Everything is laid out in the work area, the picture `m` in.
         let m = self.margin();
@@ -3294,11 +3604,164 @@ impl Editor {
             _ => None,
         });
 
-        let vector: Vec<Shape> = self.doc.shapes.iter().chain(self.draft.iter()).cloned().collect();
-        let spots: Vec<(P, P)> = vector.iter().filter(|sh| matches!(sh.kind, Kind::Spotlight)).map(|sh| (sh.a, sh.b)).collect();
-        let picture_size = (self.px.0 as f32, self.px.1 as f32);
+        let picture_size = (pw, ph);
+        // The finished strokes come from their picture; only what it lacks
+        // (the stroke being drawn, the shape being dragged, edits it hasn't
+        // caught up with yet) is outlined here, every frame.
+        let shapes = &self.doc.shapes;
+        let skip = match self.drag {
+            Some(Drag::Move { index, .. } | Drag::Handle { index, .. } | Drag::Scale { index, .. }) => Some(index),
+            _ => None,
+        };
+        let usable = |im: &StrokesImage| im.count <= shapes.len() && strokes_hash(shapes, im.count, im.skip) == im.hash;
+        // Sharp at this zoom.
+        let density = s * scale_factor;
+        let points: usize = shapes.iter().map(|sh| match &sh.kind {
+            Kind::Pen(p) | Kind::Marker(p) => p.len(),
+            _ => 4,
+        }).sum();
+        // Too much to outline every frame until the picture catches up
+        // (opening a big drawing, undoing on one): the picture comes now.
+        if points > HEAVY_STROKES && !self.strokes.borrow().shown.as_ref().is_some_and(usable) {
+            let todo: Vec<Shape> = shapes.iter().enumerate().filter(|(i, sh)| sh.kind.is_vector() && Some(*i) != skip).map(|(_, sh)| sh.clone()).collect();
+            if let Some((at, size, density, image)) = strokes_image(&todo, density) {
+                let new = StrokesImage { count: shapes.len(), skip, hash: strokes_hash(shapes, shapes.len(), skip), density, at, size, image };
+                let mut state = self.strokes.borrow_mut();
+                if let Some(old) = state.shown.replace(new) {
+                    state.retired.push(old.image);
+                }
+            }
+        }
+        let state = self.strokes.borrow();
+        let shown = state.shown.as_ref().filter(|im| usable(im));
+        let uncovered = |i: usize| shown.is_none_or(|im| i >= im.count || Some(i) == im.skip);
+        // A shape being moved (or just let go, until the picture has it)
+        // comes from a picture of its own, shifted.
+        let held = match self.drag {
+            Some(Drag::Move { index, .. } | Drag::Scale { index, .. }) => Some(index),
+            _ => None,
+        };
+        let candidate = held.or(state.lifted.as_ref().map(|l| l.index)).filter(|&i| uncovered(i) && shapes.get(i).is_some_and(|sh| sh.kind.is_vector()));
+        // Moved: the picture shifts. Resized: it stretches to the new box
+        // until a picture of the new shape is drawn.
+        let mut stale = false;
+        let placing = candidate.and_then(|i| {
+            let l = state.lifted.as_ref().filter(|l| l.index == i)?;
+            let now = &shapes[i];
+            if let Some(d) = moved_by(now, &l.shape) {
+                return Some((i, (l.at.0 + d.0, l.at.1 + d.1), l.size));
+            }
+            stale = true;
+            let ((ol, ot, or, ob), (nl, nt, nr, nb)) = (l.shape.bounds(), now.bounds());
+            let k = |n: f32, o: f32| if o.abs() > 1e-3 { n / o } else { 1. };
+            let (kx, ky) = (k(nr - nl, or - ol), k(nb - nt, ob - ot));
+            Some((i, (nl + (l.at.0 - ol) * kx, nt + (l.at.1 - ot) * ky), (l.size.0 * kx, l.size.1 * ky)))
+        });
+        let lift_busy = state.lift_busy;
+        drop(state);
+        let lift_box = |sh: &Shape| {
+            let (l, t, r, b) = sh.bounds();
+            let pad = sh.size + 2.;
+            ((l - pad, t - pad), (r - l + 2. * pad, b - t + 2. * pad))
+        };
+        let lift = match (candidate, placing) {
+            (Some(i), Some(place)) => {
+                if stale && !lift_busy {
+                    self.strokes.borrow_mut().lift_busy = true;
+                    let sh = shapes[i].clone();
+                    let (at, size) = lift_box(&sh);
+                    let task = cx.background_executor().spawn(async move {
+                        let made = shapes_image(std::slice::from_ref(&sh), at, size, box_density(size, density));
+                        (sh, made)
+                    });
+                    cx.spawn(async move |this, cx| {
+                        let (sh, made) = task.await;
+                        let _ = this.update(cx, |this, cx| {
+                            let mut state = this.strokes.borrow_mut();
+                            state.lift_busy = false;
+                            if let Some((_, image)) = made
+                                && state.lifted.as_ref().is_some_and(|l| l.index == i)
+                                && let Some(old) = state.lifted.replace(Lifted { index: i, shape: sh, at, size, image })
+                            {
+                                state.retired.push(old.image);
+                            }
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                }
+                Some(place)
+            }
+            (Some(i), None) if held == Some(i) => {
+                let sh = &shapes[i];
+                let (at, size) = lift_box(sh);
+                let made = shapes_image(std::slice::from_ref(sh), at, size, box_density(size, density));
+                let mut state = self.strokes.borrow_mut();
+                if let Some(old) = state.lifted.take() {
+                    state.retired.push(old.image);
+                }
+                made.map(|(_, image)| {
+                    state.lifted = Some(Lifted { index: i, shape: sh.clone(), at, size, image });
+                    (i, at, size)
+                })
+            }
+            _ => {
+                let mut state = self.strokes.borrow_mut();
+                if let Some(old) = state.lifted.take() {
+                    state.retired.push(old.image);
+                }
+                None
+            }
+        };
+        let state = self.strokes.borrow();
+        let shown = state.shown.as_ref().filter(|im| usable(im));
+        let uncovered = |i: usize| shown.is_none_or(|im| i >= im.count || Some(i) == im.skip);
+        let lifted = lift.and_then(|(i, at, size)| {
+            let l = state.lifted.as_ref()?;
+            Some((i, l.image.clone(), (at.0 * s + off, at.1 * s + off), (size.0 * s, size.1 * s)))
+        });
+        let live: Vec<Shape> = shapes
+            .iter()
+            .enumerate()
+            .filter(|(i, sh)| sh.kind.is_vector() && uncovered(*i) && lifted.as_ref().is_none_or(|l| l.0 != *i))
+            .map(|(_, sh)| sh.clone())
+            .chain(self.draft.iter().cloned())
+            .collect();
+        let wanted = (shapes.len(), skip);
+        let any = shapes.iter().enumerate().any(|(i, sh)| sh.kind.is_vector() && Some(i) != skip);
+        let fresh = shown.is_some_and(|im| (im.count, im.skip) == wanted && (im.density / box_density(im.size, density) - 1.).abs() < 0.1);
+        let placed = shown.map(|im| (im.image.clone(), (im.at.0 * s + off, im.at.1 * s + off), (im.size.0 * s, im.size.1 * s)));
+        drop(state);
+        if !fresh && any && !self.strokes.borrow().busy {
+            self.strokes.borrow_mut().busy = true;
+            let todo: Vec<Shape> = shapes.iter().enumerate().filter(|(i, sh)| sh.kind.is_vector() && Some(*i) != skip).map(|(_, sh)| sh.clone()).collect();
+            let hash = strokes_hash(shapes, shapes.len(), skip);
+            let task = cx.background_executor().spawn(async move { strokes_image(&todo, density) });
+            cx.spawn(async move |this, cx| {
+                let made = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    let mut state = this.strokes.borrow_mut();
+                    state.busy = false;
+                    if let Some((at, size, density, image)) = made {
+                        let new = StrokesImage { count: wanted.0, skip: wanted.1, hash, density, at, size, image };
+                        if let Some(old) = state.shown.replace(new) {
+                            state.retired.push(old.image);
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        } else if !any {
+            let mut state = self.strokes.borrow_mut();
+            if let Some(old) = state.shown.take() {
+                state.retired.push(old.image);
+            }
+        }
+        let spots: Vec<(P, P)> = shapes.iter().chain(self.draft.iter()).filter(|sh| matches!(sh.kind, Kind::Spotlight)).map(|sh| (sh.a, sh.b)).collect();
         let origin = self.origin.clone();
-        let strokes = canvas(
+        // The dimming goes under the other shapes.
+        let under = canvas(
             move |bounds, _, _| {
                 origin.set((f32::from(bounds.origin.x), f32::from(bounds.origin.y)));
                 bounds
@@ -3306,9 +3769,24 @@ impl Editor {
             move |_, bounds, window, _| {
                 let o = bounds.origin;
                 let pt = |p: P| point(o.x + px(p.0 * s + off), o.y + px(p.1 * s + off));
-                // The dimming goes under the other shapes.
                 paint_spotlights(window, &spots, picture_size, &pt);
-                for shape in &vector {
+            },
+        )
+        .absolute()
+        .inset_0()
+        .size_full();
+        let finished = placed.map(|(image, at, size)| img(gpui::ImageSource::Render(image)).absolute().left(px(at.0)).top(px(at.1)).w(px(size.0)).h(px(size.1)).object_fit(ObjectFit::Fill));
+        let lifted = lifted.map(|(_, image, at, size)| img(gpui::ImageSource::Render(image)).absolute().left(px(at.0)).top(px(at.1)).w(px(size.0)).h(px(size.1)).object_fit(ObjectFit::Fill));
+        let strokes = self.strokes.clone();
+        let over = canvas(
+            |bounds, _, _| bounds,
+            move |_, bounds, window, _| {
+                for old in strokes.borrow_mut().retired.drain(..) {
+                    let _ = window.drop_image(old);
+                }
+                let o = bounds.origin;
+                let pt = |p: P| point(o.x + px(p.0 * s + off), o.y + px(p.1 * s + off));
+                for shape in &live {
                     paint_shape(window, shape, s, &pt);
                 }
             },
@@ -3317,7 +3795,8 @@ impl Editor {
         .inset_0()
         .size_full();
 
-        let labels = self.doc.shapes.iter().enumerate().filter_map(|(i, shape)| match &shape.kind {
+        let mut cursors_shown = Vec::new();
+        let labels: Vec<AnyElement> = self.doc.shapes.iter().enumerate().filter_map(|(i, shape)| match &shape.kind {
             Kind::Text(text) => {
                 let (x, y) = at(shape.a);
                 let m = metrics(shape.size);
@@ -3358,6 +3837,31 @@ impl Editor {
                     }
                 })
             }
+            Kind::Cursor(name) => {
+                let height = shape.size * s * scale_factor;
+                let key = (*name, height.round().max(1.) as u32);
+                let cached = self.cursor_images.borrow().get(&key).cloned();
+                let image = match cached {
+                    Some(image) => image,
+                    None => {
+                        let image = cursor_image(name, key.1 as f32)?;
+                        self.cursor_images.borrow_mut().insert(key, image.clone());
+                        image
+                    }
+                };
+                cursors_shown.push(key);
+                let ((hx, hy), (w, h)) = crate::cursors::geometry(name, shape.size);
+                Some(
+                    img(gpui::ImageSource::Render(image))
+                        .absolute()
+                        .left(px((shape.a.0 - hx) * s + off))
+                        .top(px((shape.a.1 - hy) * s + off))
+                        .w(px(w * s))
+                        .h(px(h * s))
+                        .object_fit(ObjectFit::Fill)
+                        .into_any_element(),
+                )
+            }
             Kind::Counter(n) => {
                 let d = shape.size * s;
                 Some(
@@ -3380,7 +3884,18 @@ impl Editor {
                 )
             }
             _ => None,
-        });
+        }).collect();
+        // Cursors drawn for another zoom go, for the next frame to free.
+        {
+            let mut images = self.cursor_images.borrow_mut();
+            let gone: Vec<_> = images.keys().filter(|k| !cursors_shown.contains(k)).copied().collect();
+            let mut state = self.strokes.borrow_mut();
+            for key in gone {
+                if let Some(image) = images.remove(&key) {
+                    state.retired.push(image);
+                }
+            }
+        }
 
         let crop = self.doc.crop;
         let cropping = self.cropping.is_some();
@@ -3574,7 +4089,7 @@ impl Editor {
                 // background without padding, cut at the picture's edge
                 // (the crop's, if any), as Save cuts it.
                 let canvas_size = (self.disp.0 + 2. * off, self.disp.1 + 2. * off);
-                let drawn = div().absolute().w(px(canvas_size.0)).h(px(canvas_size.1)).children(pictures).child(strokes).children(labels);
+                let drawn = div().absolute().w(px(canvas_size.0)).h(px(canvas_size.1)).children(pictures).child(under).children(finished).children(lifted).child(over).children(labels);
                 if self.frame.clips() && self.cropping.is_none() {
                     let (x, y) = (el * s + off, et * s + off);
                     d.child(div().absolute().left(px(x)).top(px(y)).w(px((er - el) * s)).h(px((eb - et) * s)).overflow_hidden().child(drawn.left(px(-x)).top(px(-y))))
@@ -3660,8 +4175,33 @@ impl Render for Editor {
         .size_full();
         let canvas_at = {
             let (_, _, w, h) = self.stage_box.get();
-            let off = self.margin() * self.disp.0 / self.px.0.max(1) as f32;
-            ((w - self.disp.0) / 2. - off + self.view_pan.0, (h - self.disp.1) / 2. - off + self.view_pan.1)
+            let (s, m) = (self.disp.0 / self.px.0.max(1) as f32, self.margin());
+            let off = m * s;
+            let at = ((w - self.disp.0) / 2. - off + self.view_pan.0, (h - self.disp.1) / 2. - off + self.view_pan.1);
+            // A crop pulled past the stage takes the view along, so its edge
+            // stays in sight.
+            self.crop_shift = match (&self.drag, self.doc.crop) {
+                (Some(Drag::Crop { .. } | Drag::CropEdit { .. }), Some((a, b))) => {
+                    let (l, t, r, bt) = rect(a, b);
+                    let follow = |lo: f32, hi: f32, base: f32, room: f32| {
+                        let (lo, hi) = (base + (lo + m) * s, base + (hi + m) * s);
+                        let (min, max) = (CROP_ROOM, room - CROP_ROOM);
+                        // Bigger than the stage (zoomed in): no side to keep.
+                        if hi - lo > max - min {
+                            0.
+                        } else if hi > max {
+                            max - hi
+                        } else if lo < min {
+                            min - lo
+                        } else {
+                            0.
+                        }
+                    };
+                    (follow(l, r, at.0, w), follow(t, bt, at.1, h))
+                }
+                _ => (0., 0.),
+            };
+            (at.0 + self.crop_shift.0, at.1 + self.crop_shift.1)
         };
         let stage = h_flex()
             .relative()
@@ -3702,7 +4242,7 @@ impl Render for Editor {
                     }))
                     .child(stage_measure)
                     // In the middle of the stage, moved by the camera.
-                    .child(div().absolute().left(px(canvas_at.0)).top(px(canvas_at.1)).child(self.render_canvas(cx))),
+                    .child(div().absolute().left(px(canvas_at.0)).top(px(canvas_at.1)).child(self.render_canvas(window.scale_factor(), cx))),
             )
             ;
         let border = cx.theme().colors().border;
@@ -4198,21 +4738,7 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
     // Outline the stroke the way the export does (round caps and joins) and
     // fill it with the nonzero rule: GPUI's own stroke overlaps itself at sharp
     // turns, which shows as dark knots in translucent marker lines.
-    let stroke = |window: &mut Window, points: &[P], closed: bool, color: Hsla, width: f32| {
-        let Some((first, rest)) = points.split_first() else { return };
-        let mut line = tiny_skia::PathBuilder::new();
-        line.move_to(first.0 * s, first.1 * s);
-        for p in rest {
-            line.line_to(p.0 * s, p.1 * s);
-        }
-        if rest.is_empty() {
-            line.line_to(first.0 * s + 0.01, first.1 * s);
-        }
-        if closed {
-            line.close();
-        }
-        let style = tiny_skia::Stroke { width: width * s, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
-        let Some(outline) = line.finish().and_then(|path| path.stroke(&style, 1.)) else { return };
+    let fill = |window: &mut Window, outline: &tiny_skia::Path, color: Hsla| {
         let at = |p: tiny_skia::Point| pt((p.x / s, p.y / s));
         let mut b = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::non_zero()));
         for segment in outline.segments() {
@@ -4226,6 +4752,68 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
         }
         if let Ok(path) = b.build() {
             window.paint_path(path, color);
+        }
+    };
+    let outline = |points: &[P], closed: bool, cap: tiny_skia::LineCap, width: f32| {
+        let (first, rest) = points.split_first()?;
+        let mut line = tiny_skia::PathBuilder::new();
+        line.move_to(first.0 * s, first.1 * s);
+        for p in rest {
+            line.line_to(p.0 * s, p.1 * s);
+        }
+        if rest.is_empty() {
+            line.line_to(first.0 * s + 0.01, first.1 * s);
+        }
+        if closed {
+            line.close();
+        }
+        let style = tiny_skia::Stroke { width: width * s, line_cap: cap, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+        line.finish().and_then(|path| path.stroke(&style, 1.))
+    };
+    let stroke = |window: &mut Window, points: &[P], closed: bool, color: Hsla, width: f32| {
+        // GPUI counts a path's vertices in 16 bits and drops a path with
+        // more, so a long stroke goes in pieces.
+        if closed || points.len() <= STROKE_PIECE {
+            if let Some(o) = outline(points, closed, tiny_skia::LineCap::Round, width) {
+                fill(window, &o, color);
+            }
+            return;
+        }
+        let pieces = (points.len() - 1).div_ceil(STROKE_PIECE);
+        let translucent = color.alpha < 1.;
+        for k in 0..pieces {
+            let piece = &points[k * STROKE_PIECE..((k + 1) * STROKE_PIECE + 1).min(points.len())];
+            // Overlapping round ends would show darker where translucent
+            // pieces meet: those meet square, and the stroke's two ends get
+            // their half-round caps on their own.
+            let cap = if translucent { tiny_skia::LineCap::Butt } else { tiny_skia::LineCap::Round };
+            if let Some(o) = outline(piece, false, cap, width) {
+                fill(window, &o, color);
+            }
+        }
+        if translucent {
+            for (end, before) in [(points[0], points[1]), (points[points.len() - 1], points[points.len() - 2])] {
+                let (dx, dy) = (end.0 - before.0, end.1 - before.1);
+                let len = dx.hypot(dy);
+                if len < 1e-4 {
+                    continue;
+                }
+                let start = dy.atan2(dx) - std::f32::consts::FRAC_PI_2;
+                let r = width / 2.;
+                let cap: Vec<P> = (0..=12).map(|i| {
+                    let th = start + i as f32 / 12. * std::f32::consts::PI;
+                    (end.0 + r * th.cos(), end.1 + r * th.sin())
+                }).collect();
+                let mut f = PathBuilder::fill();
+                f.move_to(pt(cap[0]));
+                for p in &cap[1..] {
+                    f.line_to(pt(*p));
+                }
+                f.close();
+                if let Ok(path) = f.build() {
+                    window.paint_path(path, color);
+                }
+            }
         }
     };
     let (a, b, c, w) = (shape.a, shape.b, shape.color, shape.size);
@@ -4271,9 +4859,20 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             outline.alpha = 0.8;
             stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, outline, 1.5 / s);
         }
-        Kind::Blur(_, Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Spotlight | Kind::Picture(_) => {}
+        Kind::Blur(_, Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Cursor(_) | Kind::Spotlight | Kind::Picture(_) => {}
     }
 }
+
+/// How close to the stage's edges a dragged crop comes before the view
+/// follows it, in screen pixels.
+const CROP_ROOM: f32 = 24.;
+
+/// Stroke points past which the canvas waits for their picture rather
+/// than outlining them all on one frame.
+const HEAVY_STROKES: usize = 20_000;
+
+/// Points per piece of a stroke drawn on the canvas (see `paint_shape`).
+const STROKE_PIECE: usize = 96;
 
 /// How dark a spotlight leaves everything around it.
 const SPOT_SHADE: f32 = 0.55;
@@ -4387,9 +4986,89 @@ fn hide(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<RgbaImage> 
     }
 }
 
+fn paint_for(c: Hsla, alpha: f32) -> tiny_skia::Paint<'static> {
+    let rgb = crate::ui::rgb_of(c);
+    let mut p = tiny_skia::Paint::default();
+    p.set_color_rgba8((rgb.r * 255.) as u8, (rgb.g * 255.) as u8, (rgb.b * 255.) as u8, (alpha * 255.) as u8);
+    p.anti_alias = true;
+    p
+}
+
+fn stroke_for(width: f32) -> tiny_skia::Stroke {
+    tiny_skia::Stroke { width, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..tiny_skia::Stroke::default() }
+}
+
+fn polyline(points: &[P], closed: bool) -> Option<tiny_skia::Path> {
+    let mut b = tiny_skia::PathBuilder::new();
+    let (first, rest) = points.split_first()?;
+    b.move_to(first.0, first.1);
+    for p in rest {
+        b.line_to(p.0, p.1);
+    }
+    if closed {
+        b.close();
+    }
+    b.finish()
+}
+
+/// The shapes drawn as lines and fills (`Kind::is_vector`), mapped by `tf`.
+/// False for any other kind, which is left alone.
+fn draw_vector(pm: &mut tiny_skia::Pixmap, shape: &Shape, tf: tiny_skia::Transform) -> bool {
+    use tiny_skia::{FillRule, PathBuilder, Rect};
+    let (a, b, c, size) = (shape.a, shape.b, shape.color, shape.size);
+    let solid = paint_for(c, 1.);
+    match &shape.kind {
+        Kind::Rect => {
+            if let Some(path) = polyline(&[a, (b.0, a.1), b, (a.0, b.1)], true) {
+                if shape.filled {
+                    pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
+                } else {
+                    pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
+                }
+            }
+        }
+        Kind::Ellipse => {
+            let (l, t, r, bt) = rect(a, b);
+            if let Some(path) = Rect::from_ltrb(l, t, r, bt).and_then(PathBuilder::from_oval) {
+                if shape.filled {
+                    pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
+                } else {
+                    pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
+                }
+            }
+        }
+        Kind::Line => {
+            if let Some(path) = polyline(&shape.path(), false) {
+                pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
+            }
+        }
+        Kind::Pen(points) => {
+            if let Some(path) = polyline(&smooth(points), false) {
+                pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
+            }
+        }
+        Kind::Marker(points) => {
+            if let Some(path) = polyline(&smooth(points), false) {
+                pm.stroke_path(&path, &paint_for(c, MARKER_ALPHA), &stroke_for(size), tf, None);
+            }
+        }
+        Kind::Arrow => {
+            let (shaft, head) = arrow_parts(&shape.path(), size);
+            if let Some(path) = polyline(&shaft, false) {
+                pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
+            }
+            if let Some(path) = polyline(&head, true) {
+                pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// Draw everything onto the original at full resolution.
 fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
-    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
+    use tiny_skia::{FillRule, PathBuilder, Pixmap, Transform};
 
     // Hiding edits the pixels themselves, beneath every other shape.
     let mut base = src.clone();
@@ -4433,74 +5112,14 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
     }
     let mut pm = Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(w, h)?)?;
 
-    let paint_for = |c: Hsla, alpha: f32| {
-        let rgb = crate::ui::rgb_of(c);
-        let mut p = Paint::default();
-        p.set_color_rgba8((rgb.r * 255.) as u8, (rgb.g * 255.) as u8, (rgb.b * 255.) as u8, (alpha * 255.) as u8);
-        p.anti_alias = true;
-        p
-    };
-    let stroke_for = |width: f32| Stroke { width, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Stroke::default() };
-    let polyline = |points: &[P], closed: bool| {
-        let mut b = PathBuilder::new();
-        let (first, rest) = points.split_first()?;
-        b.move_to(first.0, first.1);
-        for p in rest {
-            b.line_to(p.0, p.1);
-        }
-        if closed {
-            b.close();
-        }
-        b.finish()
-    };
-
     for shape in shapes {
-        let (a, b, c, size) = (shape.a, shape.b, shape.color, shape.size);
+        if draw_vector(&mut pm, shape, Transform::identity()) {
+            continue;
+        }
+        let (a, c, size) = (shape.a, shape.color, shape.size);
         let solid = paint_for(c, 1.);
         match &shape.kind {
-            Kind::Rect => {
-                if let Some(path) = polyline(&[a, (b.0, a.1), b, (a.0, b.1)], true) {
-                    if shape.filled {
-                        pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
-                    } else {
-                        pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
-                    }
-                }
-            }
-            Kind::Ellipse => {
-                let (l, t, r, bt) = rect(a, b);
-                if let Some(path) = Rect::from_ltrb(l, t, r, bt).and_then(PathBuilder::from_oval) {
-                    if shape.filled {
-                        pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
-                    } else {
-                        pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
-                    }
-                }
-            }
-            Kind::Line => {
-                if let Some(path) = polyline(&shape.path(), false) {
-                    pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
-                }
-            }
-            Kind::Pen(points) => {
-                if let Some(path) = polyline(&smooth(points), false) {
-                    pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
-                }
-            }
-            Kind::Marker(points) => {
-                if let Some(path) = polyline(&smooth(points), false) {
-                    pm.stroke_path(&path, &paint_for(c, MARKER_ALPHA), &stroke_for(size), Transform::identity(), None);
-                }
-            }
-            Kind::Arrow => {
-                let (shaft, head) = arrow_parts(&shape.path(), size);
-                if let Some(path) = polyline(&shaft, false) {
-                    pm.stroke_path(&path, &solid, &stroke_for(size), Transform::identity(), None);
-                }
-                if let Some(path) = polyline(&head, true) {
-                    pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
-                }
-            }
+            Kind::Cursor(name) => crate::cursors::draw(name, size, a, &mut pm.as_mut()),
             Kind::Counter(n) => {
                 if let Some(path) = PathBuilder::from_circle(a.0, a.1, size / 2.) {
                     pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
@@ -4534,7 +5153,7 @@ fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
                     draw_line(&mut pm, line, (a.0, baseline), size, ink);
                 }
             }
-            Kind::Blur(..) | Kind::Spotlight | Kind::Picture(_) => {}
+            _ => {}
         }
     }
     let mut data = pm.take();
@@ -4620,6 +5239,68 @@ pub(crate) fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scribbles(n: usize) -> Vec<Shape> {
+        (0..n)
+            .map(|k| {
+                let points: Vec<P> = (0..300).map(|i| {
+                    let t = i as f32 / 40.;
+                    (400. + (t * 1.3 + k as f32).cos() * (60. + i as f32 * 0.3), 300. + (t * 1.7).sin() * (40. + i as f32 * 0.2))
+                }).collect();
+                let kind = if k % 5 == 0 { Kind::Marker(points) } else { Kind::Pen(points) };
+                Shape { kind, a: (0., 0.), b: (0., 0.), color: gpui::hsla(k as f32 / n as f32, 0.8, 0.5, 1.), size: 4., filled: false, text: TextStyle::Plain, bend: None }
+            })
+            .collect()
+    }
+
+    /// A moved shape is recognised as the same one, shifted; a reshaped one isn't.
+    #[test]
+    fn moving_keeps_the_picture() {
+        let shape = scribbles(1).remove(0);
+        let mut moved = shape.clone();
+        moved.translate((12., -5.));
+        assert_eq!(moved_by(&moved, &shape), Some((12., -5.)));
+        let mut thicker = moved.clone();
+        thicker.size += 1.;
+        assert_eq!(moved_by(&thicker, &shape), None);
+    }
+
+    /// A cursor lands with its tip where it was placed, inside its box.
+    #[test]
+    fn cursor_tip_on_the_point() {
+        let src = RgbaImage::from_pixel(200, 200, image::Rgba([255, 255, 255, 255]));
+        let shape = Shape { kind: Kind::Cursor("arrow"), a: (80., 60.), b: (80., 60.), color: gpui::hsla(0., 0., 0., 1.), size: 44., filled: false, text: TextStyle::Plain, bend: None };
+        let out = rasterize(&src, std::slice::from_ref(&shape)).unwrap();
+        // The arrow (from the user's theme or kadr's own) is dark inside a
+        // light rim, its tip at the point: ink just below and right of it,
+        // none clearly above or left.
+        let dark = |x: u32, y: u32| out.get_pixel(x, y).0[0] < 100;
+        assert!((81..92).any(|x| (62..76).any(|y| dark(x, y))), "no arrow just inside the tip");
+        let inked = |x: u32, y: u32| out.get_pixel(x, y).0[0] < 200;
+        assert!(!(60..77).any(|x| (40..57).any(|y| inked(x, y))), "arrow drawn above and left of the tip");
+        let (l, t, r, b) = shape.bounds();
+        let inked = out.enumerate_pixels().filter(|(_, _, p)| p.0[0] < 250).map(|(x, y, _)| (x as f32, y as f32));
+        assert!(inked.clone().all(|(x, y)| x >= l - 1. && x <= r + 1. && y >= t - 1. && y <= b + 1.), "drawn outside its box");
+    }
+
+    /// The canvas's picture of the strokes is what Save draws.
+    #[test]
+    fn stroke_picture_matches_the_export() {
+        let shapes = scribbles(12);
+        let saved = rasterize(&RgbaImage::new(800, 600), &shapes).unwrap();
+        let (_, image) = shapes_image(&shapes, (0., 0.), (800., 600.), 1.).unwrap();
+        let shown = image.as_bytes(0).unwrap();
+        let worst = saved.as_raw().chunks_exact(4).zip(shown.chunks_exact(4)).map(|(a, b)| {
+            // BGRA against RGBA; colour only matters where it shows.
+            let rgb = (0..3).map(|i| (a[i] as i32 - b[2 - i] as i32).abs() * a[3] as i32 / 255).max().unwrap();
+            rgb.max((a[3] as i32 - b[3] as i32).abs())
+        }).max().unwrap();
+        assert!(worst <= 2, "off by {worst}");
+        let many = scribbles(400);
+        let t = std::time::Instant::now();
+        strokes_image(&many, 1.).unwrap();
+        println!("400 strokes: {:?}", t.elapsed());
+    }
 
     /// Blurring a plain area leaves it plain: no darker rim where the blur
     /// ran out of picture.

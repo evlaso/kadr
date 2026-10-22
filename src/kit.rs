@@ -79,6 +79,7 @@ assets![
     "icons/kadr/ellipse.svg" => "../data/icons/editor/ellipse.svg",
     "icons/kadr/marker.svg" => "../data/icons/editor/marker.svg",
     "icons/kadr/counter.svg" => "../data/icons/editor/counter.svg",
+    "icons/kadr/cursor.svg" => "../data/icons/editor/cursor.svg",
     "icons/kadr/pixelate.svg" => "../data/icons/editor/pixelate.svg",
     "icons/kadr/blur.svg" => "../data/icons/editor/blur.svg",
     "icons/kadr/scan_text.svg" => "../data/icons/editor/scan_text.svg",

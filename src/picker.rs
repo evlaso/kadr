@@ -387,6 +387,23 @@ impl Picker {
 
     fn mouse_down(&mut self, e: &MouseDownEvent) {
         let p = local(e.position);
+        // Still dragging: the button was let go past the monitor's edge,
+        // where the release went to another surface. This press ends it,
+        // as that release would have.
+        if let Some(drag) = self.drag.take() {
+            match self.selection {
+                Some(sel) if matches!(drag, Drag::New(_)) && sel.2 >= 4. && sel.3 >= 4. => {
+                    if self.adjust {
+                        self.before = None;
+                    } else {
+                        self.pending = Some(Some((sel, false)));
+                    }
+                }
+                _ if matches!(drag, Drag::New(_)) && self.before.is_some() => self.selection = self.before.take(),
+                _ => {}
+            }
+            return;
+        }
         self.last = Some(p);
         if self.adjust
             && let Some(sel) = self.selection

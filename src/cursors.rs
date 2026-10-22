@@ -23,6 +23,49 @@ const SHAPES: [(&str, &str, (f32, f32)); 13] = [
 /// the arrow that tall, and the others in proportion.
 const ARROW_UNITS: f32 = 22.4;
 
+/// The shapes the editor's cursor tool offers, in its toolbar's order.
+/// (No "move": macOS themes draw it as the closed hand.)
+pub const STAMPS: [&str; 8] = ["arrow", "pointer", "text", "grab", "grabbing", "crosshair", "not-allowed", "wait"];
+
+/// A shape's hotspot and picture size per pixel of arrow height, as
+/// `render` draws it (the theme's pictures scale evenly with the arrow).
+fn proportions(name: &str) -> ((f32, f32), (f32, f32)) {
+    static SEEN: std::sync::Mutex<Vec<(&'static str, ((f32, f32), (f32, f32)))>> = std::sync::Mutex::new(Vec::new());
+    let name = known(name);
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, p)) = seen.iter().find(|(n, _)| *n == name) {
+        return *p;
+    }
+    const AT: f32 = 100.;
+    let p = render(name, AT).map_or(((0., 0.), (1., 1.)), |(pm, (hx, hy))| {
+        ((hx as f32 / AT, hy as f32 / AT), (pm.width() as f32 / AT, pm.height() as f32 / AT))
+    });
+    seen.push((name, p));
+    p
+}
+
+/// Where a shape drawn with the arrow `height` tall has its hotspot, and
+/// its picture's size, both in the same units as `height`.
+pub fn geometry(name: &str, height: f32) -> ((f32, f32), (f32, f32)) {
+    let ((hx, hy), (w, h)) = proportions(name);
+    ((hx * height, hy * height), (w * height, h * height))
+}
+
+/// The arrow height at which a shape's picture is `side` across, its
+/// longer way.
+pub fn height_for(name: &str, side: f32) -> f32 {
+    let (_, (w, h)) = proportions(name);
+    side / w.max(h).max(1e-3)
+}
+
+/// Draw the shape (as `render` has it) onto `pm` with the arrow `height`
+/// pixels tall and its hotspot at `at`.
+pub fn draw(name: &str, height: f32, at: (f32, f32), pm: &mut tiny_skia::PixmapMut) {
+    let Some((picture, (hx, hy))) = render(name, height) else { return };
+    let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+    pm.draw_pixmap(0, 0, picture.as_ref(), &paint, tiny_skia::Transform::from_translate(at.0 - hx as f32, at.1 - hy as f32), None);
+}
+
 /// All shape names, the fallback first.
 #[cfg(test)]
 pub fn names() -> impl Iterator<Item = &'static str> {

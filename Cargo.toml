@@ -27,3 +27,7 @@ ksni = { version = "0.3.6", default-features = false, features = ["blocking", "a
 
 [profile.release]
 strip = true
+
+# GPUI CE's Linux platform with drawing tablet support (see vendor/README.md).
+[patch."https://github.com/gpui-ce/gpui-ce"]
+gpui_ce_linux = { path = "vendor/gpui_linux" }
