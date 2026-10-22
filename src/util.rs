@@ -39,7 +39,7 @@ pub async fn output<S: AsRef<OsStr>>(argv: &[S]) -> Option<(bool, String)> {
     Some((out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
-pub use crate::platform::{Signal, cache_dir, config_dir, copy_file, copy_files, copy_image, cursor_pos, hypr, monitors, notify, open_file, runtime_dir, signal, trash, user_dir};
+pub use crate::platform::{Signal, cache_dir, config_dir, copy_file, copy_files, copy_image, cursor_pos, hypr, monitors, notify, open_file, runtime_dir, signal, trash};
 
 pub fn open_folder(path: &Path) {
     if let Some(dir) = path.parent() {

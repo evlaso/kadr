@@ -3398,6 +3398,7 @@ dependencies = [
 name = "kadr-core"
 version = "0.2.0"
 dependencies = [
+ "chrono",
  "image",
  "serde_json",
 ]

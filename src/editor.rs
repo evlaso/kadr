@@ -20,6 +20,7 @@ use gpui::{
 };
 use image::RgbaImage;
 use kadr_core::color::Rgba;
+use kadr_core::project;
 use kadr_core::document::{Backdrop, Doc, Frame, Hide, Kind, MARKER_ALPHA, MAX_PAD, MAX_REACH, MAX_ROUND, P, SPOT_SHADE, Shape, TextStyle, rect, segment_distance, work_margin_at};
 use kadr_raster::shapes::{arrow_parts, draw_vector, ellipse_points, smooth};
 use kadr_raster::text::metrics;
@@ -32,10 +33,7 @@ use crate::{cards, ocr, palette, studio_editor, util};
 use crate::i18n::t;
 
 mod crop;
-mod project;
 mod redact;
-pub(crate) use project::prune as prune_projects;
-pub(crate) use project::root as projects_dir;
 
 
 /// Stroke widths, font sizes and counter sizes in screen pixels, from the

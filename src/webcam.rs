@@ -208,7 +208,7 @@ pub fn show(mon: &Mon, area: (f32, f32, f32, f32), hosted: bool, cx: &mut App) {
                 if failed && !shown {
                     let holder = camera.as_deref().and_then(crate::platform::device_holder);
                     match holder {
-                        Some(app) => util::notify(t("camera.busy"), &crate::tr!("camera.busy_with", app)),
+                        Some(app) => util::notify(t("camera.busy"), &kadr_core::tr!("camera.busy_with", app)),
                         None => util::notify(t("common.camera_didnt_start"), t("camera.busy_unknown")),
                     }
                 }

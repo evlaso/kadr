@@ -1,4 +1,6 @@
 #[macro_use]
+extern crate kadr_core;
+
 mod i18n;
 mod bundle;
 mod capture;
@@ -243,6 +245,7 @@ fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<(Vec<Stri
 }
 
 fn main() {
+    platform::set_dirs();
     i18n::set(settings::Settings::load().language);
     // The cursor stamps and the studio's pointer in the user's own theme.
     kadr_raster::cursors::set_theme(platform::theme_cursor);
