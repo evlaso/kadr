@@ -63,6 +63,25 @@ unstripped; .text 29.5 MiB):
 The obvious cuts toward 25 MB: `image` without AVIF/EXR/TIFF (needs GPUI's
 `image-default-formats` off), and fewer D-Bus stacks.
 
+## Copies of the picture in the editor
+
+`kadr dev mem` with a 3840×2160 picture (a noise PNG of 40.8 MB, so the
+file's bytes show; a real screenshot's PNG is a few MB):
+
+| | Before | After |
+|---|---|---|
+| The file's bytes, kept for the project | 40.8 MB | — (encoded from the picture on save) |
+| The file's bytes again, for GPUI's own image | 40.8 MB | — |
+| GPUI's decoded copy of that image | 31.6 MB | — |
+| The picture, decoded (RGBA) | 31.6 MB | 31.6 MB |
+| The picture as the canvas shows it (BGRA, padded) | 31.7 MB | 31.7 MB |
+| **Live blocks over 1 MB** | **178.5 MB** | **65.3 MB** |
+| RSS (fast build with line tables and dev hooks) | 654 MB | 533 MB |
+
+What's left is the picture once to draw and export from, and once on the
+GPU's side; drawings are a layer of shapes on top, and undo keeps changes
+to it, not copies.
+
 ## How each is measured
 
 - **Tray RSS**: a fresh `kadr tray` (on Linux the StatusNotifierItem through

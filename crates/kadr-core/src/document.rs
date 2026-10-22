@@ -116,6 +116,22 @@ pub enum Kind {
     Picture(Arc<RgbaImage>),
 }
 
+/// Pictures are the same when they're the same picture, not a copy.
+impl PartialEq for Kind {
+    fn eq(&self, other: &Kind) -> bool {
+        match (self, other) {
+            (Kind::Pen(a), Kind::Pen(b)) | (Kind::Marker(a), Kind::Marker(b)) => a == b,
+            (Kind::Text(a), Kind::Text(b)) => a == b,
+            (Kind::Counter(a), Kind::Counter(b)) => a == b,
+            (Kind::Cursor(a), Kind::Cursor(b)) => a == b,
+            (Kind::Blur(a), Kind::Blur(b)) => a == b,
+            (Kind::Picture(a), Kind::Picture(b)) => Arc::ptr_eq(a, b),
+            (Kind::Arrow, Kind::Arrow) | (Kind::Rect, Kind::Rect) | (Kind::Ellipse, Kind::Ellipse) | (Kind::Line, Kind::Line) | (Kind::Spotlight, Kind::Spotlight) => true,
+            _ => false,
+        }
+    }
+}
+
 impl Kind {
     /// Drawn as lines and fills.
     pub fn is_vector(&self) -> bool {
@@ -148,7 +164,7 @@ impl TextStyle {
 /// Geometry is in image pixels. For text `a` is the top-left corner and
 /// `size` the font size; for counters `a` is the center and `size` the
 /// diameter; otherwise `size` is the stroke width.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Shape {
     pub kind: Kind,
     pub a: P,
@@ -221,7 +237,7 @@ impl Orientation {
 }
 
 /// Everything undo/redo restores.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Doc {
     pub shapes: Vec<Shape>,
     pub crop: Option<(P, P)>,

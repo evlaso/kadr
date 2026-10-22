@@ -21,10 +21,11 @@ use gpui::{
 use image::RgbaImage;
 use kadr_core::color::Rgba;
 use kadr_core::project;
-use kadr_core::document::{Backdrop, Doc, Frame, Hide, Kind, MARKER_ALPHA, MAX_PAD, MAX_REACH, MAX_ROUND, P, SPOT_SHADE, Shape, TextStyle, rect, segment_distance, work_margin_at};
+use kadr_core::document::{Backdrop, Doc, Frame, Hide, Kind, MARKER_ALPHA, MAX_PAD, MAX_REACH, MAX_ROUND, P, SPOT_SHADE, Shape, TextStyle, rect, work_margin_at};
 use kadr_raster::shapes::{arrow_parts, draw_vector, ellipse_points, smooth};
 use kadr_raster::text::metrics;
 use kadr_raster::{Bounds as _, cursors};
+use kadr_ui::editor::{COUNTER_SIZES, CURSOR_SIZES, Edit, EditorVm, FONT_SIZES, WIDTHS, sized};
 use crate::ui::{ButtonLike, Divider, IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
@@ -36,20 +37,9 @@ mod crop;
 mod redact;
 
 
-/// Stroke widths, font sizes and counter sizes in screen pixels, from the
-/// size slider's start to its end.
-const WIDTHS: (f32, f32) = (2., 16.);
-const FONT_SIZES: (f32, f32) = (12., 56.);
-const COUNTER_SIZES: (f32, f32) = (18., 52.);
-/// The cursor tool's arrow height, small to large, in screen pixels.
-const CURSOR_SIZES: (f32, f32) = (18., 72.);
 /// Where the size slider starts.
 const WEIGHT: f32 = 0.22;
 
-/// A size from a range at the slider's position (0..1).
-fn sized((lo, hi): (f32, f32), weight: f32) -> f32 {
-    lo + (hi - lo) * weight
-}
 
 /// Room around the picture to draw and crop in, the same way: like
 /// CleanShot, the result grows to take in what's drawn outside the picture.
@@ -60,8 +50,8 @@ const MIN_ZOOM: f32 = 0.2;
 const EDGE_SNAP: f32 = 6.;
 /// Grab distance for shapes and handles, in screen pixels.
 const GRAB: f32 = 7.;
-/// The selection band's gap from a shape and its width, in screen pixels.
-const BAND_GAP: f32 = 5.;
+/// The selection band's width, in screen pixels (its gap from the shape is
+/// `kadr_ui::editor::BAND_GAP`).
 const BAND: f32 = 5.;
 /// Toolbar and footer together, roughly: the first layout's guess at the
 /// stage height, measured from then on.
@@ -396,138 +386,6 @@ fn shapes_image(shapes: &[Shape], at: P, size: P, density: f32) -> Option<(u32, 
 
 
 
-/// What the editor does with a shape beyond drawing it: hit-testing, its
-/// handles, and reshaping it by them.
-trait Edit {
-    fn hit(&self, p: P, tol: f32) -> bool;
-    fn handles(&self) -> Vec<P>;
-    fn band_pad(&self, scale: f32) -> f32;
-    fn knobs(&self, scale: f32) -> Vec<P>;
-    fn scales(&self) -> bool;
-    fn scale_from(&mut self, orig: &Shape, handle: usize, p: P);
-    fn set_handle(&mut self, handle: usize, p: P);
-    fn set_weight(&mut self, weight: f32, s: f32);
-}
-
-impl Edit for Shape {
-    fn hit(&self, p: P, tol: f32) -> bool {
-        let reach = tol + self.size / 2.;
-        match &self.kind {
-            Kind::Line | Kind::Arrow => self.path().windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach),
-            Kind::Pen(points) | Kind::Marker(points) => points.windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach),
-            _ => {
-                let (l, t, r, b) = self.bounds();
-                p.0 >= l - tol && p.0 <= r + tol && p.1 >= t - tol && p.1 <= b + tol
-            }
-        }
-    }
-
-    /// Resize handles: corners then edge middles for boxes, ends for lines.
-    fn handles(&self) -> Vec<P> {
-        let (a, b) = (self.a, self.b);
-        let mid = ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
-        match self.kind {
-            Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
-            // Ends, then the middle that bends it.
-            Kind::Line | Kind::Arrow => vec![a, b, self.bend.unwrap_or(mid)],
-            // Text, counters and freehand scale from their box's corners.
-            _ => {
-                let (l, t, r, bt) = self.bounds();
-                vec![(l, t), (r, t), (r, bt), (l, bt)]
-            }
-        }
-    }
-
-    /// How far the selection band sits outside a boxy shape, in image
-    /// pixels at `scale`: clear of the stroke, like CleanShot's.
-    fn band_pad(&self, scale: f32) -> f32 {
-        let stroke = if matches!(self.kind, Kind::Rect | Kind::Ellipse) && !self.filled { self.size } else { 0. };
-        stroke + BAND_GAP / scale
-    }
-
-    /// Where the handles are drawn and grabbed: on the band round boxy
-    /// shapes, on the points themselves for lines.
-    fn knobs(&self, scale: f32) -> Vec<P> {
-        let hs = self.handles();
-        if matches!(self.kind, Kind::Line | Kind::Arrow) {
-            return hs;
-        }
-        let (l, t, r, b) = self.bounds();
-        let pad = self.band_pad(scale);
-        let out = |v: f32, lo: f32, hi: f32| if v <= lo { v - pad } else if v >= hi { v + pad } else { v };
-        hs.into_iter().map(|(x, y)| (out(x, l, r), out(y, t, b))).collect()
-    }
-
-    /// Shapes whose corner handles scale them rather than move a point.
-    fn scales(&self) -> bool {
-        matches!(self.kind, Kind::Text(_) | Kind::Counter(_) | Kind::Cursor(_) | Kind::Pen(_) | Kind::Marker(_) | Kind::Picture(_))
-    }
-
-    /// Scale `orig` by dragging corner `handle` to `p`, the opposite corner
-    /// staying put: text, counters and pictures keep their proportions (the
-    /// size grows with them), freehand stretches each way.
-    fn scale_from(&mut self, orig: &Shape, handle: usize, p: P) {
-        let corners = orig.handles();
-        let (Some(&h), Some(&o)) = (corners.get(handle), corners.get((handle + 2) % 4)) else { return };
-        let (dx, dy) = (h.0 - o.0, h.1 - o.1);
-        let around = |q: P, fx: f32, fy: f32| (o.0 + (q.0 - o.0) * fx, o.1 + (q.1 - o.1) * fy);
-        *self = orig.clone();
-        match &mut self.kind {
-            Kind::Pen(points) | Kind::Marker(points) => {
-                let fx = if dx.abs() > 1. { ((p.0 - o.0) / dx).max(0.05) } else { 1. };
-                let fy = if dy.abs() > 1. { ((p.1 - o.1) / dy).max(0.05) } else { 1. };
-                points.iter_mut().for_each(|q| *q = around(*q, fx, fy));
-                self.a = around(orig.a, fx, fy);
-                self.b = around(orig.b, fx, fy);
-            }
-            _ => {
-                // Project the pointer on the corner's diagonal.
-                let len2 = (dx * dx + dy * dy).max(1.);
-                let f = (((p.0 - o.0) * dx + (p.1 - o.1) * dy) / len2).max(0.2);
-                self.size = orig.size * f;
-                self.a = around(orig.a, f, f);
-                self.b = around(orig.b, f, f);
-            }
-        }
-    }
-
-    fn set_handle(&mut self, handle: usize, p: P) {
-        match (&self.kind, handle) {
-            (Kind::Line | Kind::Arrow, 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 0) => self.a = p,
-            (Kind::Line | Kind::Arrow, 2) => {
-                // Back to straight when the middle is dragged onto the line.
-                let mid = ((self.a.0 + self.b.0) / 2., (self.a.1 + self.b.1) / 2.);
-                let len = (self.b.0 - self.a.0).hypot(self.b.1 - self.a.1);
-                self.bend = (segment_distance(p, self.a, self.b) > len * 0.02 || (p.0 - mid.0).hypot(p.1 - mid.1) > len * 0.3).then_some(p);
-            }
-            (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 2) => self.b = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 1) => (self.b.0, self.a.1) = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 3) => (self.a.0, self.b.1) = p,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 4) => self.a.1 = p.1,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 5) => self.b.0 = p.0,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 6) => self.b.1 = p.1,
-            (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 7) => self.a.0 = p.0,
-            _ => {}
-        }
-    }
-
-    /// Apply the toolbar's weight to an existing shape.
-    fn set_weight(&mut self, weight: f32, s: f32) {
-        self.size = match self.kind {
-            Kind::Text(_) => sized(FONT_SIZES, weight),
-            Kind::Counter(_) => sized(COUNTER_SIZES, weight),
-            Kind::Cursor(_) => sized(CURSOR_SIZES, weight),
-            Kind::Marker(_) => sized(WIDTHS, weight) * 3.,
-            // A hidden area keeps the slider's position as its strength.
-            Kind::Blur(..) => {
-                self.size = weight;
-                return;
-            }
-            Kind::Spotlight | Kind::Picture(_) => return,
-            _ => sized(WIDTHS, weight),
-        } / s;
-    }
-}
 
 
 
@@ -593,11 +451,10 @@ pub struct Editor {
     path: PathBuf,
     /// Show the file's card again on closing, unless a save showed one.
     card_on_close: bool,
-    image: Arc<Image>,
     /// The picture as shown, its edge pixels repeated round it: drawn
     /// scaled, GPUI blends a texture's outer texels with what lies past
     /// them, a grey rim at the right and bottom; with the rim repeated and
-    /// only the picture painted, there's none. Until it's decoded, `image`.
+    /// only the picture painted, there's none. Until it's decoded, nothing.
     picture: Option<Arc<gpui::RenderImage>>,
     /// Pictures replaced by a turn, to free from the window's atlas.
     stale_pictures: Vec<Arc<gpui::RenderImage>>,
@@ -607,7 +464,7 @@ pub struct Editor {
     /// Decoded picture as shown (turned as `shown` says), for pixelation and
     /// the final render.
     source: Option<Arc<RgbaImage>>,
-    /// The picture as taken, decoded, and its size; what `image` and `source`
+    /// The picture as taken, decoded, and its size; what `source`
     /// are turned from.
     original: Option<Arc<RgbaImage>>,
     px_taken: (u32, u32),
@@ -655,9 +512,8 @@ pub struct Editor {
     crop_menu_bounds: crate::ui::MenuBounds,
     /// On-screen size of the picture.
     disp: (f32, f32),
-    doc: Doc,
-    history: Vec<Doc>,
-    future: Vec<Doc>,
+    /// The drawing and its undo history.
+    vm: EditorVm,
     draft: Option<Shape>,
     drag: Option<Drag>,
     selected: Option<usize>,
@@ -677,9 +533,9 @@ pub struct Editor {
     hide: Hide,
     /// "Hide sensitive" is reading the picture.
     redacting: bool,
-    /// The picture as it was before any drawing (the original, or the one
-    /// kept with a reopened project), kept with the drawing on export.
-    base: Arc<Vec<u8>>,
+    /// The file's density (PNG pHYs), kept on what's saved. The picture
+    /// itself is `original`; the file's bytes aren't kept.
+    density: Option<f64>,
     /// Opened with the drawing from an earlier save.
     restored: bool,
     /// The `.kadr` this session keeps the drawing in: the one it was opened
@@ -773,8 +629,9 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
         let restored = project::load(&path, &bytes);
         (path, bytes, restored, None)
     };
+    // The file's bytes, read once for the picture and then let go.
     let bytes = restored.as_mut().map(|r| std::mem::take(&mut r.base)).unwrap_or(bytes);
-    let base = Arc::new(bytes.clone());
+    let file_density = cards::png_density(&bytes);
     let Some((w, h)) = cards::png_size(&bytes) else {
         return util::notify(t("editor.editor_opens_png_only"), &path.display().to_string());
     };
@@ -793,7 +650,6 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
     let fit = ((max_w - 48.) / grown(natural.0)).min((max_h - 48. - CHROME) / grown(natural.1)).min(1.0);
     let disp = (natural.0 * fit, natural.1 * fit);
 
-    let image = Arc::new(Image::from_bytes(ImageFormat::Png, bytes.clone()));
     // A window around the picture with its backdrop margin, the stage
     // padding and the bars; the picture refits whenever the window resizes.
     let pad = disp.0.max(disp.1) * WORK_PAD * 2.;
@@ -826,7 +682,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                     editor.sync_view(cx);
                     editor.refresh_blurred(cx);
                     // A reopened drawing's hidden areas.
-                    for i in 0..editor.doc.shapes.len() {
+                    for i in 0..editor.vm.doc.shapes.len() {
                         editor.refresh_patch(i, cx);
                     }
                     cx.notify();
@@ -858,7 +714,6 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 picture: None,
                 stale_pictures: Vec::new(),
                 strokes: Default::default(),
-                image,
                 px: (w, h),
                 source: None,
                 original: None,
@@ -881,9 +736,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 crop_menu: None,
                 crop_menu_bounds: Default::default(),
                 disp,
-                doc,
-                history: Vec::new(),
-                future: Vec::new(),
+                vm: EditorVm::new(doc),
                 draft: None,
                 drag: None,
                 selected: None,
@@ -896,7 +749,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 fill: false,
                 hide: Hide::Pixelate,
                 redacting: false,
-                base,
+                density: file_density,
                 restored: reopened,
                 bundle,
                 hover: None,
@@ -998,7 +851,7 @@ impl Editor {
     /// How far the crop reaches past the picture, in image pixels.
     fn crop_overhang(&self) -> f32 {
         let (w, h) = (self.px.0 as f32, self.px.1 as f32);
-        self.doc.crop.map_or(0., |(a, b)| {
+        self.vm.doc.crop.map_or(0., |(a, b)| {
             let (l, t, r, b) = rect(a, b);
             (-l).max(-t).max(r - w).max(b - h).max(0.)
         })
@@ -1023,7 +876,7 @@ impl Editor {
     /// The crop's knobs: corners from the top left clockwise, then the
     /// middles of the top, right, bottom and left edges.
     fn crop_handles(&self) -> Vec<P> {
-        let Some((l, t, r, b)) = self.doc.crop.map(|(a, b)| rect(a, b)) else { return Vec::new() };
+        let Some((l, t, r, b)) = self.vm.doc.crop.map(|(a, b)| rect(a, b)) else { return Vec::new() };
         let (mx, my) = ((l + r) / 2., (t + b) / 2.);
         vec![(l, t), (r, t), (r, b), (l, b), (mx, t), (r, my), (mx, b), (l, my)]
     }
@@ -1031,7 +884,7 @@ impl Editor {
     /// Sizes that follow the picture's turn: its pixels and how big it
     /// shows.
     fn sync_geometry(&mut self) {
-        let view = self.doc.view;
+        let view = self.vm.doc.view;
         let side = |p: (f32, f32)| if view.turns % 2 == 1 { (p.1, p.0) } else { p };
         self.px = view.size(self.px_taken);
         self.natural = side(self.natural_taken);
@@ -1042,19 +895,13 @@ impl Editor {
     /// or a revert, and redo what depends on its pixels.
     fn sync_view(&mut self, cx: &mut Context<Self>) {
         self.sync_geometry();
-        let view = self.doc.view;
+        let view = self.vm.doc.view;
         if view == self.shown {
             return;
         }
         let Some(original) = self.original.clone() else { return };
-        let turned = view.apply(&original);
-        let mut png = Vec::new();
-        let encoder = image::codecs::png::PngEncoder::new_with_quality(&mut png, image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::NoFilter);
-        if turned.write_with_encoder(encoder).is_err() {
-            return;
-        }
-        self.image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
-        self.source = Some(Arc::new(turned));
+        // Upright, the shown picture is the original itself, not a copy.
+        self.source = Some(if view.is_upright() { original } else { Arc::new(view.apply(&original)) });
         self.set_picture();
         self.shown = view;
         self.refresh_blurred(cx);
@@ -1062,7 +909,7 @@ impl Editor {
         if self.cropping.is_some() {
             self.find_edges(cx);
         }
-        for i in 0..self.doc.shapes.len() {
+        for i in 0..self.vm.doc.shapes.len() {
             self.refresh_patch(i, cx);
         }
     }
@@ -1106,15 +953,16 @@ impl Editor {
         if self.cropping.is_some() {
             return;
         }
-        self.cropping = Some(CropSession { entry: self.doc.clone(), history: self.history.len(), tool: self.tool });
+        let history = self.vm.history.mark(&self.vm.doc);
+        self.cropping = Some(CropSession { entry: self.vm.doc.clone(), history, tool: self.tool });
         self.tool = Tool::Crop;
         self.selected = None;
         self.colors_open = false;
         self.more_open = false;
         self.panel = false;
         // Like CleanShot, the frame starts round the whole picture.
-        if self.doc.crop.is_none() {
-            self.doc.crop = Some(((0., 0.), (self.px.0 as f32, self.px.1 as f32)));
+        if self.vm.doc.crop.is_none() {
+            self.vm.doc.crop = Some(((0., 0.), (self.px.0 as f32, self.px.1 as f32)));
         }
         self.find_edges(cx);
     }
@@ -1126,8 +974,8 @@ impl Editor {
         self.crop_menu = None;
         // A frame left round the whole picture crops nothing.
         let whole = ((0., 0.), (self.px.0 as f32, self.px.1 as f32));
-        if self.doc.crop.is_some_and(|(a, b)| rect(a, b) == (whole.0.0, whole.0.1, whole.1.0, whole.1.1)) {
-            self.doc.crop = None;
+        if self.vm.doc.crop.is_some_and(|(a, b)| rect(a, b) == (whole.0.0, whole.0.1, whole.1.0, whole.1.1)) {
+            self.vm.doc.crop = None;
         }
         self.tool = if session.tool == Tool::Crop { Tool::Select } else { session.tool };
     }
@@ -1137,9 +985,8 @@ impl Editor {
         let Some(session) = self.cropping.take() else { return };
         self.size_field = None;
         self.crop_menu = None;
-        self.doc = session.entry;
-        self.history.truncate(session.history);
-        self.future.clear();
+        self.vm.doc = session.entry;
+        self.vm.history.rewind(session.history);
         self.tool = if session.tool == Tool::Crop { Tool::Select } else { session.tool };
         self.sync_view(cx);
     }
@@ -1174,12 +1021,12 @@ impl Editor {
         let Some((_, Some(win))) = self.window else { return };
         let crop = Some(((win.0, win.1), (win.2, win.3)));
         // Once: Uncrop afterwards keeps the shadow.
-        if self.frame.on() && !self.window_fitted && self.cropping.is_none() && self.doc.crop.is_none() {
-            self.doc.crop = crop;
+        if self.frame.on() && !self.window_fitted && self.cropping.is_none() && self.vm.doc.crop.is_none() {
+            self.vm.doc.crop = crop;
             self.window_fitted = true;
         } else if !self.frame.on() && self.window_fitted {
-            if self.doc.crop == crop {
-                self.doc.crop = None;
+            if self.vm.doc.crop == crop {
+                self.vm.doc.crop = None;
             }
             self.window_fitted = false;
         }
@@ -1187,7 +1034,7 @@ impl Editor {
 
     /// The crop, or the whole picture when there's none.
     fn crop_or_picture(&self) -> crop::Rect {
-        self.doc.crop.map(|(a, b)| rect(a, b)).unwrap_or((0., 0., self.px.0 as f32, self.px.1 as f32))
+        self.vm.doc.crop.map(|(a, b)| rect(a, b)).unwrap_or((0., 0., self.px.0 as f32, self.px.1 as f32))
     }
 
     /// What the crop's edges snap to: the picture's edges and its long
@@ -1203,7 +1050,7 @@ impl Editor {
             lines.xs.extend(&edges.0);
             lines.ys.extend(&edges.1);
         }
-        for shape in &self.doc.shapes {
+        for shape in &self.vm.doc.shapes {
             let (l, t, r, b) = shape.bounds();
             lines.xs.extend([l, r]);
             lines.ys.extend([t, b]);
@@ -1225,7 +1072,7 @@ impl Editor {
             Some(Drag::CropEdit { handle, orig, from, .. }) => crop::edit(orig, handle, p, from, ratio, area, &lines),
             _ => return,
         };
-        self.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
+        self.vm.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
     }
 
     /// The aspect menu: a fixed shape fits the crop (or the picture) to it.
@@ -1234,17 +1081,17 @@ impl Editor {
         if let Some(k) = self.crop_ratio() {
             self.checkpoint();
             let r = crop::fit_ratio(self.crop_or_picture(), k);
-            self.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
+            self.vm.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
         }
     }
 
     /// The ↔ button: the crop and its shape on their side.
     fn swap_crop_sides(&mut self) {
         self.aspect = self.aspect.swapped(self.px);
-        if let Some((a, b)) = self.doc.crop {
+        if let Some((a, b)) = self.vm.doc.crop {
             self.checkpoint();
             let r = crop::swap_sides(rect(a, b));
-            self.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
+            self.vm.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
         }
     }
 
@@ -1269,7 +1116,7 @@ impl Editor {
             }
         }
         self.checkpoint();
-        self.doc.crop = Some(((l, t), (l + w.round(), t + h.round())));
+        self.vm.doc.crop = Some(((l, t), (l + w.round(), t + h.round())));
     }
 
     /// Turn the picture a quarter clockwise, or mirror it, with everything
@@ -1277,14 +1124,14 @@ impl Editor {
     fn turn(&mut self, turn: crop::Turn, cx: &mut Context<Self>) {
         self.size_field = None;
         self.checkpoint();
-        crop::turn_doc(&mut self.doc, turn, self.px);
+        crop::turn_doc(&mut self.vm.doc, turn, self.px);
         self.sync_view(cx);
     }
 
     fn pick_scale(&mut self, scale: f32) {
-        if (self.doc.scale - scale).abs() > 1e-4 {
+        if (self.vm.doc.scale - scale).abs() > 1e-4 {
             self.checkpoint();
-            self.doc.scale = scale;
+            self.vm.doc.scale = scale;
         }
     }
 
@@ -1292,9 +1139,9 @@ impl Editor {
     fn revert_crop(&mut self, cx: &mut Context<Self>) {
         self.size_field = None;
         self.checkpoint();
-        crop::upright(&mut self.doc, self.px);
-        self.doc.crop = None;
-        self.doc.scale = 1.;
+        crop::upright(&mut self.vm.doc, self.px);
+        self.vm.doc.crop = None;
+        self.vm.doc.scale = 1.;
         self.aspect = crop::Aspect::Free;
         self.sync_view(cx);
     }
@@ -1313,7 +1160,7 @@ impl Editor {
     /// What Save produces, in image pixels: the crop, or the picture and
     /// everything drawn around it.
     fn extent(&self) -> (f32, f32, f32, f32) {
-        kadr_raster::extent(&self.doc, self.px, !self.frame.clips())
+        kadr_raster::extent(&self.vm.doc, self.px, !self.frame.clips())
     }
 
     fn current_color(&self) -> Rgba {
@@ -1322,14 +1169,12 @@ impl Editor {
 
     /// Remember the current state for undo, before changing it.
     fn checkpoint(&mut self) {
-        self.history.push(self.doc.clone());
-        self.future.clear();
+        self.vm.checkpoint();
     }
 
     fn undo(&mut self, cx: &mut Context<Self>) {
         self.finish_text();
-        if let Some(doc) = self.history.pop() {
-            self.future.push(std::mem::replace(&mut self.doc, doc));
+        if self.vm.undo() {
             self.selected = None;
             self.marked.clear();
             self.sync_view(cx);
@@ -1337,8 +1182,7 @@ impl Editor {
     }
 
     fn redo(&mut self, cx: &mut Context<Self>) {
-        if let Some(doc) = self.future.pop() {
-            self.history.push(std::mem::replace(&mut self.doc, doc));
+        if self.vm.redo() {
             self.selected = None;
             self.marked.clear();
             self.sync_view(cx);
@@ -1347,9 +1191,9 @@ impl Editor {
 
     fn finish_text(&mut self) {
         if let Some(i) = self.editing.take()
-            && matches!(&self.doc.shapes[i].kind, Kind::Text(t) if t.trim().is_empty())
+            && matches!(&self.vm.doc.shapes[i].kind, Kind::Text(t) if t.trim().is_empty())
         {
-            self.doc.shapes.remove(i);
+            self.vm.doc.shapes.remove(i);
             self.selected = None;
         }
     }
@@ -1360,33 +1204,33 @@ impl Editor {
             let mut marked = std::mem::take(&mut self.marked);
             marked.sort_unstable();
             for i in marked.into_iter().rev() {
-                self.doc.shapes.remove(i);
+                self.vm.doc.shapes.remove(i);
             }
             self.selected = None;
             return;
         }
         if let Some(i) = self.selected.take() {
             self.checkpoint();
-            self.doc.shapes.remove(i);
+            self.vm.doc.shapes.remove(i);
         }
     }
 
     /// Topmost shape under the pointer.
     fn shape_at(&self, p: P) -> Option<usize> {
         let tol = GRAB / self.scale();
-        self.doc.shapes.iter().rposition(|s| s.hit(p, tol))
+        self.vm.doc.shapes.iter().rposition(|s| s.hit(p, tol))
     }
 
     fn handle_at(&self, p: P) -> Option<(usize, usize)> {
         let i = self.selected?;
         let tol = (GRAB + 4.) / self.scale();
-        let h = self.doc.shapes[i].knobs(self.scale()).iter().position(|h| (h.0 - p.0).hypot(h.1 - p.1) <= tol)?;
+        let h = self.vm.doc.shapes[i].knobs(self.scale()).iter().position(|h| (h.0 - p.0).hypot(h.1 - p.1) <= tol)?;
         Some((i, h))
     }
 
     /// Every shape in the drawing, its undo history and redo.
     fn all_shapes(&self) -> impl Iterator<Item = &Shape> {
-        self.doc.shapes.iter().chain(self.history.iter().chain(&self.future).flat_map(|d| d.shapes.iter())).chain(self.draft.iter())
+        self.vm.all_shapes().chain(self.draft.iter())
     }
 
     /// Keep a computed patch; ones no version of the drawing has go.
@@ -1431,7 +1275,7 @@ impl Editor {
     /// Compute the patch for a hidden area in the background.
     fn refresh_patch(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(src) = self.source.clone() else { return };
-        let Some((how, a, b, size)) = self.doc.shapes.get(index).and_then(|s| match s.kind {
+        let Some((how, a, b, size)) = self.vm.doc.shapes.get(index).and_then(|s| match s.kind {
             Kind::Blur(how) => Some((how, s.a, s.b, s.size)),
             _ => None,
         }) else {
@@ -1466,7 +1310,7 @@ impl Editor {
         // Double-click a text to type into it again.
         if e.click_count == 2
             && let Some(i) = self.shape_at(p)
-            && matches!(self.doc.shapes[i].kind, Kind::Text(_))
+            && matches!(self.vm.doc.shapes[i].kind, Kind::Text(_))
         {
             self.finish_text();
             self.checkpoint();
@@ -1479,7 +1323,7 @@ impl Editor {
         // The selection's handles and body work with any tool.
         if let Some((index, handle)) = self.handle_at(p) {
             self.checkpoint();
-            let shape = &self.doc.shapes[index];
+            let shape = &self.vm.doc.shapes[index];
             self.drag = Some(if shape.scales() { Drag::Scale { index, handle, orig: shape.clone() } } else { Drag::Handle { index, handle } });
             return cx.notify();
         }
@@ -1487,7 +1331,7 @@ impl Editor {
             self.checkpoint();
             // An existing crop is resized at its knobs and moved from inside;
             // elsewhere a new one starts.
-            if let Some(orig) = self.doc.crop.map(|(a, b)| rect(a, b)) {
+            if let Some(orig) = self.vm.doc.crop.map(|(a, b)| rect(a, b)) {
                 let handle = self.crop_handle_at(p);
                 let inside = p.0 > orig.0 && p.0 < orig.2 && p.1 > orig.1 && p.1 < orig.3;
                 if handle.is_some() || inside {
@@ -1496,7 +1340,7 @@ impl Editor {
                     return cx.notify();
                 }
             }
-            self.doc.crop = Some((p, p));
+            self.vm.doc.crop = Some((p, p));
             let grab = Grab { at: (f32::from(e.position.x), f32::from(e.position.y)), scale: self.scale(), point: p };
             self.drag = Some(Drag::Crop { start: p, grab });
             return cx.notify();
@@ -1504,7 +1348,7 @@ impl Editor {
         self.marked.clear();
         let grabbed = match self.tool {
             Tool::Select => self.shape_at(p),
-            _ => self.selected.filter(|&i| self.doc.shapes[i].hit(p, GRAB / s)),
+            _ => self.selected.filter(|&i| self.vm.doc.shapes[i].hit(p, GRAB / s)),
         };
         if let Some(index) = grabbed {
             self.checkpoint();
@@ -1523,22 +1367,22 @@ impl Editor {
             Tool::Crop => return cx.notify(),
             Tool::Text => {
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: sized(FONT_SIZES, self.weight) / s, filled: false, text: self.text_style, bend: None });
-                self.editing = Some(self.doc.shapes.len() - 1);
+                self.vm.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: sized(FONT_SIZES, self.weight) / s, filled: false, text: self.text_style, bend: None });
+                self.editing = Some(self.vm.doc.shapes.len() - 1);
                 self.selected = self.editing;
                 return cx.notify();
             }
             Tool::Cursor => {
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Cursor(self.cursor_kind), a: p, b: p, color, size: sized(CURSOR_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain, bend: None });
-                self.selected = Some(self.doc.shapes.len() - 1);
+                self.vm.doc.shapes.push(Shape { kind: Kind::Cursor(self.cursor_kind), a: p, b: p, color, size: sized(CURSOR_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain, bend: None });
+                self.selected = Some(self.vm.doc.shapes.len() - 1);
                 return cx.notify();
             }
             Tool::Counter => {
-                let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
+                let n = self.vm.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
                 self.checkpoint();
-                self.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: sized(COUNTER_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain, bend: None });
-                self.selected = Some(self.doc.shapes.len() - 1);
+                self.vm.doc.shapes.push(Shape { kind: Kind::Counter(n), a: p, b: p, color, size: sized(COUNTER_SIZES, self.weight) / s, filled: false, text: TextStyle::Plain, bend: None });
+                self.selected = Some(self.vm.doc.shapes.len() - 1);
                 return cx.notify();
             }
             Tool::Arrow => Kind::Arrow,
@@ -1571,7 +1415,7 @@ impl Editor {
             // Show what a press would do: resize at a knob, move over a shape.
             let hover = self.to_image(e.position, false).and_then(|p| {
                 if self.tool == Tool::Crop
-                    && let Some((l, t, r, b)) = self.doc.crop.map(|(a, b)| rect(a, b))
+                    && let Some((l, t, r, b)) = self.vm.doc.crop.map(|(a, b)| rect(a, b))
                 {
                     return match self.crop_handle_at(p) {
                         Some(0 | 2) => Some(CursorStyle::ResizeUpLeftDownRight),
@@ -1582,7 +1426,7 @@ impl Editor {
                     };
                 }
                 if let Some((index, handle)) = self.handle_at(p) {
-                    let shape = &self.doc.shapes[index];
+                    let shape = &self.vm.doc.shapes[index];
                     let corners = shape.handles();
                     let (h, mid) = (corners[handle], shape.bounds());
                     let centre = ((mid.0 + mid.2) / 2., (mid.1 + mid.3) / 2.);
@@ -1596,7 +1440,7 @@ impl Editor {
                 }
                 let over = match self.tool {
                     Tool::Select => self.shape_at(p).is_some(),
-                    _ => self.selected.is_some_and(|i| self.doc.shapes[i].hit(p, GRAB / self.scale())),
+                    _ => self.selected.is_some_and(|i| self.vm.doc.shapes[i].hit(p, GRAB / self.scale())),
                 };
                 over.then_some(CursorStyle::OpenHand)
             });
@@ -1626,15 +1470,15 @@ impl Editor {
                 let d = (p.0 - last.0, p.1 - last.1);
                 *last = p;
                 *moved = true;
-                self.doc.shapes[*index].translate(d);
+                self.vm.doc.shapes[*index].translate(d);
             }
             Some(Drag::Handle { index, handle }) => {
                 let (index, handle) = (*index, *handle);
-                self.doc.shapes[index].set_handle(handle, p);
+                self.vm.doc.shapes[index].set_handle(handle, p);
             }
             Some(Drag::Scale { index, handle, orig }) => {
                 let (index, handle) = (*index, *handle);
-                self.doc.shapes[index].scale_from(orig, handle, p);
+                self.vm.doc.shapes[index].scale_from(orig, handle, p);
             }
             Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => {}
             Some(Drag::Marquee { now, .. }) => *now = p,
@@ -1663,9 +1507,9 @@ impl Editor {
         match self.drag.take() {
             Some(Drag::Marquee { start, now }) => {
                 let (l, t, r, b) = rect(start, now);
-                self.marked = (0..self.doc.shapes.len())
+                self.marked = (0..self.vm.doc.shapes.len())
                     .filter(|&i| {
-                        let (sl, st, sr, sb) = self.doc.shapes[i].bounds();
+                        let (sl, st, sr, sb) = self.vm.doc.shapes[i].bounds();
                         sl <= r && sr >= l && st <= b && sb >= t
                     })
                     .collect();
@@ -1676,19 +1520,17 @@ impl Editor {
             }
             Some(Drag::Slider(_)) => {}
             // A click without movement isn't an edit.
-            Some(Drag::Move { moved: false, .. }) => {
-                self.history.pop();
-            }
+            Some(Drag::Move { moved: false, .. }) => self.vm.drop_checkpoint(),
             Some(Drag::Move { index, .. } | Drag::Handle { index, .. } | Drag::Scale { index, .. }) => self.refresh_patch(index, cx),
             Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => {
                 // The view stays where the crop took it.
                 self.view_pan = (self.view_pan.0 + self.crop_shift.0, self.view_pan.1 + self.crop_shift.1);
                 self.crop_shift = (0., 0.);
-                if let Some((a, b)) = self.doc.crop
+                if let Some((a, b)) = self.vm.doc.crop
                     && ((a.0 - b.0).abs() < 4. || (a.1 - b.1).abs() < 4.)
                 {
                     // A click with the crop tool resets the crop.
-                    self.doc.crop = None;
+                    self.vm.doc.crop = None;
                 }
             }
             Some(Drag::Draw) => {
@@ -1706,8 +1548,8 @@ impl Editor {
                     // next stroke starts right away.
                     if !tiny {
                         self.checkpoint();
-                        self.doc.shapes.push(shape);
-                        let index = self.doc.shapes.len() - 1;
+                        self.vm.doc.shapes.push(shape);
+                        let index = self.vm.doc.shapes.len() - 1;
                         self.selected = None;
                         self.refresh_patch(index, cx);
                     }
@@ -1745,15 +1587,15 @@ impl Editor {
             match k.key.as_str() {
                 "escape" => self.finish_text(),
                 "enter" if !shift => self.finish_text(),
-                "enter" => push_text(&mut self.doc.shapes[i], "\n"),
+                "enter" => push_text(&mut self.vm.doc.shapes[i], "\n"),
                 "backspace" => {
-                    if let Kind::Text(t) = &mut self.doc.shapes[i].kind {
+                    if let Kind::Text(t) = &mut self.vm.doc.shapes[i].kind {
                         t.pop();
                     }
                 }
                 _ if !ctrl => {
                     if let Some(ch) = &k.key_char {
-                        push_text(&mut self.doc.shapes[i], ch);
+                        push_text(&mut self.vm.doc.shapes[i], ch);
                     }
                 }
                 _ => {}
@@ -1771,15 +1613,15 @@ impl Editor {
             ("escape", _, _) if self.selected.is_some() => self.selected = None,
             ("a", true, _) if self.cropping.is_none() => {
                 self.selected = None;
-                self.marked = (0..self.doc.shapes.len()).collect();
+                self.marked = (0..self.vm.doc.shapes.len()).collect();
             }
             // Done with the crop: it stays, the crop tool steps aside.
             ("escape", _, _) if self.crop_menu.is_some() => self.crop_menu = None,
             ("escape", _, _) if self.cropping.is_some() => self.cancel_crop(cx),
             ("enter", _, _) if self.cropping.is_some() => self.apply_crop(),
-            ("delete" | "backspace", false, _) if self.cropping.is_some() && self.doc.crop.is_some() => {
+            ("delete" | "backspace", false, _) if self.cropping.is_some() && self.vm.doc.crop.is_some() => {
                 self.checkpoint();
-                self.doc.crop = None;
+                self.vm.doc.crop = None;
             }
             ("escape", _, _) => window.remove_window(),
             ("delete" | "backspace", false, _) => self.delete_selected(),
@@ -1795,7 +1637,7 @@ impl Editor {
                 };
                 if let Some(index) = self.selected {
                     self.checkpoint();
-                    self.doc.shapes[index].translate(d);
+                    self.vm.doc.shapes[index].translate(d);
                     self.refresh_patch(index, cx);
                 }
             }
@@ -1830,7 +1672,7 @@ impl Editor {
         self.color = i;
         if let Some(index) = self.selected {
             self.checkpoint();
-            self.doc.shapes[index].color = crate::ui::to_rgba(self.colors[i]);
+            self.vm.doc.shapes[index].color = crate::ui::to_rgba(self.colors[i]);
         }
     }
 
@@ -1839,7 +1681,7 @@ impl Editor {
         self.weight = weight;
         if let Some(index) = self.selected {
             let s = self.scale();
-            self.doc.shapes[index].set_weight(weight, s);
+            self.vm.doc.shapes[index].set_weight(weight, s);
             self.refresh_patch(index, cx);
         }
     }
@@ -1852,10 +1694,10 @@ impl Editor {
     fn pick_fill(&mut self, fill: bool) {
         self.fill = fill;
         if let Some(index) = self.selected
-            && matches!(self.doc.shapes[index].kind, Kind::Rect | Kind::Ellipse)
+            && matches!(self.vm.doc.shapes[index].kind, Kind::Rect | Kind::Ellipse)
         {
             self.checkpoint();
-            self.doc.shapes[index].filled = fill;
+            self.vm.doc.shapes[index].filled = fill;
         }
     }
 
@@ -1863,15 +1705,15 @@ impl Editor {
     fn duplicate(&mut self, cx: &mut Context<Self>) {
         let Some(index) = self.selected else { return };
         self.checkpoint();
-        let mut copy = self.doc.shapes[index].clone();
+        let mut copy = self.vm.doc.shapes[index].clone();
         if let Kind::Counter(_) = copy.kind {
-            let n = self.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
+            let n = self.vm.doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Counter(_))).count() as u32 + 1;
             copy.kind = Kind::Counter(n);
         }
         let step = 16. / self.scale();
         copy.translate((step, step));
-        self.doc.shapes.push(copy);
-        let new = self.doc.shapes.len() - 1;
+        self.vm.doc.shapes.push(copy);
+        let new = self.vm.doc.shapes.len() - 1;
         self.selected = Some(new);
         self.refresh_patch(new, cx);
     }
@@ -1885,7 +1727,7 @@ impl Editor {
         let (w, h) = (pw * fit, ph * fit);
         let (x, y) = ((cw - w) / 2., (ch - h) / 2.);
         self.checkpoint();
-        self.doc.shapes.push(Shape {
+        self.vm.doc.shapes.push(Shape {
             kind: Kind::Picture(picture),
             a: (x, y),
             b: (x + w, y + h),
@@ -1895,7 +1737,7 @@ impl Editor {
             text: TextStyle::Plain,
             bend: None,
         });
-        self.selected = Some(self.doc.shapes.len() - 1);
+        self.selected = Some(self.vm.doc.shapes.len() - 1);
         self.apply_crop();
         self.tool = Tool::Select;
     }
@@ -1930,10 +1772,10 @@ impl Editor {
     fn pick_text_style(&mut self, style: TextStyle) {
         self.text_style = style;
         if let Some(index) = self.selected
-            && matches!(self.doc.shapes[index].kind, Kind::Text(_))
+            && matches!(self.vm.doc.shapes[index].kind, Kind::Text(_))
         {
             self.checkpoint();
-            self.doc.shapes[index].text = style;
+            self.vm.doc.shapes[index].text = style;
         }
     }
 
@@ -1941,10 +1783,10 @@ impl Editor {
     fn pick_cursor(&mut self, name: &'static str) {
         self.cursor_kind = name;
         if let Some(index) = self.selected
-            && matches!(self.doc.shapes[index].kind, Kind::Cursor(_))
+            && matches!(self.vm.doc.shapes[index].kind, Kind::Cursor(_))
         {
             self.checkpoint();
-            self.doc.shapes[index].kind = Kind::Cursor(name);
+            self.vm.doc.shapes[index].kind = Kind::Cursor(name);
         }
     }
 
@@ -1952,11 +1794,11 @@ impl Editor {
     fn pick_hide(&mut self, how: Hide, cx: &mut Context<Self>) {
         self.hide = how;
         if let Some(index) = self.selected
-            && let Kind::Blur(now) = self.doc.shapes[index].kind
+            && let Kind::Blur(now) = self.vm.doc.shapes[index].kind
             && now != how
         {
             self.checkpoint();
-            self.doc.shapes[index].kind = Kind::Blur(how);
+            self.vm.doc.shapes[index].kind = Kind::Blur(how);
             self.refresh_patch(index, cx);
         }
     }
@@ -1998,8 +1840,8 @@ impl Editor {
         self.checkpoint();
         let (color, size) = (self.current_color(), self.weight);
         for (l, t, r, b) in boxes {
-            self.doc.shapes.push(Shape { kind: Kind::Blur(self.hide), a: (l, t), b: (r, b), color, size, filled: false, text: TextStyle::Plain, bend: None });
-            self.refresh_patch(self.doc.shapes.len() - 1, cx);
+            self.vm.doc.shapes.push(Shape { kind: Kind::Blur(self.hide), a: (l, t), b: (r, b), color, size, filled: false, text: TextStyle::Plain, bend: None });
+            self.refresh_patch(self.vm.doc.shapes.len() - 1, cx);
         }
         self.selected = None;
     }
@@ -2008,7 +1850,7 @@ impl Editor {
     fn discard_edits(&mut self, cx: &mut Context<Self>) {
         self.finish_text();
         self.checkpoint();
-        self.doc = Doc::default();
+        self.vm.doc = Doc::default();
         self.selected = None;
         self.sync_view(cx);
     }
@@ -2064,7 +1906,7 @@ impl Editor {
         let Some(src) = self.source.clone() else {
             return util::notify("kadr", t("editor.image_still_loading_try_again"));
         };
-        let doc = self.doc.clone();
+        let doc = self.vm.doc.clone();
         let frame = self.frame.clone();
         let (path, copy) = match how {
             Export::SaveAs(path) => (path, false),
@@ -2075,7 +1917,7 @@ impl Editor {
         if !copy {
             self.card_on_close = false;
         }
-        let base = self.base.clone();
+        let (original, density) = (self.original.clone(), self.density);
         let bundle = self.bundle.clone();
         window.remove_window();
         let hold = kit::hold(cx);
@@ -2083,12 +1925,12 @@ impl Editor {
             let _hold = hold;
             let (drawn, framed) = (doc.clone(), frame.clone());
             // The result keeps the original's density, less the image size.
-            let density = cards::png_density(&base).map(|d| d * drawn.scale.min(1.) as f64);
+            let shrunk = density.map(|d| d * drawn.scale.min(1.) as f64);
             let png = cx.background_executor().spawn(async move { kadr_raster::render_png(&src, &drawn, &framed) }).await;
             let Some(png) = png else {
                 return util::notify(t("common.couldnt_save"), &path.display().to_string());
             };
-            let png = match density {
+            let png = match shrunk {
                 Some(d) => cards::with_density(png, d),
                 None => png,
             };
@@ -2111,12 +1953,20 @@ impl Editor {
             cx.background_executor()
                 .spawn(async move {
                     let output = if copy { std::fs::read(&path).unwrap_or_default() } else { png };
-                    if let Some(bundle) = bundle
-                        && let Err(e) = project::save_bundle(&bundle, &output, &base, &doc, &frame)
-                    {
-                        util::notify(t("bundle.couldnt_save"), &e.to_string());
+                    // Encoded once, for the .kadr and the editable copy both.
+                    let mut base = None;
+                    if let Some(bundle) = bundle {
+                        match base_png(original.as_deref(), density) {
+                            Ok(png) => {
+                                if let Err(e) = project::save_bundle(&bundle, &output, &png, &doc, &frame) {
+                                    util::notify(t("bundle.couldnt_save"), &e.to_string());
+                                }
+                                base = Some(png);
+                            }
+                            Err(e) => util::notify(t("bundle.couldnt_save"), &e.to_string()),
+                        }
                     }
-                    let _ = project::save(&path, &output, &base, &doc, &frame);
+                    let _ = project::save(&path, &output, move || base.map_or_else(|| base_png(original.as_deref(), density), Ok), &doc, &frame);
                 })
                 .await;
         })
@@ -2152,7 +2002,7 @@ impl Editor {
         let Some(src) = self.source.clone() else {
             return util::notify("kadr", t("editor.image_still_loading_try_again"));
         };
-        let (doc, frame) = (self.doc.clone(), self.frame.clone());
+        let (doc, frame) = (self.vm.doc.clone(), self.frame.clone());
         let name = format!("kadr-pin-{}-{}.png", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis()));
         let out = util::runtime_dir().join(name);
         let hold = kit::hold(cx);
@@ -2194,7 +2044,7 @@ impl Editor {
         };
         let target = self.bundle.clone().unwrap_or_else(|| crate::bundle::target_for(&self.path, &crate::settings::Settings::load().screenshot_dir()));
         self.bundle = Some(target.clone());
-        let (doc, frame, base) = (self.doc.clone(), self.frame.clone(), self.base.clone());
+        let (doc, frame, original, density) = (self.vm.doc.clone(), self.frame.clone(), self.original.clone(), self.density);
         let hold = kit::hold(cx);
         cx.spawn(async move |_, cx| {
             let _hold = hold;
@@ -2202,7 +2052,7 @@ impl Editor {
                 .background_executor()
                 .spawn(async move {
                     let png = kadr_raster::render_png(&src, &doc, &frame).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
-                    project::save_bundle(&target, &png, &base, &doc, &frame).map(|_| target)
+                    project::save_bundle(&target, &png, &base_png(original.as_deref(), density)?, &doc, &frame).map(|_| target)
                 })
                 .await;
             match result {
@@ -2216,7 +2066,7 @@ impl Editor {
     /// Recognize text in the picture (within the crop, if any).
     fn read_text(&self, cx: &mut Context<Self>) {
         let Some(src) = self.source.clone() else { return };
-        let crop = self.doc.crop;
+        let crop = self.vm.doc.crop;
         let hold = kit::hold(cx);
         cx.spawn(async move |_, cx| {
             let _hold = hold;
@@ -2364,7 +2214,7 @@ impl Editor {
                 IconButton::new("undo", IconName::Undo)
                     .shape(IconButtonShape::Square)
                     .size(ButtonSize::Large)
-                    .disabled(self.history.is_empty())
+                    .disabled(self.vm.history.depth() == 0)
                     .tip(Tooltip::text(t("editor.undo_ctrl_z")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.undo(cx);
@@ -2375,8 +2225,8 @@ impl Editor {
                 ButtonLike::new("redo")
                     .style(ButtonStyle::Subtle)
                     .size(ButtonSize::Large)
-                    .disabled(self.future.is_empty())
-                    .child(div().px_1().child(Icon::from_path("icons/kadr/redo.svg").size(IconSize::Small).color(if self.future.is_empty() { Color::Disabled } else { Color::Default })))
+                    .disabled(self.vm.history.redo_depth() == 0)
+                    .child(div().px_1().child(Icon::from_path("icons/kadr/redo.svg").size(IconSize::Small).color(if self.vm.history.redo_depth() == 0 { Color::Disabled } else { Color::Default })))
                     .tip(Tooltip::text(t("editor.redo_ctrl_shift_z")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.redo(cx);
@@ -2388,7 +2238,7 @@ impl Editor {
         let tools = h_flex().gap(px(6.)).children(groups);
         // Solid or outline, for boxes and ellipses.
         let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
-            || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
+            || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
         let fill_toggle = shapes_fill.then(|| {
             let option = |id: &'static str, solid: bool, icon: &'static str, tip: &'static str| {
                 ButtonLike::new(id)
@@ -2409,7 +2259,7 @@ impl Editor {
                 .child(Divider::vertical().h_5().mx_1())
         });
         // Plain, on a plate or outlined, for text.
-        let texts = matches!(self.tool, Tool::Text) || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
+        let texts = matches!(self.tool, Tool::Text) || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
         let text_options = texts.then(|| {
             let fg = cx.theme().colors().text;
             let option = |id: &'static str, style: TextStyle, tip: &'static str| {
@@ -2438,7 +2288,7 @@ impl Editor {
                 .child(Divider::vertical().h_5().mx_1())
         });
         // Which pointer, for the cursor tool or a selected cursor.
-        let picked_cursor = self.selected.and_then(|i| self.doc.shapes.get(i)).and_then(|sh| match sh.kind {
+        let picked_cursor = self.selected.and_then(|i| self.vm.doc.shapes.get(i)).and_then(|sh| match sh.kind {
             Kind::Cursor(name) => Some(name),
             _ => None,
         });
@@ -2503,7 +2353,7 @@ impl Editor {
                 .child(Divider::vertical().h_5().mx_1())
         });
         // Pixelate or blur, and hiding what looks private, for the hide tool.
-        let hiding = self.tool == Tool::Blur || self.selected.and_then(|i| self.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
+        let hiding = self.tool == Tool::Blur || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
         let hide_options = hiding.then(|| {
             let option = |id: &'static str, how: Hide, icon: &'static str, tip: &'static str| {
                 ButtonLike::new(id)
@@ -2656,7 +2506,7 @@ impl Editor {
             return self.render_crop_footer(width, cx);
         }
         // Drag the annotated picture out, rendered at the moment the drag starts.
-        let drag_state = self.source.clone().map(|src| (src, self.doc.clone(), self.frame.clone(), self.path.clone()));
+        let drag_state = self.source.clone().map(|src| (src, self.vm.doc.clone(), self.frame.clone(), self.path.clone()));
         let drag_out = div()
             .id("drag-out")
             .flex()
@@ -2729,17 +2579,17 @@ impl Editor {
                     .min_w_0()
                     .gap_1()
                     .child(self.zoom_menu(cx))
-                    .when(self.doc.crop.is_some(), |row| {
+                    .when(self.vm.doc.crop.is_some(), |row| {
                         row.child(
                             Button::new("uncrop", t("editor.uncrop")).style(ButtonStyle::Subtle).size(ButtonSize::Large).color(Color::Muted).on_click(cx.listener(|this, _, _, cx| {
                                 this.checkpoint();
-                                this.doc.crop = None;
+                                this.vm.doc.crop = None;
                                 cx.notify();
                             })),
                         )
                     })
                     // A reopened drawing can be dropped for the clean picture.
-                    .when(self.restored && (!self.doc.shapes.is_empty() || self.doc.crop.is_some()), |row| {
+                    .when(self.restored && (!self.vm.doc.shapes.is_empty() || self.vm.doc.crop.is_some()), |row| {
                         row.child(
                             Button::new("discard-edits", t("editor.start_over"))
                                 .style(ButtonStyle::Subtle)
@@ -2879,14 +2729,14 @@ impl Editor {
                 .justify_center()
                 .rounded_full()
                 .border_2()
-                .border_color(if fill == self.doc.fill { ring } else { gpui::transparent_black() })
+                .border_color(if fill == self.vm.doc.fill { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
                 .child(dot(fill, 20.))
                 .when(fill.is_none(), |d| d.tip(Tooltip::text(t("editor.fill_transparent"))))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.doc.fill != fill {
+                    if this.vm.doc.fill != fill {
                         this.checkpoint();
-                        this.doc.fill = fill;
+                        this.vm.doc.fill = fill;
                     }
                     this.crop_menu = None;
                     cx.notify();
@@ -2898,7 +2748,7 @@ impl Editor {
                     .style(if open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                     .size(ButtonSize::Large)
                     .toggle_state(open)
-                    .child(h_flex().gap_1().px_1().child(dot(self.doc.fill, 16.)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                    .child(h_flex().gap_1().px_1().child(dot(self.vm.doc.fill, 16.)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
                     .tip(Tooltip::text(t("editor.fill_tip")))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.crop_menu = if this.crop_menu == Some(CropMenu::Fill) { None } else { Some(CropMenu::Fill) };
@@ -2998,9 +2848,9 @@ impl Editor {
         let sized = |k: f32| format!("{}×{} px", (ow * k).round().max(1.), (oh * k).round().max(1.));
         let scales: Vec<MenuItem> = SCALES
             .iter()
-            .map(|&k| (format!("{}% · {}", (k * 100.).round(), sized(k)), (self.doc.scale - k).abs() < 1e-3, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.pick_scale(k)) as MenuPick))
+            .map(|&k| (format!("{}% · {}", (k * 100.).round(), sized(k)), (self.vm.doc.scale - k).abs() < 1e-3, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.pick_scale(k)) as MenuPick))
             .collect();
-        let scale = self.crop_dropdown(CropMenu::Scale, sized(self.doc.scale), t("editor.image_size_tip"), scales, false, cx);
+        let scale = self.crop_dropdown(CropMenu::Scale, sized(self.vm.doc.scale), t("editor.image_size_tip"), scales, false, cx);
 
         // What fills the crop where it reaches past the picture: a dot and
         // swatches like the pen colour's, see-through first.
@@ -3080,7 +2930,7 @@ impl Editor {
                 cx.notify();
             }));
         let hint = t(if on { "editor.hold_ctrl_to_move_freely" } else { "editor.hold_ctrl_to_snap" });
-        let changed = self.doc.crop.is_some() || !self.doc.view.is_upright() || self.doc.scale != 1.;
+        let changed = self.vm.doc.crop.is_some() || !self.vm.doc.view.is_upright() || self.vm.doc.scale != 1.;
         h_flex()
             .w(px(width))
             .gap_2()
@@ -3359,7 +3209,7 @@ impl Editor {
         let (pw, ph) = (self.px.0 as f32, self.px.1 as f32);
 
         // Pixelation stays on the picture (it covers only what's there).
-        let blurs = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
+        let blurs = self.vm.doc.shapes.iter().filter_map(|shape| match &shape.kind {
             &Kind::Blur(how) => {
                 let patch = self.patches.get(&patch_key(how, shape.a, shape.b, shape.size))?;
                 let (l, t, r, b) = rect(shape.a, shape.b);
@@ -3379,7 +3229,7 @@ impl Editor {
             }
             _ => None,
         });
-        let pictures = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
+        let pictures = self.vm.doc.shapes.iter().filter_map(|shape| match &shape.kind {
             Kind::Picture(picture) => {
                 let patch = self.shown_picture(picture)?;
                 let (l, t, r, b) = rect(shape.a, shape.b);
@@ -3392,7 +3242,7 @@ impl Editor {
         // The finished strokes come from their picture; only what it lacks
         // (the stroke being drawn, the shape being dragged, edits it hasn't
         // caught up with yet) is outlined here, every frame.
-        let shapes = &self.doc.shapes;
+        let shapes = &self.vm.doc.shapes;
         let skip = match self.drag {
             Some(Drag::Move { index, .. } | Drag::Handle { index, .. } | Drag::Scale { index, .. }) => Some(index),
             _ => None,
@@ -3580,7 +3430,7 @@ impl Editor {
         .size_full();
 
         let mut cursors_shown = Vec::new();
-        let labels: Vec<AnyElement> = self.doc.shapes.iter().enumerate().filter_map(|(i, shape)| match &shape.kind {
+        let labels: Vec<AnyElement> = self.vm.doc.shapes.iter().enumerate().filter_map(|(i, shape)| match &shape.kind {
             Kind::Text(text) => {
                 let (x, y) = at(shape.a);
                 let m = metrics(shape.size);
@@ -3682,7 +3532,7 @@ impl Editor {
             }
         }
 
-        let crop = self.doc.crop;
+        let crop = self.vm.doc.crop;
         let cropping = self.cropping.is_some();
         // Thirds while the crop is being dragged, like a camera's grid.
         let thirds = cropping && matches!(self.drag, Some(Drag::Crop { .. } | Drag::CropEdit { .. }));
@@ -3693,8 +3543,8 @@ impl Editor {
             Some(Drag::Marquee { start, now }) => Some(rect(start, now)),
             _ => None,
         };
-        let marked: Vec<_> = self.marked.iter().filter_map(|&i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.band_pad(s))).collect();
-        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow)));
+        let marked: Vec<_> = self.marked.iter().filter_map(|&i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.band_pad(s))).collect();
+        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow)));
         let accent = cx.theme().colors().text_accent;
         let overlay = canvas(
             |_, _, _| {},
@@ -3806,7 +3656,8 @@ impl Editor {
                     .size_full()
                     .into_any_element()
                 }
-                None => img(self.image.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(radius)).into_any_element(),
+                // Still being read: the stage shows through for a moment.
+                None => div().size_full().into_any_element(),
             })
             .children(blurs)
             // A hairline edge, so a dark screenshot doesn't melt into the
@@ -3844,7 +3695,7 @@ impl Editor {
         // A crop past the picture, filled as Save fills it; while cropping,
         // the whole room round the picture, the shade marking what's cut.
         let cropping = self.cropping.is_some();
-        let fill = self.doc.fill.map(|[r, g, b, a]| {
+        let fill = self.vm.doc.fill.map(|[r, g, b, a]| {
             let mut color = crate::ui::from_hex((r as u32) << 16 | (g as u32) << 8 | b as u32);
             color.alpha = a as f32 / 255.;
             div()
@@ -3965,7 +3816,7 @@ impl Render for Editor {
             let at = ((w - self.disp.0) / 2. - off + self.view_pan.0, (h - self.disp.1) / 2. - off + self.view_pan.1);
             // A crop pulled past the stage takes the view along, so its edge
             // stays in sight.
-            self.crop_shift = match (&self.drag, self.doc.crop) {
+            self.crop_shift = match (&self.drag, self.vm.doc.crop) {
                 (Some(Drag::Crop { .. } | Drag::CropEdit { .. }), Some((a, b))) => {
                     let (l, t, r, bt) = rect(a, b);
                     let follow = |lo: f32, hi: f32, base: f32, room: f32| {
@@ -4444,6 +4295,18 @@ fn patch_key(how: Hide, a: P, b: P, size: f32) -> u64 {
     h
 }
 
+/// The picture as taken, as the PNG a project keeps under its drawing.
+fn base_png(original: Option<&RgbaImage>, density: Option<f64>) -> std::io::Result<Vec<u8>> {
+    let original = original.ok_or_else(|| std::io::Error::other("the picture isn't read yet"))?;
+    let mut png = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new_with_quality(&mut png, image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::Adaptive);
+    original.write_with_encoder(encoder).map_err(std::io::Error::other)?;
+    Ok(match density {
+        Some(d) => cards::with_density(png, d),
+        None => png,
+    })
+}
+
 /// A dropped, pasted or chosen image file as a picture to lay on top.
 fn decode_picture(bytes: &[u8]) -> Option<Arc<RgbaImage>> {
     image::load_from_memory(bytes).ok().map(|i| Arc::new(i.to_rgba8()))
@@ -4813,12 +4676,12 @@ impl Editor {
             "path": self.path.display().to_string(),
             "tool": format!("{:?}", self.tool).to_lowercase(),
             "selected": self.selected,
-            "shapes": self.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
-            "crop": self.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
+            "shapes": self.vm.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
+            "crop": self.vm.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
             "cropping": self.cropping.is_some(),
             "frame": self.frame.to_json(),
-            "undo": self.history.len(),
-            "redo": self.future.len(),
+            "undo": self.vm.history.depth(),
+            "redo": self.vm.history.redo_depth(),
             "image": self.source.as_ref().map(|s| [s.width(), s.height()]),
         })
     }

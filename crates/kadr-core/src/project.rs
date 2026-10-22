@@ -182,13 +182,14 @@ pub fn load_unpacked(dir: &Path) -> Option<Restored> {
 
 /// Keep `doc` and `frame` drawn over `base` for `path`, whose contents are
 /// now `output`. Nothing drawn and no background: nothing to keep.
-pub fn save(path: &Path, output: &[u8], base: &[u8], doc: &Doc, frame: &Frame) -> std::io::Result<()> {
+/// `base` makes the picture's file, only when there's something to keep.
+pub fn save(path: &Path, output: &[u8], base: impl FnOnce() -> std::io::Result<Vec<u8>>, doc: &Doc, frame: &Frame) -> std::io::Result<()> {
     let dir = dir_for(path);
     let _ = std::fs::remove_dir_all(&dir);
     if doc.shapes.is_empty() && doc.crop.is_none() && doc.view.is_upright() && doc.scale == 1. && !frame.on() {
         return Ok(());
     }
-    write_dir(&dir, base, doc, frame, json!({ "output": path.display().to_string(), "output_hash": format!("{:016x}", fnv(output)) })).map(|_| ())
+    write_dir(&dir, &base()?, doc, frame, json!({ "output": path.display().to_string(), "output_hash": format!("{:016x}", fnv(output)) })).map(|_| ())
 }
 
 /// Write the project into `dir`, with `extra` fields in its JSON. Returns
@@ -303,7 +304,7 @@ mod tests {
         std::fs::write(&file, b"annotated").unwrap();
         let red = Rgba::new(1., 0., 0., 1.);
         let doc = Doc { shapes: vec![Shape { kind: Kind::Rect, a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None }], crop: Some(((0., 0.), (10., 10.))), ..Doc::default() };
-        save(&file, b"annotated", b"original", &doc, &Frame::default()).unwrap();
+        save(&file, b"annotated", || Ok(b"original".to_vec()), &doc, &Frame::default()).unwrap();
         let back = load(&file, b"annotated").expect("the project is there");
         assert_eq!(back.base, b"original");
         assert_eq!((back.doc.shapes.len(), back.doc.crop), (1, doc.crop));

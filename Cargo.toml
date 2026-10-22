@@ -32,6 +32,7 @@ resvg.workspace = true
 ab_glyph.workspace = true
 kadr-core = { path = "crates/kadr-core" }
 kadr-raster = { path = "crates/kadr-raster" }
+kadr-ui = { path = "crates/kadr-ui" }
 crc32fast = "1.5"
 
 # The tray icon speaks StatusNotifierItem over D-Bus (Linux only for now).

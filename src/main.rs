@@ -68,7 +68,7 @@ Usage:
   kadr settings                                  settings
   kadr tray                                      tray icon (for autostart)
   kadr dev <command>                             test hooks of a kadr started with KADR_DEV=1
-                                                 (windows, dump, find, click, drag, key, type, state, shot)
+                                                 (windows, dump, find, click, drag, key, type, state, shot, mem)
   kadr text [image]                              recognize text (in an area or an image) and copy it
   kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
 ";
@@ -244,7 +244,12 @@ fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<(Vec<Stri
     });
 }
 
+/// The system allocator, noting big blocks for `kadr dev mem`.
+#[global_allocator]
+static ALLOC: dev::Counting = dev::Counting;
+
 fn main() {
+    dev::track();
     platform::set_dirs();
     i18n::set(settings::Settings::load().language);
     // The cursor stamps and the studio's pointer in the user's own theme.
