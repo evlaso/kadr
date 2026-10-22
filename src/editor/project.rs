@@ -79,7 +79,7 @@ pub(super) fn save(path: &Path, output: &[u8], base: &[u8], doc: &Doc, frame: &F
 
 /// Write the project into `dir`, with `extra` fields in its JSON. Returns
 /// the files written, by name.
-fn write_dir(dir: &Path, base: &[u8], doc: &Doc, frame: &Frame, extra: Value) -> std::io::Result<Vec<String>> {
+pub(super) fn write_dir(dir: &Path, base: &[u8], doc: &Doc, frame: &Frame, extra: Value) -> std::io::Result<Vec<String>> {
     std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join("base.png"), base)?;
     let mut files = vec!["project.json".to_owned(), "base.png".to_owned()];

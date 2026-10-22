@@ -28,6 +28,8 @@ use crate::{cards, ocr, palette, studio_editor, util};
 use crate::i18n::t;
 
 mod crop;
+#[cfg(test)]
+mod golden;
 mod project;
 mod redact;
 pub(crate) use project::prune as prune_projects;
