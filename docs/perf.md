@@ -23,6 +23,46 @@ Hyprland on the user's machine, median of 5 runs.
 Over budget: the editor's memory with a 4K picture and the binary's size.
 The tray is right at its limit.
 
+## Release profile: fat LTO, one codegen unit, abort on panic
+
+2026-10-23, same machine and method.
+
+| Metric | Base | Now |
+|---|---|---|
+| Release binary | 44.7 MB | **32.4 MB** (still over 25) |
+| Editor with a 4K PNG, RSS | 388.6 MB | 351.1 MB (still over 250) |
+| `kadr tray` after 5 min, RSS | 15.0 MB | 13.4 MB |
+| Idle CPU | 0.1 % | 0.03 % |
+| Hotkey → overlay, warm / cold | 33.4 / 92.6 ms | 34.7 / 90.4 ms |
+| Edit → window | 297.3 ms | 299.7 ms |
+| Incremental `cargo build --release` | 11.5 s | **146.5 s** (over 20) |
+| Incremental `cargo build --profile fast` | — | 1.0 s |
+
+The whole-program pass makes every release build a full one, against the
+20 s budget for an incremental release build. Day-to-day builds and the
+tests (`just`) use the `fast` profile instead: release optimisation without
+LTO, incremental. The budget would need to name that profile, or LTO goes
+into a separate distribution profile; the spec doesn't decide which.
+
+Where the size goes (`cargo bloat --release --crates`, before the profile,
+unstripped; .text 29.5 MiB):
+
+| Crate | .text | Pulled in by |
+|---|---|---|
+| zbus | 3.7 MiB | ksni (tray), accesskit, oo7 (GPUI's keyring), notifications |
+| gpui | 2.5 MiB | |
+| std | 2.5 MiB | |
+| image | 1.8 MiB | |
+| ravif + rav1e | 2.2 MiB | AVIF encoding, from `image`'s default formats (GPUI) |
+| naga + wgpu_core + wgpu_hal | 2.9 MiB | GPUI's renderer |
+| gpui_ce_linux | 1.2 MiB | |
+| kadr | 1.1 MiB | |
+| accesskit_unix | 1.0 MiB | GPUI |
+| exr, tiff, image_webp | 1.0 MiB | `image` formats kadr doesn't read |
+
+The obvious cuts toward 25 MB: `image` without AVIF/EXR/TIFF (needs GPUI's
+`image-default-formats` off), and fewer D-Bus stacks.
+
 ## How each is measured
 
 - **Tray RSS**: a fresh `kadr tray` (on Linux the StatusNotifierItem through
@@ -37,7 +77,9 @@ The tray is right at its limit.
   yet.
 - **Edit → window**: from starting `kadr edit` until `kadr dev state` reports
   the decoded picture.
-- **Build**: `touch src/ui.rs`, then `cargo build --release`.
+- **Build**: a one-line change in `src/ui.rs` (a touched file alone isn't
+  rebuilt by an incremental profile), then `cargo build --release` and
+  `cargo build --profile fast`.
 
 ## Spike results
 

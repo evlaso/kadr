@@ -1,6 +1,6 @@
 # kadr
 
-CleanShot X–style screenshots and screen recording in Rust on GPUI CE (the community fork of Zed's GPUI). The main target is Linux: Omarchy (Arch, Hyprland, Wayland). macOS and Windows build in CI and share one implementation of most system pieces through cross-platform crates (`platform/desktop.rs`: arboard, notify-rust, trash, xcap; `tray.rs`: tray-icon, global-hotkey); recording and window picking there are still stubs. Nobody has run them on a real machine yet.
+CleanShot X–style screenshots and screen recording in Rust on GPUI CE (the community fork of Zed's GPUI). The main target is Linux: Omarchy (Arch, Hyprland, Wayland). macOS and Windows build in CI (on a `v*` tag or a manual run; Linux on every push) and share one implementation of most system pieces through cross-platform crates (`platform/desktop.rs`: arboard, notify-rust, trash, xcap; `tray.rs`: tray-icon, global-hotkey); recording and window picking there are still stubs. Nobody has run them on a real machine yet.
 
 Where it's heading: `docs/SPEC.ru.md` (a workspace with the UI as a replaceable layer, tests, budgets, a measured experiment on leaving GPUI). Phase 0 is done: the base numbers in `docs/perf.md`, golden tests of the rasteriser, dev hooks.
 
@@ -10,7 +10,7 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 
 ## Build, run, check
 
-- `cargo build --release`, then `install -m755 target/release/kadr ~/.local/bin/kadr`. Hyprland bindings and the tray call `kadr` from `~/.local/bin`.
+- `cargo build --release` (fat LTO: ~2.5 min every time), then `install -m755 target/release/kadr ~/.local/bin/kadr`. While working, `cargo build --profile fast` (no LTO, incremental, seconds) and install `target/fast/kadr`. Hyprland bindings and the tray call `kadr` from `~/.local/bin`.
 - Before installing, `pkill -x kadr`: a running instance takes every new command over its socket, so the old binary would keep serving. That also kills the tray icon (`kadr tray` is a `kadr` process too); restart it afterwards with `setsid kadr tray &>/dev/null &`.
 - `just unit` for the unit tests, `just golden` for the editor's rasteriser against `tests/golden/cases` (a failure leaves `target/golden/<case>/{actual,diff}.png`; `UPDATE_GOLDEN=1 just golden` rewrites the expected pictures, and the commit must say "golden updated: <cases>"), `just test` for both. `just bench` measures the budgets of `docs/SPEC.ru.md` §2 on the live session (the picker and an editor flash up) against `docs/perf.json`; results and method in `docs/perf.md`.
 - Dev hooks: start kadr with `KADR_DEV=1`, then `kadr dev windows|dump|find|click|drag|key|type|state|shot …` answers in JSON (`src/dev.rs`). Buttons and switches report themselves by their element id; `dev state` gives the editor's drawing, tool and undo depth. This drives the UI without clicking: prefer it to moving the pointer.

@@ -48,6 +48,21 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsA
 
 [profile.release]
 strip = true
+# Smaller and a little faster: whole-program optimisation, one unit, no
+# unwinding tables. Tests still unwind (cargo uses the test profile's own).
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# For working on kadr: release speed without the whole-program pass, which
+# takes an incremental build from ~11 s to ~2.5 min. `cargo build --profile
+# fast` → target/fast/kadr; `just` runs the tests with it.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+panic = "unwind"
 
 # GPUI CE's Linux platform with drawing tablet support (see vendor/README.md).
 [patch."https://github.com/gpui-ce/gpui-ce"]

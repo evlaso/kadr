@@ -44,6 +44,8 @@ BUDGETS = {
     "binary_mb": (25, "MB"),
     "incremental_build_s": (20, "s"),
 }
+# Measured, but without a budget of their own.
+INFO = {"incremental_fast_s": "s"}
 
 
 def hypr(request):
@@ -222,12 +224,18 @@ def measure_tray(idle):
     return rss
 
 
-def measure_build():
+def measure_build(profile):
+    """One small real change in a UI file (touching it isn't enough: rustc
+    sees nothing changed), built again, then put back."""
     target = ROOT / "src/ui.rs"
-    os.utime(target)
-    t0 = time.monotonic()
-    subprocess.run([CARGO, "build", "--release"], cwd=ROOT, check=True, capture_output=True)
-    return time.monotonic() - t0
+    original = target.read_bytes()
+    try:
+        target.write_bytes(original + b"\nfn _bench_edit() -> u32 { 7 }\n")
+        t0 = time.monotonic()
+        subprocess.run([CARGO, "build", "--profile", profile], cwd=ROOT, check=True, capture_output=True)
+        return time.monotonic() - t0
+    finally:
+        target.write_bytes(original)
 
 
 def main():
@@ -261,7 +269,8 @@ def main():
     result["editor_4k_rss_mb"], result["idle_cpu_percent"] = round(rss, 1), round(cpu, 2)
     result["tray_rss_mb"] = round(measure_tray(a.idle), 1)
     if not a.no_build:
-        result["incremental_build_s"] = round(median(measure_build, 1), 1)
+        result["incremental_build_s"] = round(measure_build("release"), 1)
+        result["incremental_fast_s"] = round(measure_build("fast"), 1)
 
     # Leave the tray as it was before.
     subprocess.Popen([str(INSTALLED), "tray"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -287,6 +296,9 @@ def main():
         elif b and v > b * 1.15:
             mark = "  >15% worse than base"
         print(f"{key:<26}{'-' if v is None else v:>10}{budget:>9}{unit}{'-' if b is None else b:>10}{mark}")
+    for key, unit in INFO.items():
+        if key in result:
+            print(f"{key:<26}{result[key]:>10}{'-':>9}{unit}{base.get(key, '-'):>10}")
     print(f"\nwritten: {ROOT / 'target/bench.json'}")
     sys.exit(1 if failed else 0)
 
