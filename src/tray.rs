@@ -161,7 +161,7 @@ pub use sni::{run, start, stop};
 /// Not ported to this system yet: there is no tray icon.
 #[cfg(not(target_os = "linux"))]
 pub fn run() {
-    crate::platform::unsupported(t("common.tray_icon"));
+    crate::platform::unsupported(crate::i18n::t("common.tray_icon"));
 }
 
 #[cfg(not(target_os = "linux"))]
