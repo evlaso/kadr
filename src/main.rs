@@ -244,7 +244,9 @@ fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<(Vec<Stri
     });
 }
 
-/// The system allocator, noting big blocks for `kadr dev mem`.
+/// The system allocator, noting big blocks for `kadr dev mem` (a build with
+/// `--features dev`: the stack traces would cost the binary megabytes).
+#[cfg(feature = "dev")]
 #[global_allocator]
 static ALLOC: dev::Counting = dev::Counting;
 

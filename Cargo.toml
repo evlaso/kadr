@@ -14,6 +14,10 @@ name = "kadr"
 version = "0.2.0"
 edition = "2024"
 
+[features]
+# `kadr dev mem` lists live allocations with their stacks (KADR_DEV=1 too).
+dev = []
+
 [dependencies]
 # GPUI Community Edition, pinned; updated on purpose, not automatically.
 gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", default-features = false, features = ["font-kit", "wayland", "image-default-formats"] }

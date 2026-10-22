@@ -35,126 +35,147 @@ use serde_json::{Value, json};
 
 use crate::platform::ipc::Stream;
 
-/// The global allocator: the system's, noting each block of `BIG` bytes or
-/// more and its call stack while the dev hooks are on. Pictures are what's
-/// that big, so this counts the copies of them kadr holds.
-pub struct Counting;
+#[cfg(feature = "dev")]
+mod counting {
+    use std::collections::HashMap;
 
-const BIG: usize = 1 << 20;
+    use serde_json::{Value, json};
 
-static TRACKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static BIG_ONES: std::sync::Mutex<Option<HashMap<usize, (usize, std::backtrace::Backtrace)>>> = std::sync::Mutex::new(None);
+    /// The global allocator: the system's, noting each block of `BIG` bytes or
+    /// more and its call stack while the dev hooks are on. Pictures are what's
+    /// that big, so this counts the copies of them kadr holds.
+    pub struct Counting;
 
-thread_local! {
-    /// Set while noting a block, so the notes' own allocations aren't noted.
-    static NOTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+    const BIG: usize = 1 << 20;
 
-fn note(ptr: *mut u8, size: usize) {
-    if NOTING.with(|n| n.replace(true)) {
-        return;
+    static TRACKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static BIG_ONES: std::sync::Mutex<Option<HashMap<usize, (usize, std::backtrace::Backtrace)>>> = std::sync::Mutex::new(None);
+
+    thread_local! {
+        /// Set while noting a block, so the notes' own allocations aren't noted.
+        static NOTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
-    let trace = std::backtrace::Backtrace::force_capture();
-    if let Ok(mut big) = BIG_ONES.lock() {
-        big.get_or_insert_with(HashMap::new).insert(ptr as usize, (size, trace));
-    }
-    NOTING.with(|n| n.set(false));
-}
 
-fn forget(ptr: *mut u8) {
-    if NOTING.with(|n| n.replace(true)) {
-        return;
-    }
-    if let Ok(mut big) = BIG_ONES.lock()
-        && let Some(big) = big.as_mut()
-    {
-        big.remove(&(ptr as usize));
-    }
-    NOTING.with(|n| n.set(false));
-}
-
-// SAFETY: every call goes straight to the system allocator; the notes are
-// kept on the side and never touch the blocks.
-unsafe impl std::alloc::GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let ptr = unsafe { std::alloc::System.alloc(layout) };
-        if layout.size() >= BIG && TRACKING.load(std::sync::atomic::Ordering::Relaxed) && !ptr.is_null() {
-            note(ptr, layout.size());
+    fn note(ptr: *mut u8, size: usize) {
+        if NOTING.with(|n| n.replace(true)) {
+            return;
         }
-        ptr
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let ptr = unsafe { std::alloc::System.alloc_zeroed(layout) };
-        if layout.size() >= BIG && TRACKING.load(std::sync::atomic::Ordering::Relaxed) && !ptr.is_null() {
-            note(ptr, layout.size());
+        let trace = std::backtrace::Backtrace::force_capture();
+        if let Ok(mut big) = BIG_ONES.lock() {
+            big.get_or_insert_with(HashMap::new).insert(ptr as usize, (size, trace));
         }
-        ptr
+        NOTING.with(|n| n.set(false));
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if layout.size() >= BIG && TRACKING.load(std::sync::atomic::Ordering::Relaxed) {
-            forget(ptr);
+    fn forget(ptr: *mut u8) {
+        if NOTING.with(|n| n.replace(true)) {
+            return;
         }
-        unsafe { std::alloc::System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
-        let tracking = TRACKING.load(std::sync::atomic::Ordering::Relaxed);
-        if tracking && layout.size() >= BIG {
-            forget(ptr);
+        if let Ok(mut big) = BIG_ONES.lock()
+            && let Some(big) = big.as_mut()
+        {
+            big.remove(&(ptr as usize));
         }
-        let new = unsafe { std::alloc::System.realloc(ptr, layout, new_size) };
-        if tracking && new_size >= BIG && !new.is_null() {
-            note(new, new_size);
-        }
-        new
+        NOTING.with(|n| n.set(false));
     }
-}
 
-/// Start noting big blocks (when the dev hooks are on).
-pub fn track() {
-    if on() {
-        TRACKING.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// The live big blocks, largest first: size and the frames in kadr's own
-/// code that made it.
-fn big_blocks() -> Vec<Value> {
-    NOTING.with(|n| n.set(true));
-    let mut out: Vec<(usize, Vec<String>)> = BIG_ONES
-        .lock()
-        .ok()
-        .and_then(|big| big.as_ref().map(|big| big.values().map(|(size, trace)| (*size, ours(trace))).collect()))
-        .unwrap_or_default();
-    NOTING.with(|n| n.set(false));
-    out.sort_by(|a, b| b.0.cmp(&a.0));
-    out.into_iter().map(|(size, frames)| json!({ "mb": (size as f64 / 1048576. * 10.).round() / 10., "made_by": frames })).collect()
-}
-
-/// A stack's frames in kadr's own code (`src/`, `crates/`, `vendor/`),
-/// innermost first, as "function @ file:line". Needs line tables in the
-/// build: `CARGO_PROFILE_FAST_DEBUG=line-tables-only CARGO_PROFILE_FAST_STRIP=false`.
-fn ours(trace: &std::backtrace::Backtrace) -> Vec<String> {
-    let text = trace.to_string();
-    let mut frames = Vec::new();
-    let mut name = "";
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(at) = line.strip_prefix("at ./") {
-            if !at.starts_with("src/dev.rs") && ["src/", "crates/", "vendor/"].iter().any(|p| at.starts_with(p)) {
-                let at = at.rsplit_once(':').map_or(at, |(file_line, _)| file_line);
-                frames.push(format!("{name} @ {at}"));
-                if frames.len() == 4 {
-                    break;
-                }
+    // SAFETY: every call goes straight to the system allocator; the notes are
+    // kept on the side and never touch the blocks.
+    unsafe impl std::alloc::GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let ptr = unsafe { std::alloc::System.alloc(layout) };
+            if layout.size() >= BIG && TRACKING.load(std::sync::atomic::Ordering::Relaxed) && !ptr.is_null() {
+                note(ptr, layout.size());
             }
-        } else if let Some((_, n)) = line.split_once(": ") {
-            name = n;
+            ptr
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let ptr = unsafe { std::alloc::System.alloc_zeroed(layout) };
+            if layout.size() >= BIG && TRACKING.load(std::sync::atomic::Ordering::Relaxed) && !ptr.is_null() {
+                note(ptr, layout.size());
+            }
+            ptr
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+            if layout.size() >= BIG && TRACKING.load(std::sync::atomic::Ordering::Relaxed) {
+                forget(ptr);
+            }
+            unsafe { std::alloc::System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+            let tracking = TRACKING.load(std::sync::atomic::Ordering::Relaxed);
+            if tracking && layout.size() >= BIG {
+                forget(ptr);
+            }
+            let new = unsafe { std::alloc::System.realloc(ptr, layout, new_size) };
+            if tracking && new_size >= BIG && !new.is_null() {
+                note(new, new_size);
+            }
+            new
         }
     }
-    frames
+
+    /// Start noting big blocks (when the dev hooks are on).
+    pub fn track() {
+        if super::on() {
+            TRACKING.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// The live big blocks, largest first: size and the frames in kadr's own
+    /// code that made it.
+    pub(super) fn big_blocks() -> Vec<Value> {
+        NOTING.with(|n| n.set(true));
+        let mut out: Vec<(usize, Vec<String>)> = BIG_ONES
+            .lock()
+            .ok()
+            .and_then(|big| big.as_ref().map(|big| big.values().map(|(size, trace)| (*size, ours(trace))).collect()))
+            .unwrap_or_default();
+        NOTING.with(|n| n.set(false));
+        out.sort_by(|a, b| b.0.cmp(&a.0));
+        out.into_iter().map(|(size, frames)| json!({ "mb": (size as f64 / 1048576. * 10.).round() / 10., "made_by": frames })).collect()
+    }
+
+    /// A stack's frames in kadr's own code (`src/`, `crates/`, `vendor/`),
+    /// innermost first, as "function @ file:line". Needs line tables in the
+    /// build: `CARGO_PROFILE_FAST_DEBUG=line-tables-only CARGO_PROFILE_FAST_STRIP=false`.
+    fn ours(trace: &std::backtrace::Backtrace) -> Vec<String> {
+        let text = trace.to_string();
+        let mut frames = Vec::new();
+        let mut name = "";
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(at) = line.strip_prefix("at ./") {
+                if !at.starts_with("src/dev.rs") && ["src/", "crates/", "vendor/"].iter().any(|p| at.starts_with(p)) {
+                    let at = at.rsplit_once(':').map_or(at, |(file_line, _)| file_line);
+                    frames.push(format!("{name} @ {at}"));
+                    if frames.len() == 4 {
+                        break;
+                    }
+                }
+            } else if let Some((_, n)) = line.split_once(": ") {
+                name = n;
+            }
+        }
+        frames
+    }
+}
+
+#[cfg(feature = "dev")]
+pub use counting::{Counting, track};
+#[cfg(feature = "dev")]
+use counting::big_blocks;
+
+/// Without `--features dev` there's nothing to note.
+#[cfg(not(feature = "dev"))]
+pub fn track() {}
+
+#[cfg(not(feature = "dev"))]
+fn big_blocks() -> Vec<Value> {
+    Vec::new()
 }
 
 fn rss_mb() -> Option<f64> {
@@ -256,7 +277,8 @@ pub fn handle(args: Vec<String>, reply: Stream, cx: &mut App) {
     if command == "mem" {
         let blocks = big_blocks();
         let total: f64 = blocks.iter().filter_map(|b| b["mb"].as_f64()).sum();
-        return answer(reply, Ok(json!({ "rss_mb": rss_mb(), "big_mb": (total * 10.).round() / 10., "big": blocks })));
+        let note = if cfg!(feature = "dev") { "" } else { "build with --features dev to list the big blocks" };
+        return answer(reply, Ok(json!({ "rss_mb": rss_mb(), "big_mb": (total * 10.).round() / 10., "big": blocks, "note": note })));
     }
     let Some(handle) = pick(window, cx) else {
         return answer(reply, Err("no such window".into()));
