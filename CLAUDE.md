@@ -2,6 +2,8 @@
 
 CleanShot X–style screenshots and screen recording in Rust on GPUI CE (the community fork of Zed's GPUI). The main target is Linux: Omarchy (Arch, Hyprland, Wayland). macOS and Windows build in CI and share one implementation of most system pieces through cross-platform crates (`platform/desktop.rs`: arboard, notify-rust, trash, xcap; `tray.rs`: tray-icon, global-hotkey); recording and window picking there are still stubs. Nobody has run them on a real machine yet.
 
+Where it's heading: `docs/SPEC.ru.md` (a workspace with the UI as a replaceable layer, tests, budgets, a measured experiment on leaving GPUI). Phase 0 is done: the base numbers in `docs/perf.md`, golden tests of the rasteriser, dev hooks.
+
 The user talks in Russian. Code, comments and commit messages are in English.
 
 UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_files", size, n)` for text with values (plain `{}` slots only). Keys are `<area>.<name>` (`common.*` for text used in several places); the text lives in `data/i18n/en.json` and `ru.json`, and a test checks both have the same keys and slots. Add every new string to both. English is the default language; the README is English, with the Russian one in `docs/README.ru.md`.
