@@ -384,7 +384,7 @@ mod cursor_theme {
 
     use super::{Mon, home};
 
-    /// XCursor names for each of kadr's shapes (`cursors::names`).
+    /// XCursor names for each of kadr's shapes (`kadr_core::document::CURSORS`).
     const ALIASES: [(&str, &[&str]); 13] = [
         ("arrow", &["default", "left_ptr", "arrow"]),
         ("pointer", &["pointer", "hand2", "hand1", "pointing_hand"]),

@@ -1,22 +1,29 @@
 //! The drawn cursor's shapes in a macOS-like look: one SVG per shape on a
-//! 32-unit canvas, named like CSS cursors. A recording logs which shape the
-//! pointer had (`platform::CursorShapes`), and the studio draws it.
+//! 32-unit canvas, named like CSS cursors (`kadr_core::document::CURSORS`).
+//! A recording logs which shape the pointer had, the studio draws it, and
+//! the editor stamps it. Where the app sets a theme (`set_theme`, the user's
+//! own cursors), its pictures are drawn instead.
 
-/// Name, picture and hotspot in canvas units. The first is the fallback.
-const SHAPES: [(&str, &str, (f32, f32)); 13] = [
-    ("arrow", include_str!("../data/cursors/arrow.svg"), (5., 3.)),
-    ("pointer", include_str!("../data/cursors/pointer.svg"), (12.9, 4.4)),
-    ("text", include_str!("../data/cursors/text.svg"), (16., 16.)),
-    ("grab", include_str!("../data/cursors/grab.svg"), (15., 15.)),
-    ("grabbing", include_str!("../data/cursors/grabbing.svg"), (15., 17.)),
-    ("crosshair", include_str!("../data/cursors/crosshair.svg"), (16., 16.)),
-    ("move", include_str!("../data/cursors/move.svg"), (16., 16.)),
-    ("not-allowed", include_str!("../data/cursors/not-allowed.svg"), (16., 16.)),
-    ("wait", include_str!("../data/cursors/wait.svg"), (16., 16.)),
-    ("ew-resize", include_str!("../data/cursors/ew-resize.svg"), (16., 16.)),
-    ("ns-resize", include_str!("../data/cursors/ns-resize.svg"), (16., 16.)),
-    ("nwse-resize", include_str!("../data/cursors/nwse-resize.svg"), (16., 16.)),
-    ("nesw-resize", include_str!("../data/cursors/nesw-resize.svg"), (16., 16.)),
+use std::sync::OnceLock;
+
+use image::RgbaImage;
+use kadr_core::document::{CURSORS, cursor};
+
+/// Picture and hotspot in canvas units, in `CURSORS`' order.
+const SHAPES: [(&str, (f32, f32)); 13] = [
+    (include_str!("../../../data/cursors/arrow.svg"), (5., 3.)),
+    (include_str!("../../../data/cursors/pointer.svg"), (12.9, 4.4)),
+    (include_str!("../../../data/cursors/text.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/grab.svg"), (15., 15.)),
+    (include_str!("../../../data/cursors/grabbing.svg"), (15., 17.)),
+    (include_str!("../../../data/cursors/crosshair.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/move.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/not-allowed.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/wait.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/ew-resize.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/ns-resize.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/nwse-resize.svg"), (16., 16.)),
+    (include_str!("../../../data/cursors/nesw-resize.svg"), (16., 16.)),
 ];
 
 /// The arrow's height in canvas units: a shape drawn at `height` pixels has
@@ -27,11 +34,21 @@ const ARROW_UNITS: f32 = 22.4;
 /// (No "move": macOS themes draw it as the closed hand.)
 pub const STAMPS: [&str; 8] = ["arrow", "pointer", "text", "grab", "grabbing", "crosshair", "not-allowed", "wait"];
 
+/// The user's cursor for a shape at an arrow height: its picture and hotspot.
+pub type Theme = fn(&str, f32) -> Option<(RgbaImage, (f64, f64))>;
+
+static THEME: OnceLock<Theme> = OnceLock::new();
+
+/// Draw the user's own cursors where `theme` has them. Set once, at start.
+pub fn set_theme(theme: Theme) {
+    let _ = THEME.set(theme);
+}
+
 /// A shape's hotspot and picture size per pixel of arrow height, as
 /// `render` draws it (the theme's pictures scale evenly with the arrow).
 fn proportions(name: &str) -> ((f32, f32), (f32, f32)) {
     static SEEN: std::sync::Mutex<Vec<(&'static str, ((f32, f32), (f32, f32)))>> = std::sync::Mutex::new(Vec::new());
-    let name = known(name);
+    let name = cursor(name);
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, p)) = seen.iter().find(|(n, _)| *n == name) {
         return *p;
@@ -66,23 +83,11 @@ pub fn draw(name: &str, height: f32, at: (f32, f32), pm: &mut tiny_skia::PixmapM
     pm.draw_pixmap(0, 0, picture.as_ref(), &paint, tiny_skia::Transform::from_translate(at.0 - hx as f32, at.1 - hy as f32), None);
 }
 
-/// All shape names, the fallback first.
-#[cfg(test)]
-pub fn names() -> impl Iterator<Item = &'static str> {
-    SHAPES.iter().map(|s| s.0)
-}
-
-/// The shape with this name, or the arrow.
-pub fn known(name: &str) -> &'static str {
-    SHAPES.iter().find(|s| s.0 == name).unwrap_or(&SHAPES[0]).0
-}
-
 /// The shape as a picture with the arrow `height` pixels tall, and its
-/// hotspot in pixels: the user's own cursor where the system has one, else
-/// kadr's.
+/// hotspot in pixels: the theme's where there is one, else kadr's.
 pub fn render(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))> {
     let height = height.max(8.);
-    if let Some((image, hot)) = crate::platform::theme_cursor(known(name), height) {
+    if let Some((image, hot)) = THEME.get().and_then(|theme| theme(cursor(name), height)) {
         let size = tiny_skia::IntSize::from_wh(image.width(), image.height())?;
         return Some((tiny_skia::Pixmap::from_vec(image.into_raw(), size)?, hot));
     }
@@ -91,7 +96,8 @@ pub fn render(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))
 
 /// kadr's own picture of the shape.
 fn own(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))> {
-    let (_, svg, (hx, hy)) = SHAPES.iter().find(|s| s.0 == name).unwrap_or(&SHAPES[0]);
+    let i = CURSORS.iter().position(|&n| n == name).unwrap_or(0);
+    let (svg, (hx, hy)) = SHAPES[i];
     let tree = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()).ok()?;
     let k = height.max(8.) / ARROW_UNITS;
     let side = (32. * k).ceil() as u32;
@@ -104,10 +110,10 @@ fn own(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))> {
 mod tests {
     #[test]
     fn every_shape_draws() {
-        for name in super::names() {
+        for name in kadr_core::document::CURSORS {
             let (pm, _) = super::own(name, 40.).unwrap();
             assert!(pm.pixels().iter().any(|p| p.alpha() == 255), "{name} is empty");
         }
-        assert_eq!(super::known("help"), "arrow");
+        assert_eq!(kadr_core::document::cursor("help"), "arrow");
     }
 }

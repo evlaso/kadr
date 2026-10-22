@@ -5,33 +5,36 @@
 //! clearly changed pixels); blurring and pixelating must match exactly.
 //!
 //! A failure leaves `target/golden/<name>/{actual,diff}.png`.
-//! `UPDATE_GOLDEN=1 cargo test --release golden` rewrites the expected
-//! pictures (say "golden updated: <cases>" in the commit), and
-//! `cargo test --release make_golden_cases -- --ignored` writes the cases
-//! themselves from `cases()` below.
+//! `UPDATE_GOLDEN=1 just golden` rewrites the expected pictures (say
+//! "golden updated: <cases>" in the commit), and `just golden-cases` writes
+//! the cases themselves from `cases()` below.
 
 use std::path::{Path, PathBuf};
 
 use image::{Rgba, RgbaImage};
+use kadr_core::color::Rgba as Color;
+use kadr_core::document::{Backdrop, Doc, Frame, Hide, Kind, Orientation, P, Shape, TextStyle};
+use kadr_core::project;
 
-use super::{Backdrop, Doc, Frame, Hide, Kind, P, Shape, TextStyle, compose, project};
+fn workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/cases")
+    workspace().join("tests/golden/cases")
 }
 
 fn out_dir(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/golden").join(name)
+    workspace().join("target/golden").join(name)
 }
 
 /// What Save writes for a case: the picture turned as the drawing says, then
 /// drawn on.
 fn render(dir: &Path) -> RgbaImage {
-    let restored = project::load_unpacked(dir).unwrap_or_else(|| panic!("{}: not a project", dir.display()));
-    let base = image::load_from_memory(&restored.base).expect("base.png").to_rgba8();
-    let src = restored.doc.view.apply(&base);
-    let png = compose(&src, &restored.doc, &restored.frame).expect("compose");
-    image::load_from_memory(&png).expect("rendered png").to_rgba8()
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("project.json")).expect("project.json")).expect("valid json");
+    let (doc, frame) = project::from_json(&json, &|name| image::open(dir.join(name)).ok().map(|i| i.to_rgba8())).unwrap_or_else(|| panic!("{}: not a project", dir.display()));
+    let base = image::open(dir.join("base.png")).expect("base.png").to_rgba8();
+    kadr_raster::render(&base, &doc, &frame).expect("render")
 }
 
 /// Mean SSIM of the two pictures' luma (alpha-weighted over black), on 8×8
@@ -153,8 +156,8 @@ fn base(w: u32, h: u32) -> RgbaImage {
     })
 }
 
-fn color(h: f32, s: f32, l: f32) -> gpui::Hsla {
-    gpui::hsla(h, s, l, 1.)
+fn color(h: f32, s: f32, l: f32) -> Color {
+    Color::hsl(h, s, l, 1.)
 }
 
 fn shape(kind: Kind, a: P, b: P, size: f32) -> Shape {
@@ -189,13 +192,13 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
             doc([1, 2, 9, 10, 42, 99].iter().enumerate().map(|(i, &n)| shape(Kind::Counter(n), (150. + i as f32 * 52., 230.), (150. + i as f32 * 52., 230.), 36.)).collect()),
             none.clone(),
         ),
-        ("blur", (480, 300), doc(vec![shape(Kind::Blur(Hide::Blur, None), (250., 140.), (450., 280.), 1.)]), none.clone()),
-        ("pixelate", (480, 300), doc(vec![shape(Kind::Blur(Hide::Pixelate, None), (120., 35.), (420., 140.), 1.)]), none.clone()),
+        ("blur", (480, 300), doc(vec![shape(Kind::Blur(Hide::Blur), (250., 140.), (450., 280.), 1.)]), none.clone()),
+        ("pixelate", (480, 300), doc(vec![shape(Kind::Blur(Hide::Pixelate), (120., 35.), (420., 140.), 1.)]), none.clone()),
         ("spotlight", (480, 300), doc(vec![shape(Kind::Spotlight, (250., 140.), (450., 280.), 1.)]), none.clone()),
         (
             "text_on_blur",
             (480, 300),
-            doc(vec![shape(Kind::Blur(Hide::Blur, None), (250., 140.), (450., 280.), 1.), text("Hidden", (290., 190.), 30., TextStyle::Plate)]),
+            doc(vec![shape(Kind::Blur(Hide::Blur), (250., 140.), (450., 280.), 1.), text("Hidden", (290., 190.), 30., TextStyle::Plate)]),
             none.clone(),
         ),
         (
@@ -213,7 +216,7 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
         (
             "turned_mirrored",
             (480, 300),
-            Doc { shapes: vec![shape(Kind::Arrow, (40., 60.), (250., 400.), 6.)], view: super::crop::Orientation { turns: 1, mirrored: true }, ..Doc::default() },
+            Doc { shapes: vec![shape(Kind::Arrow, (40., 60.), (250., 400.), 6.)], view: Orientation { turns: 1, mirrored: true }, ..Doc::default() },
             none.clone(),
         ),
         ("scaled_down", (480, 300), Doc { shapes: vec![shape(Kind::Rect, (125., 40.), (435., 135.), 4.)], scale: 0.5, ..Doc::default() }, none.clone()),
@@ -243,9 +246,10 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
 fn make_golden_cases() {
     for (name, (w, h), doc, frame) in cases() {
         let dir = root().join(name);
-        let mut png = Vec::new();
-        base(w, h).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
-        project::write_dir(&dir, &png, &doc, &frame, serde_json::json!({})).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        base(w, h).save(dir.join("base.png")).unwrap();
+        let json = project::to_json(&doc, &frame, &|i| format!("picture-{i}.png"));
+        std::fs::write(dir.join("project.json"), serde_json::to_string(&json).unwrap()).unwrap();
         render(&dir).save(dir.join("expected.png")).unwrap();
     }
 }

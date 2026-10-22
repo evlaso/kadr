@@ -6,10 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
-use palette::IntoColor;
 use serde_json::{Value, json};
 
-use super::{Doc, Frame, Hide, Kind, P, Picture, Shape, TextStyle};
+use super::{Doc, Frame, Kind};
+#[cfg(test)]
+use super::{Shape, TextStyle};
 
 /// One folder per edited file.
 pub(crate) fn root() -> PathBuf {
@@ -52,12 +53,8 @@ pub(super) fn load(path: &Path, bytes: &[u8]) -> Option<Restored> {
 /// A project kept in `dir` (whose `project.json` is `v`).
 fn read_dir(dir: &Path, v: &Value) -> Option<Restored> {
     let base = std::fs::read(dir.join("base.png")).ok()?;
-    let shapes = v["shapes"].as_array()?.iter().filter_map(|s| shape_from_json(s, dir)).collect();
-    let crop = v["crop"].as_array().and_then(|c| Some((point(c.first()?)?, point(c.get(1)?)?)));
-    let view = super::crop::Orientation { turns: v["view"]["turns"].as_u64().unwrap_or(0) as u8 % 4, mirrored: v["view"]["mirrored"].as_bool().unwrap_or(false) };
-    let scale = v["scale"].as_f64().map_or(1., |s| (s as f32).clamp(0.05, 1.));
-    let fill = v["fill"].as_array().filter(|c| c.len() == 4).map(|c| [0, 1, 2, 3].map(|i| c[i].as_u64().unwrap_or(0).min(255) as u8));
-    Some(Restored { base, doc: Doc { shapes, crop, view, scale, fill }, frame: Frame::from_json(&v["frame"]) })
+    let (doc, frame) = kadr_core::project::from_json(v, &|name| image::open(dir.join(name)).ok().map(|i| i.to_rgba8()))?;
+    Some(Restored { base, doc, frame })
 }
 
 /// The project in an unpacked `.kadr`.
@@ -83,25 +80,14 @@ pub(super) fn write_dir(dir: &Path, base: &[u8], doc: &Doc, frame: &Frame, extra
     std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join("base.png"), base)?;
     let mut files = vec!["project.json".to_owned(), "base.png".to_owned()];
-    let mut shapes = Vec::new();
+    let name = |i: usize| format!("picture-{i}.png");
     for (i, shape) in doc.shapes.iter().enumerate() {
-        let mut v = shape_to_json(shape);
         if let Kind::Picture(picture) = &shape.kind {
-            let name = format!("picture-{i}.png");
-            picture.pixels.save(dir.join(&name)).map_err(std::io::Error::other)?;
-            v["picture"] = json!(name);
-            files.push(name);
+            picture.save(dir.join(name(i))).map_err(std::io::Error::other)?;
+            files.push(name(i));
         }
-        shapes.push(v);
     }
-    let mut v = json!({
-        "frame": frame.to_json(),
-        "crop": doc.crop.map(|(a, b)| json!([[a.0, a.1], [b.0, b.1]])),
-        "view": { "turns": doc.view.turns, "mirrored": doc.view.mirrored },
-        "scale": doc.scale,
-        "fill": doc.fill,
-        "shapes": shapes,
-    });
+    let mut v = kadr_core::project::to_json(doc, frame, &name);
     if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
         v.extend(extra.clone());
     }
@@ -149,114 +135,9 @@ pub(crate) fn prune() -> (u64, usize) {
     freed
 }
 
-fn point(v: &Value) -> Option<P> {
-    Some((v.get(0)?.as_f64()? as f32, v.get(1)?.as_f64()? as f32))
-}
-
-fn points(v: &Value) -> Vec<P> {
-    v.as_array().into_iter().flatten().filter_map(point).collect()
-}
-
-pub(super) fn shape_to_json(shape: &Shape) -> Value {
-    let pts = |ps: &[P]| ps.iter().map(|p| json!([p.0, p.1])).collect::<Vec<_>>();
-    let (kind, extra) = match &shape.kind {
-        Kind::Arrow => ("arrow", json!(null)),
-        Kind::Rect => ("rect", json!(null)),
-        Kind::Ellipse => ("ellipse", json!(null)),
-        Kind::Line => ("line", json!(null)),
-        Kind::Pen(ps) => ("pen", json!(pts(ps))),
-        Kind::Marker(ps) => ("marker", json!(pts(ps))),
-        Kind::Text(text) => ("text", json!(text)),
-        Kind::Counter(n) => ("counter", json!(n)),
-        Kind::Cursor(name) => ("cursor", json!(name)),
-        Kind::Blur(Hide::Pixelate, _) => ("pixelate", json!(null)),
-        Kind::Blur(Hide::Blur, _) => ("blur", json!(null)),
-        Kind::Spotlight => ("spotlight", json!(null)),
-        Kind::Picture(_) => ("picture", json!(null)),
-    };
-    let c = crate::ui::rgb_of(shape.color);
-    json!({
-        "kind": kind,
-        "data": extra,
-        "a": [shape.a.0, shape.a.1],
-        "b": [shape.b.0, shape.b.1],
-        "color": [c.r, c.g, c.b, c.a],
-        "size": shape.size,
-        "filled": shape.filled,
-        "text": match shape.text {
-            TextStyle::Plain => "plain",
-            TextStyle::Plate => "plate",
-            TextStyle::Outline => "outline",
-        },
-        "bend": shape.bend.map(|p| json!([p.0, p.1])),
-    })
-}
-
-fn shape_from_json(v: &Value, dir: &Path) -> Option<Shape> {
-    let data = &v["data"];
-    let kind = match v["kind"].as_str()? {
-        "arrow" => Kind::Arrow,
-        "rect" => Kind::Rect,
-        "ellipse" => Kind::Ellipse,
-        "line" => Kind::Line,
-        "pen" => Kind::Pen(points(data)),
-        "marker" => Kind::Marker(points(data)),
-        "text" => Kind::Text(data.as_str()?.to_owned()),
-        "counter" => Kind::Counter(data.as_u64()? as u32),
-        "cursor" => Kind::Cursor(crate::cursors::known(data.as_str()?)),
-        "pixelate" => Kind::Blur(Hide::Pixelate, None),
-        "blur" => Kind::Blur(Hide::Blur, None),
-        "spotlight" => Kind::Spotlight,
-        "picture" => Kind::Picture(Picture::decode(&std::fs::read(dir.join(v["picture"].as_str()?)).ok()?)?),
-        _ => return None,
-    };
-    let c = v["color"].as_array()?;
-    let f = |i: usize| c.get(i).and_then(Value::as_f64).unwrap_or(1.) as f32;
-    Some(Shape {
-        kind,
-        a: point(&v["a"])?,
-        b: point(&v["b"])?,
-        color: gpui::Rgba::new(f(0), f(1), f(2), f(3)).into_color(),
-        size: v["size"].as_f64()? as f32,
-        filled: v["filled"].as_bool().unwrap_or(false),
-        text: match v["text"].as_str() {
-            Some("plate") => TextStyle::Plate,
-            Some("outline") => TextStyle::Outline,
-            _ => TextStyle::Plain,
-        },
-        bend: point(&v["bend"]),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn shapes_round_trip_through_json() {
-        let dir = std::env::temp_dir();
-        let red = gpui::hsla(0.01, 0.6, 0.54, 1.);
-        let shapes = [
-            Shape { kind: Kind::Arrow, a: (1., 2.), b: (30., 40.), color: red, size: 4., filled: false, text: TextStyle::Plain, bend: Some((10., 30.)) },
-            Shape { kind: Kind::Pen(vec![(0., 0.), (5., 6.)]), a: (0., 0.), b: (5., 6.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None },
-            Shape { kind: Kind::Text("Hi\nthere".into()), a: (3., 4.), b: (3., 4.), color: red, size: 20., filled: false, text: TextStyle::Plate, bend: None },
-            Shape { kind: Kind::Blur(Hide::Blur, None), a: (3., 4.), b: (50., 60.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None },
-            Shape { kind: Kind::Rect, a: (3., 4.), b: (50., 60.), color: red, size: 2., filled: true, text: TextStyle::Plain, bend: None },
-        ];
-        for shape in &shapes {
-            let back = shape_from_json(&shape_to_json(shape), &dir).unwrap();
-            assert_eq!((back.a, back.b, back.size, back.filled, back.bend), (shape.a, shape.b, shape.size, shape.filled, shape.bend));
-            let (x, y) = (crate::ui::rgb_of(back.color), crate::ui::rgb_of(shape.color));
-            assert!(back.text == shape.text && (x.r - y.r).abs() + (x.g - y.g).abs() + (x.b - y.b).abs() + (x.a - y.a).abs() < 1e-4);
-            match (&back.kind, &shape.kind) {
-                (Kind::Pen(x), Kind::Pen(y)) => assert_eq!(x, y),
-                (Kind::Text(x), Kind::Text(y)) => assert_eq!(x, y),
-                (Kind::Blur(x, _), Kind::Blur(y, _)) => assert!(x == y),
-                (Kind::Arrow, Kind::Arrow) | (Kind::Rect, Kind::Rect) => {}
-                _ => panic!("kind changed"),
-            }
-        }
-    }
 
     #[test]
     fn a_project_comes_back_only_for_the_file_it_wrote() {
@@ -266,7 +147,7 @@ mod tests {
         unsafe { std::env::set_var("XDG_DATA_HOME", &tmp) };
         let file = tmp.join("shot.png");
         std::fs::write(&file, b"annotated").unwrap();
-        let red = gpui::hsla(0., 1., 0.5, 1.);
+        let red = kadr_core::color::Rgba::new(1., 0., 0., 1.);
         let doc = Doc { shapes: vec![Shape { kind: Kind::Rect, a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None }], crop: Some(((0., 0.), (10., 10.))), ..Doc::default() };
         save(&file, b"annotated", b"original", &doc, &Frame::default()).unwrap();
         let back = load(&file, b"annotated").expect("the project is there");
@@ -283,7 +164,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("kadr-project-bundle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        let red = gpui::hsla(0., 1., 0.5, 1.);
+        let red = kadr_core::color::Rgba::new(1., 0., 0., 1.);
         let doc = Doc {
             shapes: vec![
                 Shape { kind: Kind::Arrow, a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None },

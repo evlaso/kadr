@@ -3373,6 +3373,8 @@ dependencies = [
  "gpui-ce",
  "gpui_ce_platform",
  "image",
+ "kadr-core",
+ "kadr-raster",
  "ksni",
  "libc",
  "notify-rust",
@@ -3390,6 +3392,26 @@ dependencies = [
  "tray-icon",
  "windows 0.62.2",
  "xcap",
+]
+
+[[package]]
+name = "kadr-core"
+version = "0.2.0"
+dependencies = [
+ "image",
+ "serde_json",
+]
+
+[[package]]
+name = "kadr-raster"
+version = "0.2.0"
+dependencies = [
+ "ab_glyph",
+ "image",
+ "kadr-core",
+ "resvg",
+ "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]

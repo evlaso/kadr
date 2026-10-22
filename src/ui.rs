@@ -44,6 +44,17 @@ pub fn rgb_of(color: Hsla) -> Rgb {
     Rgb { r: c.red, g: c.green, b: c.blue, a: c.alpha }
 }
 
+/// GPUI's colour as kadr-core's (what drawings store).
+pub fn to_rgba(color: Hsla) -> kadr_core::color::Rgba {
+    let c = rgb_of(color);
+    kadr_core::color::Rgba::new(c.r, c.g, c.b, c.a)
+}
+
+/// kadr-core's colour as GPUI's.
+pub fn from_rgba(c: kadr_core::color::Rgba) -> Hsla {
+    gpui::Rgba::new(c.r, c.g, c.b, c.a).into_color()
+}
+
 /// `0xRRGGBB` as a colour.
 pub fn from_hex(hex: u32) -> Hsla {
     gpui::rgb(hex).into_color()

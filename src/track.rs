@@ -76,7 +76,7 @@ impl Track {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|k| Some((k[0].as_f64()?, crate::cursors::known(k[1].as_str()?).to_owned())))
+                .filter_map(|k| Some((k[0].as_f64()?, kadr_core::document::cursor(k[1].as_str()?).to_owned())))
                 .collect(),
         })
     }

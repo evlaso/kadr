@@ -9,9 +9,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use gpui::{
     FillOptions, PathStyle,
     App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
@@ -20,6 +19,11 @@ use gpui::{
     point, px, rgba, size,
 };
 use image::RgbaImage;
+use kadr_core::color::Rgba;
+use kadr_core::document::{Backdrop, Doc, Frame, Hide, Kind, MARKER_ALPHA, MAX_PAD, MAX_REACH, MAX_ROUND, P, SPOT_SHADE, Shape, TextStyle, rect, segment_distance, work_margin_at};
+use kadr_raster::shapes::{arrow_parts, draw_vector, ellipse_points, smooth};
+use kadr_raster::text::metrics;
+use kadr_raster::{Bounds as _, cursors};
 use crate::ui::{ButtonLike, Divider, IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
@@ -28,15 +32,11 @@ use crate::{cards, ocr, palette, studio_editor, util};
 use crate::i18n::t;
 
 mod crop;
-#[cfg(test)]
-mod golden;
 mod project;
 mod redact;
 pub(crate) use project::prune as prune_projects;
 pub(crate) use project::root as projects_dir;
 
-/// A point in image pixels.
-type P = (f32, f32);
 
 /// Stroke widths, font sizes and counter sizes in screen pixels, from the
 /// size slider's start to its end.
@@ -52,22 +52,10 @@ const WEIGHT: f32 = 0.22;
 fn sized((lo, hi): (f32, f32), weight: f32) -> f32 {
     lo + (hi - lo) * weight
 }
-/// How strongly a hidden area is blurred or pixelated, from its `size`
-/// (the slider's position, 0..1): about the old fixed amount near the
-/// slider's start, twice it at the end.
-fn hide_strength(size: f32) -> f32 {
-    if (0. ..=1.).contains(&size) { 0.6 + 1.4 * size } else { 0.9 }
-}
 
-/// Opacity of the highlighter.
-const MARKER_ALPHA: f32 = 0.4;
-/// Backdrop margin, as a fraction of the picture's longer side.
-const FRAME_PAD: f32 = 0.06;
 /// Room around the picture to draw and crop in, the same way: like
 /// CleanShot, the result grows to take in what's drawn outside the picture.
 const WORK_PAD: f32 = 0.1;
-/// How far a crop can reach past the picture at most, against absurd sizes.
-const MAX_REACH: f32 = 3.;
 /// How far the canvas zooms out from fitting the stage.
 const MIN_ZOOM: f32 = 0.2;
 /// Points this close to the picture's edge (screen pixels) snap onto it.
@@ -95,115 +83,21 @@ const TILE_GAP: f32 = 4.;
 const DOT: f32 = 22.;
 /// Gradients shown before "Show more".
 const GRADIENT_ROWS: usize = 10;
-/// Slider ranges, as fractions of the picture's longer side.
-const MAX_PAD: f32 = 0.2;
-const MAX_ROUND: f32 = 0.05;
 /// Output shapes for the framed picture.
 const ASPECTS: [(&str, Option<f32>); 5] = [("editor.auto", None), ("16:9", Some(16. / 9.)), ("4:3", Some(4. / 3.)), ("1:1", Some(1.)), ("9:16", Some(9. / 16.))];
 
-#[derive(Clone, PartialEq)]
-enum Backdrop {
-    None,
-    /// Index into `palette::backdrops()`.
-    Gradient(usize),
-    Wallpaper(PathBuf),
-    /// Nothing behind the picture: a PNG with transparency around it.
-    Transparent,
-    /// The screenshot itself, blurred, like CleanShot's.
-    Blurred,
+
+
+
+/// The background last used, for the next screenshot.
+fn last_frame() -> Frame {
+    let saved = std::fs::read_to_string(util::config_dir().join("editor-frame.json")).ok().and_then(|t| serde_json::from_str(&t).ok());
+    saved.map(|v| Frame::from_json(&v)).unwrap_or_default()
 }
 
-/// The background the picture is put on, like CleanShot's background tool.
-#[derive(Clone)]
-struct Frame {
-    backdrop: Backdrop,
-    /// Margin around the picture, as a fraction of its longer side.
-    padding: f32,
-    /// Corner radius, as a fraction of the longer side.
-    radius: f32,
-    /// 0..1.
-    shadow: f32,
-    /// Index into `ASPECTS`.
-    aspect: usize,
-}
-
-impl Default for Frame {
-    fn default() -> Self {
-        Frame { backdrop: Backdrop::None, padding: FRAME_PAD, radius: 0.012, shadow: 0.5, aspect: 0 }
-    }
-}
-
-impl Frame {
-    fn to_json(&self) -> serde_json::Value {
-        let backdrop = match &self.backdrop {
-            Backdrop::None => serde_json::json!("none"),
-            Backdrop::Transparent => serde_json::json!("transparent"),
-            Backdrop::Blurred => serde_json::json!("blurred"),
-            Backdrop::Gradient(i) => serde_json::json!({ "gradient": i }),
-            Backdrop::Wallpaper(path) => serde_json::json!({ "wallpaper": path.display().to_string() }),
-        };
-        serde_json::json!({ "backdrop": backdrop, "padding": self.padding, "radius": self.radius, "shadow": self.shadow, "aspect": self.aspect })
-    }
-
-    fn from_json(v: &serde_json::Value) -> Frame {
-        let d = Frame::default();
-        let b = &v["backdrop"];
-        let backdrop = if let Some(i) = b["gradient"].as_u64() {
-            Backdrop::Gradient(i as usize)
-        } else if let Some(path) = b["wallpaper"].as_str().map(PathBuf::from).filter(|p| p.exists()) {
-            Backdrop::Wallpaper(path)
-        } else if b.as_str() == Some("transparent") {
-            Backdrop::Transparent
-        } else if b.as_str() == Some("blurred") {
-            Backdrop::Blurred
-        } else {
-            Backdrop::None
-        };
-        let num = |k: &str, d: f32, max: f32| v[k].as_f64().map_or(d, |x| x as f32).clamp(0., max);
-        Frame {
-            backdrop,
-            padding: num("padding", d.padding, MAX_PAD),
-            radius: num("radius", d.radius, MAX_ROUND),
-            shadow: num("shadow", d.shadow, 1.),
-            aspect: v["aspect"].as_u64().map_or(d.aspect, |a| (a as usize).min(ASPECTS.len() - 1)),
-        }
-    }
-
-    /// The background last used, for the next screenshot.
-    fn last() -> Frame {
-        let saved = std::fs::read_to_string(util::config_dir().join("editor-frame.json")).ok().and_then(|t| serde_json::from_str(&t).ok());
-        saved.map(|v| Frame::from_json(&v)).unwrap_or_default()
-    }
-
-    fn remember(&self) {
-        let _ = std::fs::create_dir_all(util::config_dir());
-        let _ = std::fs::write(util::config_dir().join("editor-frame.json"), self.to_json().to_string());
-    }
-
-    fn on(&self) -> bool {
-        self.backdrop != Backdrop::None
-    }
-
-    /// A background without padding: what's drawn stops at the picture's
-    /// edge instead of growing the result past it.
-    fn clips(&self) -> bool {
-        self.on() && self.padding <= 0.0005
-    }
-
-    /// The whole output's size and the picture's offset in it, for a picture
-    /// of `w`×`h` (any unit).
-    fn layout(&self, w: f32, h: f32) -> ((f32, f32), (f32, f32)) {
-        let pad = (w.max(h) * self.padding).round();
-        let (mut ow, mut oh) = (w + 2. * pad, h + 2. * pad);
-        if let Some(a) = ASPECTS[self.aspect.min(ASPECTS.len() - 1)].1 {
-            if ow / oh < a {
-                ow = (oh * a).round();
-            } else {
-                oh = (ow / a).round();
-            }
-        }
-        ((ow, oh), (((ow - w) / 2.).round(), ((oh - h) / 2.).round()))
-    }
+fn remember_frame(frame: &Frame) {
+    let _ = std::fs::create_dir_all(util::config_dir());
+    let _ = std::fs::write(util::config_dir().join("editor-frame.json"), frame.to_json().to_string());
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -316,34 +210,7 @@ impl Tool {
     }
 }
 
-#[derive(Clone)]
-enum Kind {
-    Arrow,
-    Rect,
-    Ellipse,
-    Line,
-    Pen(Vec<P>),
-    Marker(Vec<P>),
-    Text(String),
-    Counter(u32),
-    /// A macOS-like pointer, by `cursors` name, its hotspot at `a` and its
-    /// arrow `size` tall.
-    Cursor(&'static str),
-    /// Hidden by pixelating or blurring; the patch, once computed for the
-    /// current position.
-    Blur(Hide, Option<Arc<Image>>),
-    /// Everything outside the a–b box is dimmed.
-    Spotlight,
-    /// Another picture dropped or pasted on top, filling the a–b box.
-    Picture(Picture),
-}
 
-impl Kind {
-    /// Drawn as lines and fills: what `draw_vector` and `paint_shape` draw.
-    fn is_vector(&self) -> bool {
-        matches!(self, Kind::Arrow | Kind::Rect | Kind::Ellipse | Kind::Line | Kind::Pen(_) | Kind::Marker(_))
-    }
-}
 
 /// The finished strokes drawn once into a picture, so a frame paints that
 /// instead of outlining every stroke again; the shapes stay shapes. Redrawn
@@ -424,8 +291,8 @@ fn strokes_hash(shapes: &[Shape], count: usize, skip: Option<usize>) -> u64 {
             _ => 6,
         };
         mix(tag);
-        let rgb = crate::ui::rgb_of(sh.color);
-        for v in [sh.a.0, sh.a.1, sh.b.0, sh.b.1, sh.size, rgb.r, rgb.g, rgb.b, sh.color.alpha] {
+        let c = sh.color;
+        for v in [sh.a.0, sh.a.1, sh.b.0, sh.b.1, sh.size, c.r, c.g, c.b, c.a] {
             mix(v.to_bits());
         }
         mix(sh.filled as u32);
@@ -460,10 +327,10 @@ fn cursor_label(name: &str) -> &'static str {
 
 /// A cursor shape with its arrow `height` pixels tall, as GPUI wants an image.
 fn cursor_image(name: &str, height: f32) -> Option<Arc<gpui::RenderImage>> {
-    let (hot, (w, h)) = crate::cursors::geometry(name, height);
+    let (hot, (w, h)) = cursors::geometry(name, height);
     let (w, h) = (w.ceil().max(1.) as u32, h.ceil().max(1.) as u32);
     let mut pm = tiny_skia::Pixmap::new(w, h)?;
-    crate::cursors::draw(name, height, hot, &mut pm.as_mut());
+    cursors::draw(name, height, hot, &mut pm.as_mut());
     let mut data = pm.take();
     for px in data.chunks_exact_mut(4) {
         px.swap(0, 2);
@@ -525,119 +392,26 @@ fn shapes_image(shapes: &[Shape], at: P, size: P, density: f32) -> Option<(u32, 
     Some((w, Arc::new(gpui::RenderImage::new([image::Frame::new(image)]))))
 }
 
-/// How the hide tool covers what's under it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Hide {
-    Pixelate,
-    Blur,
+
+
+
+
+
+
+/// What the editor does with a shape beyond drawing it: hit-testing, its
+/// handles, and reshaping it by them.
+trait Edit {
+    fn hit(&self, p: P, tol: f32) -> bool;
+    fn handles(&self) -> Vec<P>;
+    fn band_pad(&self, scale: f32) -> f32;
+    fn knobs(&self, scale: f32) -> Vec<P>;
+    fn scales(&self) -> bool;
+    fn scale_from(&mut self, orig: &Shape, handle: usize, p: P);
+    fn set_handle(&mut self, handle: usize, p: P);
+    fn set_weight(&mut self, weight: f32, s: f32);
 }
 
-/// A picture laid over the screenshot: its pixels for the export, and the
-/// same as a GPUI image for the canvas.
-#[derive(Clone)]
-struct Picture {
-    pixels: Arc<RgbaImage>,
-    shown: Arc<Image>,
-}
-
-impl Picture {
-    fn decode(bytes: &[u8]) -> Option<Picture> {
-        Picture::from_pixels(image::load_from_memory(bytes).ok()?.to_rgba8())
-    }
-
-    fn from_pixels(pixels: RgbaImage) -> Option<Picture> {
-        let mut png = Vec::new();
-        pixels.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-        Some(Picture { pixels: Arc::new(pixels), shown: Arc::new(Image::from_bytes(gpui::ImageFormat::Png, png)) })
-    }
-}
-
-/// Geometry is in image pixels. For text `a` is the top-left corner and
-/// `size` the font size; for counters `a` is the center and `size` the
-/// diameter; otherwise `size` is the stroke width.
-#[derive(Clone)]
-struct Shape {
-    kind: Kind,
-    a: P,
-    b: P,
-    color: Hsla,
-    size: f32,
-    /// Boxes and ellipses: solid instead of an outline.
-    filled: bool,
-    text: TextStyle,
-    /// Lines and arrows: a point the line bends through, set by dragging
-    /// the middle handle. None keeps it straight.
-    bend: Option<P>,
-}
-
-/// How text stands out from the picture.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TextStyle {
-    Plain,
-    /// On a rounded plate of its colour, lettered in white or black.
-    Plate,
-    /// Outlined in a contrasting colour.
-    Outline,
-}
-
-impl TextStyle {
-    /// Plate margins and corner radius for a font size.
-    fn plate(size: f32) -> (f32, f32, f32) {
-        (size * 0.4, size * 0.18, size * 0.3)
-    }
-
-    /// Outline thickness for a font size.
-    fn outline(size: f32) -> f32 {
-        (size * 0.07).max(1.)
-    }
-}
-
-impl Shape {
-    fn bounds(&self) -> (f32, f32, f32, f32) {
-        match &self.kind {
-            Kind::Pen(points) | Kind::Marker(points) => {
-                let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                for p in points {
-                    (l, t, r, b) = (l.min(p.0), t.min(p.1), r.max(p.0), b.max(p.1));
-                }
-                let w = self.size / 2.;
-                (l - w, t - w, r + w, b + w)
-            }
-            Kind::Text(text) => {
-                let m = metrics(self.size);
-                let width = text.split('\n').map(|l| text_width(l, self.size)).fold(self.size * 0.5, f32::max);
-                let lines = text.split('\n').count().max(1) as f32;
-                let (px, py) = match self.text {
-                    TextStyle::Plain => (0., 0.),
-                    TextStyle::Plate => {
-                        let (px, py, _) = TextStyle::plate(self.size);
-                        (px, py)
-                    }
-                    TextStyle::Outline => (TextStyle::outline(self.size), TextStyle::outline(self.size)),
-                };
-                (self.a.0 - px, self.a.1 - py, self.a.0 + width + px, self.a.1 + lines * m.line + py)
-            }
-            Kind::Counter(_) => {
-                let r = self.size / 2.;
-                (self.a.0 - r, self.a.1 - r, self.a.0 + r, self.a.1 + r)
-            }
-            Kind::Cursor(name) => {
-                let ((hx, hy), (w, h)) = crate::cursors::geometry(name, self.size);
-                let (l, t) = (self.a.0 - hx, self.a.1 - hy);
-                (l, t, l + w, t + h)
-            }
-            Kind::Line | Kind::Arrow => {
-                let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                for p in self.path() {
-                    (l, t, r, b) = (l.min(p.0), t.min(p.1), r.max(p.0), b.max(p.1));
-                }
-                let w = self.size / 2.;
-                (l - w, t - w, r + w, b + w)
-            }
-            Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight | Kind::Picture(_) => rect(self.a, self.b),
-        }
-    }
-
+impl Edit for Shape {
     fn hit(&self, p: P, tol: f32) -> bool {
         let reach = tol + self.size / 2.;
         match &self.kind {
@@ -737,32 +511,6 @@ impl Shape {
             (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 7) => self.a.0 = p.0,
             _ => {}
         }
-        self.stale_patch();
-    }
-
-    fn translate(&mut self, d: P) {
-        let shift = |p: &mut P| *p = (p.0 + d.0, p.1 + d.1);
-        shift(&mut self.a);
-        shift(&mut self.b);
-        if let Some(bend) = &mut self.bend {
-            shift(bend);
-        }
-        if let Kind::Pen(points) | Kind::Marker(points) = &mut self.kind {
-            points.iter_mut().for_each(shift);
-        }
-        self.stale_patch();
-    }
-
-    /// Points along a line or arrow: its two ends, or a curve through the bend.
-    fn path(&self) -> Vec<P> {
-        curve(self.a, self.b, self.bend)
-    }
-
-    /// A moved hidden area shows its outline until the new patch is ready.
-    fn stale_patch(&mut self) {
-        if let Kind::Blur(_, patch) = &mut self.kind {
-            *patch = None;
-        }
     }
 
     /// Apply the toolbar's weight to an existing shape.
@@ -783,26 +531,7 @@ impl Shape {
     }
 }
 
-/// Everything undo/redo restores.
-#[derive(Clone)]
-struct Doc {
-    shapes: Vec<Shape>,
-    crop: Option<(P, P)>,
-    /// How the picture is turned and mirrored; the shapes and the crop are
-    /// in the turned picture's pixels.
-    view: crop::Orientation,
-    /// The result's size, as a fraction of the cropped picture's.
-    scale: f32,
-    /// What fills a crop past the picture's edges (RGBA); None leaves it
-    /// see-through.
-    fill: Option<[u8; 4]>,
-}
 
-impl Default for Doc {
-    fn default() -> Self {
-        Doc { shapes: Vec::new(), crop: None, view: crop::Orientation::default(), scale: 1., fill: None }
-    }
-}
 
 enum Drag {
     Draw,
@@ -967,6 +696,12 @@ pub struct Editor {
     cursor_icons: Vec<(&'static str, Arc<gpui::RenderImage>)>,
     /// Cursors drawn on the canvas, by shape and height in device pixels.
     cursor_images: RefCell<HashMap<(&'static str, u32), Arc<gpui::RenderImage>>>,
+    /// Hidden areas' patches for the canvas, by `patch_key`: they outlive a
+    /// move or an undo, so going back shows them at once.
+    patches: HashMap<u64, Arc<Image>>,
+    /// Laid-on pictures as the canvas shows them, by the picture's address
+    /// (the `Arc` is kept, so the address stays its own).
+    pictures: RefCell<HashMap<usize, (Arc<RgbaImage>, Arc<Image>)>>,
     /// Canvas zoom on top of fitting the window; 1 fits.
     zoom: f32,
     /// The picture's real size on screen (100%).
@@ -1110,7 +845,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 None => (Doc { shapes: Vec::new(), crop: None, ..Doc::default() }, None),
             };
             let reopened = frame.is_some();
-            let frame = frame.unwrap_or_else(Frame::last);
+            let frame = frame.unwrap_or_else(last_frame);
             if card {
                 cx.on_release(|editor: &mut Editor, cx: &mut App| {
                     if editor.card_on_close && editor.path.exists() {
@@ -1168,10 +903,12 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 bundle,
                 hover: None,
                 text_style: TextStyle::Plain,
-                cursor_kind: crate::cursors::STAMPS[0],
+                cursor_kind: cursors::STAMPS[0],
                 // Their squares fill 22px slots at twice the pixels.
-                cursor_icons: crate::cursors::STAMPS.iter().filter_map(|&name| Some((name, cursor_image(name, crate::cursors::height_for(name, 44.))?))).collect(),
+                cursor_icons: cursors::STAMPS.iter().filter_map(|&name| Some((name, cursor_image(name, cursors::height_for(name, 44.))?))).collect(),
                 cursor_images: Default::default(),
+                patches: HashMap::new(),
+                pictures: Default::default(),
                 zoom: 1.,
                 real: natural,
                 remembered: frame.to_json(),
@@ -1341,7 +1078,7 @@ impl Editor {
                 .spawn(async move {
                     let h = (320. * src.height() as f32 / src.width().max(1) as f32).round().max(1.) as u32;
                     let mut png = Vec::new();
-                    blurred_pixels(&src, 320, h).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+                    kadr_raster::blurred_pixels(&src, 320, h).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
                     Some(png)
                 })
                 .await;
@@ -1578,11 +1315,11 @@ impl Editor {
     /// What Save produces, in image pixels: the crop, or the picture and
     /// everything drawn around it.
     fn extent(&self) -> (f32, f32, f32, f32) {
-        extent(&self.doc, self.px, !self.frame.clips())
+        kadr_raster::extent(&self.doc, self.px, !self.frame.clips())
     }
 
-    fn current_color(&self) -> Hsla {
-        self.colors[self.color]
+    fn current_color(&self) -> Rgba {
+        crate::ui::to_rgba(self.colors[self.color])
     }
 
     /// Remember the current state for undo, before changing it.
@@ -1649,23 +1386,68 @@ impl Editor {
         Some((i, h))
     }
 
+    /// Every shape in the drawing, its undo history and redo.
+    fn all_shapes(&self) -> impl Iterator<Item = &Shape> {
+        self.doc.shapes.iter().chain(self.history.iter().chain(&self.future).flat_map(|d| d.shapes.iter())).chain(self.draft.iter())
+    }
+
+    /// Keep a computed patch; ones no version of the drawing has go.
+    fn keep_patch(&mut self, key: u64, patch: Arc<Image>) {
+        self.patches.insert(key, patch);
+        if self.patches.len() > 64 {
+            let wanted: std::collections::HashSet<u64> = self
+                .all_shapes()
+                .filter_map(|sh| match sh.kind {
+                    Kind::Blur(how) => Some(patch_key(how, sh.a, sh.b, sh.size)),
+                    _ => None,
+                })
+                .collect();
+            self.patches.retain(|k, _| wanted.contains(k));
+        }
+    }
+
+    /// A laid-on picture as GPUI shows it, made the first time it's drawn.
+    fn shown_picture(&self, picture: &Arc<RgbaImage>) -> Option<Arc<Image>> {
+        let key = Arc::as_ptr(picture) as usize;
+        if let Some((_, shown)) = self.pictures.borrow().get(&key) {
+            return Some(shown.clone());
+        }
+        let mut png = Vec::new();
+        picture.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+        let shown = Arc::new(Image::from_bytes(ImageFormat::Png, png));
+        let mut pictures = self.pictures.borrow_mut();
+        if pictures.len() > 16 {
+            let wanted: std::collections::HashSet<usize> = self
+                .all_shapes()
+                .filter_map(|sh| match &sh.kind {
+                    Kind::Picture(p) => Some(Arc::as_ptr(p) as usize),
+                    _ => None,
+                })
+                .collect();
+            pictures.retain(|k, _| wanted.contains(k));
+        }
+        pictures.insert(key, (picture.clone(), shown.clone()));
+        Some(shown)
+    }
+
     /// Compute the patch for a hidden area in the background.
     fn refresh_patch(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(src) = self.source.clone() else { return };
         let Some((how, a, b, size)) = self.doc.shapes.get(index).and_then(|s| match s.kind {
-            Kind::Blur(how, _) => Some((how, s.a, s.b, s.size)),
+            Kind::Blur(how) => Some((how, s.a, s.b, s.size)),
             _ => None,
         }) else {
             return;
         };
+        let key = patch_key(how, a, b, size);
+        if self.patches.contains_key(&key) {
+            return;
+        }
         cx.spawn(async move |this, cx| {
             let patch = cx.background_executor().spawn(async move { hide_png(&src, a, b, how, size) }).await;
             let _ = this.update(cx, |editor, cx| {
-                // Only if the shape is still where and how the patch was made.
-                if let Some(Shape { kind: Kind::Blur(now, slot), a: sa, b: sb, size: ss, .. }) = editor.doc.shapes.get_mut(index)
-                    && (*sa, *sb, *now, *ss) == (a, b, how, size)
-                {
-                    *slot = patch.map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png)));
+                if let Some(png) = patch {
+                    editor.keep_patch(key, Arc::new(Image::from_bytes(ImageFormat::Png, png)));
                 }
                 cx.notify();
             });
@@ -1767,7 +1549,7 @@ impl Editor {
             Tool::Line => Kind::Line,
             Tool::Pen => Kind::Pen(vec![p]),
             Tool::Marker => Kind::Marker(vec![p]),
-            Tool::Blur => Kind::Blur(self.hide, None),
+            Tool::Blur => Kind::Blur(self.hide),
             Tool::Spotlight => Kind::Spotlight,
         };
         let width = if self.tool == Tool::Marker { sized(WIDTHS, self.weight) * 3. } else { sized(WIDTHS, self.weight) };
@@ -2050,7 +1832,7 @@ impl Editor {
         self.color = i;
         if let Some(index) = self.selected {
             self.checkpoint();
-            self.doc.shapes[index].color = self.colors[i];
+            self.doc.shapes[index].color = crate::ui::to_rgba(self.colors[i]);
         }
     }
 
@@ -2098,8 +1880,8 @@ impl Editor {
 
     /// Lay a picture over the screenshot, centred, at most half its size,
     /// and select it.
-    fn add_picture(&mut self, picture: Picture) {
-        let (pw, ph) = (picture.pixels.width() as f32, picture.pixels.height() as f32);
+    fn add_picture(&mut self, picture: Arc<RgbaImage>) {
+        let (pw, ph) = (picture.width() as f32, picture.height() as f32);
         let (cw, ch) = (self.px.0 as f32, self.px.1 as f32);
         let fit = (cw * 0.5 / pw).min(ch * 0.5 / ph).min(1.);
         let (w, h) = (pw * fit, ph * fit);
@@ -2109,7 +1891,7 @@ impl Editor {
             kind: Kind::Picture(picture),
             a: (x, y),
             b: (x + w, y + h),
-            color: self.colors[self.color],
+            color: self.current_color(),
             size: 0.,
             filled: false,
             text: TextStyle::Plain,
@@ -2124,12 +1906,12 @@ impl Editor {
     fn paste(&mut self, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else { return };
         let picture = item.entries().iter().find_map(|entry| match entry {
-            gpui::ClipboardEntry::Image(image) => Picture::decode(image.bytes()),
-            gpui::ClipboardEntry::ExternalPaths(paths) => paths.paths().iter().find_map(|p| Picture::decode(&std::fs::read(p).ok()?)),
+            gpui::ClipboardEntry::Image(image) => decode_picture(image.bytes()),
+            gpui::ClipboardEntry::ExternalPaths(paths) => paths.paths().iter().find_map(|p| decode_picture(&std::fs::read(p).ok()?)),
             gpui::ClipboardEntry::String(text) => {
                 let line = text.text().lines().next()?.trim();
                 let path = line.strip_prefix("file://").unwrap_or(line);
-                Picture::decode(&std::fs::read(path).ok()?)
+                decode_picture(&std::fs::read(path).ok()?)
             }
         });
         if let Some(picture) = picture {
@@ -2140,7 +1922,7 @@ impl Editor {
     /// Files dropped on the editor: each image goes on as a picture.
     fn drop_files(&mut self, paths: &gpui::ExternalPaths) {
         for path in paths.paths() {
-            if let Some(picture) = std::fs::read(path).ok().and_then(|bytes| Picture::decode(&bytes)) {
+            if let Some(picture) = std::fs::read(path).ok().and_then(|bytes| decode_picture(&bytes)) {
                 self.add_picture(picture);
             }
         }
@@ -2172,11 +1954,11 @@ impl Editor {
     fn pick_hide(&mut self, how: Hide, cx: &mut Context<Self>) {
         self.hide = how;
         if let Some(index) = self.selected
-            && let Kind::Blur(now, _) = self.doc.shapes[index].kind
+            && let Kind::Blur(now) = self.doc.shapes[index].kind
             && now != how
         {
             self.checkpoint();
-            self.doc.shapes[index].kind = Kind::Blur(how, None);
+            self.doc.shapes[index].kind = Kind::Blur(how);
             self.refresh_patch(index, cx);
         }
     }
@@ -2218,7 +2000,7 @@ impl Editor {
         self.checkpoint();
         let (color, size) = (self.current_color(), self.weight);
         for (l, t, r, b) in boxes {
-            self.doc.shapes.push(Shape { kind: Kind::Blur(self.hide, None), a: (l, t), b: (r, b), color, size, filled: false, text: TextStyle::Plain, bend: None });
+            self.doc.shapes.push(Shape { kind: Kind::Blur(self.hide), a: (l, t), b: (r, b), color, size, filled: false, text: TextStyle::Plain, bend: None });
             self.refresh_patch(self.doc.shapes.len() - 1, cx);
         }
         self.selected = None;
@@ -2304,7 +2086,7 @@ impl Editor {
             let (drawn, framed) = (doc.clone(), frame.clone());
             // The result keeps the original's density, less the image size.
             let density = cards::png_density(&base).map(|d| d * drawn.scale.min(1.) as f64);
-            let png = cx.background_executor().spawn(async move { compose(&src, &drawn, &framed) }).await;
+            let png = cx.background_executor().spawn(async move { kadr_raster::render_png(&src, &drawn, &framed) }).await;
             let Some(png) = png else {
                 return util::notify(t("common.couldnt_save"), &path.display().to_string());
             };
@@ -2378,7 +2160,7 @@ impl Editor {
         let hold = kit::hold(cx);
         cx.spawn(async move |_, cx| {
             let _hold = hold;
-            let png = cx.background_executor().spawn(async move { compose(&src, &doc, &frame) }).await;
+            let png = cx.background_executor().spawn(async move { kadr_raster::render_png(&src, &doc, &frame) }).await;
             if let Some(png) = png
                 && std::fs::write(&out, png).is_ok()
             {
@@ -2395,7 +2177,7 @@ impl Editor {
             let Ok(Ok(Some(paths))) = paths.await else { return };
             let _ = this.update(cx, |editor, cx| {
                 for path in paths {
-                    if let Some(picture) = std::fs::read(&path).ok().and_then(|bytes| Picture::decode(&bytes)) {
+                    if let Some(picture) = std::fs::read(&path).ok().and_then(|bytes| decode_picture(&bytes)) {
                         editor.add_picture(picture);
                     }
                 }
@@ -2421,7 +2203,7 @@ impl Editor {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let png = compose(&src, &doc, &frame).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
+                    let png = kadr_raster::render_png(&src, &doc, &frame).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
                     project::save_bundle(&target, &png, &base, &doc, &frame).map(|_| target)
                 })
                 .await;
@@ -2442,7 +2224,7 @@ impl Editor {
             let _hold = hold;
             let tmp = util::runtime_dir().join(format!("kadr-ocr-editor-{}.png", std::process::id()));
             let doc = Doc { shapes: Vec::new(), crop, ..Doc::default() };
-            let png = cx.background_executor().spawn(async move { compose(&src, &doc, &Frame::default()) }).await;
+            let png = cx.background_executor().spawn(async move { kadr_raster::render_png(&src, &doc, &Frame::default()) }).await;
             if let Some(png) = png
                 && std::fs::write(&tmp, png).is_ok()
             {
@@ -2480,7 +2262,7 @@ impl Editor {
             .collect();
 
         let ring = cx.theme().colors().text;
-        let current = self.current_color();
+        let current = crate::ui::from_rgba(self.current_color());
         // Colours sit in a dropdown under one swatch of the current colour.
         let swatches = self.colors.iter().enumerate().map(|(i, &c)| {
             let selected = i == self.color;
@@ -2896,7 +2678,7 @@ impl Editor {
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
                 let (src, doc, frame, path) = drag_state.as_ref()?;
-                let png = compose(src, doc, frame)?;
+                let png = kadr_raster::render_png(src, doc, frame)?;
                 let dir = util::runtime_dir().join("kadr-drag");
                 let _ = std::fs::create_dir_all(&dir);
                 let out = dir.join(path.file_name()?);
@@ -3580,7 +3362,8 @@ impl Editor {
 
         // Pixelation stays on the picture (it covers only what's there).
         let blurs = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
-            Kind::Blur(_, Some(patch)) => {
+            &Kind::Blur(how) => {
+                let patch = self.patches.get(&patch_key(how, shape.a, shape.b, shape.size))?;
                 let (l, t, r, b) = rect(shape.a, shape.b);
                 let (l, t, r, b) = (l.max(0.).floor(), t.max(0.).floor(), r.min(pw).ceil(), b.min(ph).ceil());
                 // The patch comes padded (`hide_png`); the area clips it.
@@ -3599,7 +3382,8 @@ impl Editor {
             _ => None,
         });
         let pictures = self.doc.shapes.iter().filter_map(|shape| match &shape.kind {
-            Kind::Picture(Picture { shown: patch, .. }) => {
+            Kind::Picture(picture) => {
+                let patch = self.shown_picture(picture)?;
                 let (l, t, r, b) = rect(shape.a, shape.b);
                 Some(img(patch.clone()).absolute().left(px(l * s + off)).top(px(t * s + off)).w(px((r - l) * s)).h(px((b - t) * s)).object_fit(ObjectFit::Fill))
             }
@@ -3813,8 +3597,9 @@ impl Editor {
                 };
                 // The export draws text with the bundled font; the canvas must match it.
                 let base = div().absolute().font_family(kit::ANNOTATION_FONT).text_size(px(shape.size * s)).font_weight(gpui::FontWeight::SEMIBOLD).whitespace_nowrap();
+                let ink = crate::ui::from_rgba(shape.color);
                 Some(match shape.text {
-                    TextStyle::Plain => base.left(x).top(y).child(block(shape.color)).into_any_element(),
+                    TextStyle::Plain => base.left(x).top(y).child(block(ink)).into_any_element(),
                     TextStyle::Plate => {
                         let (padx, pady, radius) = TextStyle::plate(shape.size);
                         base.left(x - px(padx * s))
@@ -3822,20 +3607,20 @@ impl Editor {
                             .px(px(padx * s))
                             .py(px(pady * s))
                             .rounded(px(radius * s))
-                            .bg(shape.color)
-                            .child(block(on_color(shape.color)))
+                            .bg(ink)
+                            .child(block(on_color(ink)))
                             .into_any_element()
                     }
                     // GPUI has no text stroke: the outline is the text drawn
                     // around itself in the contrasting colour.
                     TextStyle::Outline => {
                         let o = TextStyle::outline(shape.size) * s;
-                        let ring = on_color(shape.color);
+                        let ring = on_color(ink);
                         let copies = (0..12).map(|k| {
                             let th = k as f32 / 12. * std::f32::consts::TAU;
                             div().absolute().left(px(o * th.cos())).top(px(o * th.sin())).child(block(ring))
                         });
-                        base.left(x).top(y).child(div().relative().children(copies).child(block(shape.color))).into_any_element()
+                        base.left(x).top(y).child(div().relative().children(copies).child(block(ink))).into_any_element()
                     }
                 })
             }
@@ -3852,7 +3637,7 @@ impl Editor {
                     }
                 };
                 cursors_shown.push(key);
-                let ((hx, hy), (w, h)) = crate::cursors::geometry(name, shape.size);
+                let ((hx, hy), (w, h)) = cursors::geometry(name, shape.size);
                 Some(
                     img(gpui::ImageSource::Render(image))
                         .absolute()
@@ -3873,14 +3658,14 @@ impl Editor {
                         .top(px(shape.a.1 * s + off - d / 2.))
                         .size(px(d))
                         .rounded_full()
-                        .bg(shape.color)
+                        .bg(crate::ui::from_rgba(shape.color))
                         .flex()
                         .items_center()
                         .justify_center()
                         .font_family(kit::ANNOTATION_FONT)
                         .text_size(px(d * 0.55))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(on_color(shape.color))
+                        .text_color(on_color(crate::ui::from_rgba(shape.color)))
                         .child(n.to_string())
                         .into_any_element(),
                 )
@@ -4113,7 +3898,7 @@ impl Render for Editor {
         // The next screenshot starts with this background.
         let frame = self.frame.to_json();
         if frame != self.remembered {
-            self.frame.remember();
+            remember_frame(&self.frame);
             self.remembered = frame;
         }
         // A CleanShot-like window: tools on top, the picture on a stage
@@ -4379,57 +4164,9 @@ fn constrain(d: &Shape, p: P, shift: bool) -> P {
     }
 }
 
-/// A straight segment, or a quadratic curve from `a` to `b` passing through
-/// `bend` halfway, as points close enough to draw as a polyline.
-fn curve(a: P, b: P, bend: Option<P>) -> Vec<P> {
-    let Some(m) = bend else { return vec![a, b] };
-    // The control point that puts the curve's midpoint on `m`.
-    let c = (2. * m.0 - (a.0 + b.0) / 2., 2. * m.1 - (a.1 + b.1) / 2.);
-    const STEPS: usize = 48;
-    (0..=STEPS)
-        .map(|i| {
-            let t = i as f32 / STEPS as f32;
-            let (u, v, w) = ((1. - t) * (1. - t), 2. * (1. - t) * t, t * t);
-            (u * a.0 + v * c.0 + w * b.0, u * a.1 + v * c.1 + w * b.1)
-        })
-        .collect()
-}
 
-/// An arrow along `points`: the shaft, stopping where the head begins, and
-/// the head pointing along the line's last stretch.
-fn arrow_parts(points: &[P], w: f32) -> (Vec<P>, [P; 3]) {
-    let (a, b) = (points[0], points[points.len() - 1]);
-    let length: f32 = points.windows(2).map(|s| (s[1].0 - s[0].0).hypot(s[1].1 - s[0].1)).sum();
-    // The direction the curve comes in at; a straight arrow is its own.
-    let from = if points.len() > 2 {
-        let reach = (w * 4.).max(w + 10.).min(length * 0.7);
-        *points.iter().rev().find(|p| (p.0 - b.0).hypot(p.1 - b.1) >= reach).unwrap_or(&a)
-    } else {
-        a
-    };
-    let (dx, dy) = (b.0 - from.0, b.1 - from.1);
-    let d = dx.hypot(dy).max(0.001);
-    let (end, head) = arrow_geometry((b.0 - dx / d * length, b.1 - dy / d * length), b, w);
-    let cut = (end.0 - b.0).hypot(end.1 - b.1);
-    let mut shaft: Vec<P> = points.iter().copied().filter(|p| (p.0 - b.0).hypot(p.1 - b.1) > cut).collect();
-    if shaft.is_empty() {
-        shaft.push(a);
-    }
-    shaft.push(end);
-    (shaft, head)
-}
 
-fn segment_distance(p: P, a: P, b: P) -> f32 {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let len2 = dx * dx + dy * dy;
-    let t = if len2 == 0. { 0. } else { (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / len2).clamp(0., 1.) };
-    (p.0 - (a.0 + t * dx)).hypot(p.1 - (a.1 + t * dy))
-}
 
-/// The room around a picture of `size` to draw and crop in, in its pixels.
-fn work_margin_at(size: (u32, u32), share: f32) -> f32 {
-    (size.0.max(size.1) as f32 * share).round()
-}
 
 /// The box of a picture's opaque pixels, when everything round it is see-
 /// through: a window shot's window inside its shadow (which never reaches
@@ -4445,69 +4182,7 @@ fn opaque_bounds(img: &RgbaImage) -> Option<crop::Rect> {
     (l < r && (l, t, r, b) != (0, 0, w, h)).then(|| (l as f32, t as f32, r as f32, b as f32))
 }
 
-/// What the result covers, in image pixels (whole, within the work area):
-/// the crop, or else the picture and, with `grow`, everything drawn round it.
-fn extent(doc: &Doc, size: (u32, u32), grow: bool) -> (f32, f32, f32, f32) {
-    let (w, h) = (size.0 as f32, size.1 as f32);
-    // A crop may reach as far as the crop mode lets it.
-    let m = work_margin_at(size, MAX_REACH);
-    let (l, t, r, b) = match doc.crop {
-        Some((a, b)) => rect(a, b),
-        None if !grow => (0., 0., w, h),
-        None => doc.shapes.iter().map(Shape::bounds).fold((0f32, 0f32, w, h), |e, s| (e.0.min(s.0), e.1.min(s.1), e.2.max(s.2), e.3.max(s.3))),
-    };
-    let (l, t) = (l.round().clamp(-m, w + m), t.round().clamp(-m, h + m));
-    let (r, b) = (r.round().clamp(l + 1., w + m + 1.), b.round().clamp(t + 1., h + m + 1.));
-    (l, t, r, b)
-}
 
-/// Annotated, cropped, optionally framed picture as PNG bytes.
-fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
-    // The picture on a transparent canvas the size of the result, and the
-    // shapes moved along with it.
-    let (l, t, r, b) = extent(doc, src.dimensions(), !frame.clips());
-    let (ew, eh) = ((r - l) as u32, (b - t) as u32);
-    let canvas = match doc.fill {
-        Some(fill) => {
-            let mut canvas = RgbaImage::from_pixel(ew, eh, image::Rgba(fill));
-            image::imageops::overlay(&mut canvas, src, -l as i64, -t as i64);
-            canvas
-        }
-        None => {
-            let mut canvas = RgbaImage::new(ew, eh);
-            image::imageops::replace(&mut canvas, src, -l as i64, -t as i64);
-            canvas
-        }
-    };
-    let shapes: Vec<Shape> = doc
-        .shapes
-        .iter()
-        .map(|sh| {
-            let mut sh = sh.clone();
-            sh.translate((-l, -t));
-            sh
-        })
-        .collect();
-    let mut out = rasterize(&canvas, &shapes)?;
-    if frame.on() {
-        // The picture gets the rounded corners and the shadow; what's drawn
-        // past its edges sits on the backdrop as it is.
-        let drawn = rasterize(&RgbaImage::new(ew, eh), &shapes)?;
-        let (w, h) = (src.width() as f32, src.height() as f32);
-        // A filled canvas is all picture: it gets the corners and shadow.
-        let inner = if doc.fill.is_some() { (0., 0., ew as f32, eh as f32) } else { ((-l).max(0.), (-t).max(0.), (w - l).min(ew as f32), (h - t).min(eh as f32)) };
-        out = framed(&out, &drawn, inner, frame);
-    }
-    // The crop mode's image size: the whole result, smaller.
-    if doc.scale < 0.999 {
-        let (w, h) = out.dimensions();
-        let (nw, nh) = (((w as f32 * doc.scale).round() as u32).max(1), ((h as f32 * doc.scale).round() as u32).max(1));
-        out = image::imageops::resize(&out, nw, nh, image::imageops::FilterType::Lanczos3);
-    }
-    let mut png = Vec::new();
-    out.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-    Some(png)
-}
 
 fn frame_presets() -> Vec<(String, serde_json::Value)> {
     let saved = std::fs::read_to_string(util::config_dir().join("editor-presets.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
@@ -4520,106 +4195,8 @@ fn save_frame_presets(presets: &[(String, serde_json::Value)]) {
     let _ = std::fs::write(util::config_dir().join("editor-presets.json"), serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
-/// The backdrop picture at `w`×`h`: the wallpaper cropped to fill, or the
-/// gradient.
-fn backdrop_pixels(backdrop: &Backdrop, picture: &RgbaImage, w: u32, h: u32) -> RgbaImage {
-    if *backdrop == Backdrop::Blurred {
-        return blurred_pixels(picture, w, h);
-    }
-    if let Backdrop::Wallpaper(path) = backdrop
-        && let Ok(img) = image::open(path)
-    {
-        return img.resize_to_fill(w, h, image::imageops::FilterType::Triangle).to_rgba8();
-    }
-    let all = palette::backdrops();
-    let (c0, c1) = match backdrop {
-        Backdrop::Gradient(i) => all[(*i).min(all.len() - 1)],
-        _ => all[0],
-    };
-    let (a, b) = (crate::ui::rgb_of(c0), crate::ui::rgb_of(c1));
-    RgbaImage::from_fn(w, h, |x, y| {
-        let g = ((x as f32 / w as f32) * 0.6 + (y as f32 / h as f32) * 0.4).clamp(0., 1.);
-        let mix = |p: f32, q: f32| ((p + (q - p) * g) * 255.).round() as u8;
-        image::Rgba([mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b), 255])
-    })
-}
 
-/// `picture` blurred into a `w`×`h` fill: shrunk a lot, softened, grown
-/// back, which is quick even for big outputs.
-fn blurred_pixels(picture: &RgbaImage, w: u32, h: u32) -> RgbaImage {
-    use image::imageops::{FilterType, blur, resize};
-    let (w, h) = (w.max(1), h.max(1));
-    let k = (w.max(h) as f32 / 48.).max(1.);
-    let (sw, sh) = (((w as f32 / k).round() as u32).max(2), ((h as f32 / k).round() as u32).max(2));
-    let small = image::DynamicImage::ImageRgba8(picture.clone()).resize_to_fill(sw, sh, FilterType::Triangle).to_rgba8();
-    let mut out = resize(&blur(&small, 1.6), w, h, FilterType::CatmullRom);
-    for p in out.pixels_mut() {
-        p.0[3] = 255;
-    }
-    out
-}
 
-/// The picture with rounded corners and a soft shadow on its background,
-/// like the studio render does for recordings.
-/// `img` on the backdrop: the `inner` part (the picture, in `img` pixels)
-/// rounded and shadowed, and `drawn` (the shapes alone) wherever it reaches
-/// past that.
-fn framed(img: &RgbaImage, drawn: &RgbaImage, inner: (f32, f32, f32, f32), frame: &Frame) -> RgbaImage {
-    let ((ow, oh), (left, top)) = frame.layout(img.width() as f32, img.height() as f32);
-    let (iw, ih) = (img.width() as f32, img.height() as f32);
-    let (w, h) = ((inner.2 - inner.0).max(1.), (inner.3 - inner.1).max(1.));
-    let radius = w.max(h) * frame.radius;
-    let blur = (w.max(h) * frame.padding * 0.45).max(w.max(h) * 0.02);
-    let strength = frame.shadow.clamp(0., 1.);
-    let clear = frame.backdrop == Backdrop::Transparent;
-    let mut out = if clear { RgbaImage::new(ow as u32, oh as u32) } else { backdrop_pixels(&frame.backdrop, img, ow as u32, oh as u32) };
-    // Signed distance to a rounded rectangle centered at (cx, cy).
-    let sdf = |x: f32, y: f32, cx: f32, cy: f32| {
-        let qx = (x - cx).abs() - (w / 2. - radius);
-        let qy = (y - cy).abs() - (h / 2. - radius);
-        qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - radius
-    };
-    let (cx, cy) = (left + inner.0 + w / 2., top + inner.1 + h / 2.);
-    for (x, y, px) in out.enumerate_pixels_mut() {
-        let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-        // Premultiplied colour and coverage: an opaque background stays
-        // opaque, a transparent one picks up the shadow as dark alpha.
-        let mut a = if clear { 0. } else { 1. };
-        let mut c = [px.0[0] as f32 / 255. * a, px.0[1] as f32 / 255. * a, px.0[2] as f32 / 255. * a];
-        if strength > 0. {
-            let d = sdf(fx, fy, cx, cy + blur * 0.35);
-            let u = ((d + blur * 0.4) / (blur * 1.4)).clamp(0., 1.);
-            let k = u * u * (3. - 2. * u);
-            let dark = 0.9 * strength * (1. - k);
-            c.iter_mut().for_each(|v| *v *= 1. - dark);
-            a = a * (1. - dark) + dark;
-        }
-        // The picture itself, antialiased along its rounded edge.
-        let cover = (0.5 - sdf(fx, fy, cx, cy)).clamp(0., 1.);
-        let (ix, iy) = (fx - left, fy - top);
-        if ix >= 0. && iy >= 0. && ix < iw && iy < ih {
-            let (ix, iy) = (ix as u32, iy as u32);
-            // The picture with its drawing inside the rounded edge, the
-            // drawing alone outside it.
-            let mut over = |p: [u8; 4], k: f32| {
-                let k = k * p[3] as f32 / 255.;
-                for (v, s) in c.iter_mut().zip(p) {
-                    *v = *v * (1. - k) + s as f32 / 255. * k;
-                }
-                a = a * (1. - k) + k;
-            };
-            if cover < 1. {
-                over(drawn.get_pixel(ix, iy).0, 1.);
-            }
-            if cover > 0. {
-                over(img.get_pixel(ix, iy).0, cover);
-            }
-        }
-        let un = |v: f32| if a > 0. { (v / a * 255.).round().clamp(0., 255.) as u8 } else { 0 };
-        *px = image::Rgba([un(c[0]), un(c[1]), un(c[2]), (a * 255.).round() as u8]);
-    }
-    out
-}
 
 /// A small rounded checkerboard for the "transparent" swatch: 3×3 cells,
 /// the corner ones rounded (GPUI clips children to rectangles only).
@@ -4667,74 +4244,9 @@ fn push_text(shape: &mut Shape, s: &str) {
     }
 }
 
-/// Left, top, right, bottom.
-fn rect(a: P, b: P) -> (f32, f32, f32, f32) {
-    (a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1))
-}
 
-/// Points around an ellipse inscribed in the a–b rectangle.
-fn ellipse_points(a: P, b: P) -> Vec<P> {
-    let (l, t, r, bt) = rect(a, b);
-    let (cx, cy, rx, ry) = ((l + r) / 2., (t + bt) / 2., (r - l) / 2., (bt - t) / 2.);
-    (0..=72).map(|i| {
-        let th = i as f32 / 72. * std::f32::consts::TAU;
-        (cx + rx * th.cos(), cy + ry * th.sin())
-    })
-    .collect()
-}
 
-/// Smooth freehand points into a curve: quadratic segments between the
-/// midpoints of consecutive points, with each point as the control. Shared by
-/// screen and export so both draw the same line.
-fn smooth(raw: &[P]) -> Vec<P> {
-    if raw.len() < 3 {
-        return raw.to_vec();
-    }
-    // First average each point with its neighbours (ends stay put) to take out
-    // the hand and sensor jitter, then curve through what's left.
-    let r = 2usize;
-    let points: Vec<P> = (0..raw.len())
-        .map(|i| {
-            if i == 0 || i + 1 == raw.len() {
-                return raw[i];
-            }
-            let k = r.min(i).min(raw.len() - 1 - i);
-            let window = &raw[i - k..=i + k];
-            let n = window.len() as f32;
-            (window.iter().map(|p| p.0).sum::<f32>() / n, window.iter().map(|p| p.1).sum::<f32>() / n)
-        })
-        .collect();
-    let points = &points[..];
-    let mid = |a: P, b: P| ((a.0 + b.0) / 2., (a.1 + b.1) / 2.);
-    let mut out = vec![points[0]];
-    for w in points.windows(3) {
-        let (start, ctrl, end) = (mid(w[0], w[1]), w[1], mid(w[1], w[2]));
-        for i in 1..=6 {
-            let t = i as f32 / 6.;
-            let u = 1. - t;
-            out.push((
-                u * u * start.0 + 2. * u * t * ctrl.0 + t * t * end.0,
-                u * u * start.1 + 2. * u * t * ctrl.1 + t * t * end.1,
-            ));
-        }
-    }
-    out.push(*points.last().unwrap());
-    out
-}
 
-/// Where the shaft ends and the head triangle, shared by screen and export.
-fn arrow_geometry(a: P, b: P, w: f32) -> (P, [P; 3]) {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let len = dx.hypot(dy).max(0.001);
-    let (ux, uy) = (dx / len, dy / len);
-    let head = (w * 4.).max(w + 10.).min(len * 0.7);
-    let half = head * 0.55;
-    let base = (b.0 - ux * head, b.1 - uy * head);
-    let left = (base.0 - uy * half, base.1 + ux * half);
-    let right = (base.0 + uy * half, base.1 - ux * half);
-    // Run the shaft a little into the head so they join without a seam.
-    ((base.0 + ux * w * 0.5, base.1 + uy * w * 0.5), [b, left, right])
-}
 
 fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Point<gpui::Pixels>) {
     // Outline the stroke the way the export does (round caps and joins) and
@@ -4818,7 +4330,7 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             }
         }
     };
-    let (a, b, c, w) = (shape.a, shape.b, shape.color, shape.size);
+    let (a, b, c, w) = (shape.a, shape.b, crate::ui::from_rgba(shape.color), shape.size);
     match &shape.kind {
         Kind::Rect | Kind::Ellipse if shape.filled => {
             let points = if matches!(shape.kind, Kind::Rect) { vec![a, (b.0, a.1), b, (a.0, b.1)] } else { ellipse_points(a, b) };
@@ -4856,12 +4368,12 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             }
         }
         // While dragging, outline the area to be hidden.
-        Kind::Blur(_, None) => {
+        Kind::Blur(_) => {
             let mut outline = c;
             outline.alpha = 0.8;
             stroke(window, &[a, (b.0, a.1), b, (a.0, b.1)], true, outline, 1.5 / s);
         }
-        Kind::Blur(_, Some(_)) | Kind::Text(_) | Kind::Counter(_) | Kind::Cursor(_) | Kind::Spotlight | Kind::Picture(_) => {}
+        Kind::Text(_) | Kind::Counter(_) | Kind::Cursor(_) | Kind::Spotlight | Kind::Picture(_) => {}
     }
 }
 
@@ -4876,8 +4388,6 @@ const HEAVY_STROKES: usize = 20_000;
 /// Points per piece of a stroke drawn on the canvas (see `paint_shape`).
 const STROKE_PIECE: usize = 96;
 
-/// How dark a spotlight leaves everything around it.
-const SPOT_SHADE: f32 = 0.55;
 
 /// Dim the picture outside every spotlight box, one even-odd path.
 fn paint_spotlights(window: &mut Window, spots: &[(P, P)], size: P, pt: &impl Fn(P) -> Point<gpui::Pixels>) {
@@ -4902,44 +4412,17 @@ fn paint_spotlights(window: &mut Window, spots: &[(P, P)], size: P, pt: &impl Fn
     }
 }
 
-/// White or near-black text, whichever reads better on `c`.
-fn on_color(c: Hsla) -> Hsla {
-    if c.lightness > 0.65 { gpui::hsla(0., 0., 0.08, 1.) } else { gpui::white() }
-}
 
-pub(crate) fn font() -> &'static FontRef<'static> {
-    static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
-    FONT.get_or_init(|| FontRef::try_from_slice(include_bytes!("../data/fonts/IBMPlexSans-SemiBold.ttf")).expect("bundled font"))
-}
 
-/// ab_glyph scales by the font's whole height (ascender to descender), GPUI
-/// and everyone else by the em; this turns an em size into ab_glyph's scale
-/// so text measures and draws the size it shows on screen.
-fn em(size: f32) -> PxScale {
-    let f = font();
-    let height = f.ascent_unscaled() - f.descent_unscaled();
-    PxScale::from(size * height / f.units_per_em().unwrap_or(1000.))
-}
 
-pub(crate) struct Metrics {
-    pub ascent: f32,
-    pub descent: f32,
-    /// Line box height; text sits centered in it, as in GPUI.
-    pub line: f32,
-}
 
-pub(crate) fn metrics(size: f32) -> Metrics {
-    let f = font().as_scaled(em(size));
-    let (ascent, descent) = (f.ascent(), f.descent());
-    Metrics { ascent, descent, line: ((ascent - descent) * 1.2).ceil() }
-}
 
 /// The hidden a–b area of `src` as PNG bytes, for the canvas.
 fn hide_png(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<Vec<u8>> {
     // Its edge pixels repeated round it: drawn scaled, GPUI blends a
     // texture's outer texels with clear black, and the patch would show a
     // grey rim; the canvas clips the repeat off instead.
-    let patch = hide(src, a, b, how, size)?;
+    let patch = kadr_raster::hide(src, a, b, how, size)?;
     let (w, h) = patch.dimensions();
     let n = PATCH_PAD;
     let patch = RgbaImage::from_fn(w + 2 * n, h + 2 * n, |x, y| *patch.get_pixel(x.saturating_sub(n).min(w - 1), y.saturating_sub(n).min(h - 1)));
@@ -4948,299 +4431,46 @@ fn hide_png(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<Vec<u8>
     Some(png)
 }
 
+/// White or near-black text on the canvas, whichever reads better on `c`
+/// (what `kadr_raster::on_color` picks for the export).
+fn on_color(c: Hsla) -> Hsla {
+    crate::ui::from_rgba(kadr_raster::on_color(crate::ui::to_rgba(c)))
+}
+
+/// A hidden area's patch, by what it depends on: how, where, how strong.
+fn patch_key(how: Hide, a: P, b: P, size: f32) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for v in [how as u32, a.0.to_bits(), a.1.to_bits(), b.0.to_bits(), b.1.to_bits(), size.to_bits()] {
+        h = (h ^ v as u64).wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// A dropped, pasted or chosen image file as a picture to lay on top.
+fn decode_picture(bytes: &[u8]) -> Option<Arc<RgbaImage>> {
+    image::load_from_memory(bytes).ok().map(|i| Arc::new(i.to_rgba8()))
+}
+
 /// The repeated rim round the shown picture, in pixels.
 const PICTURE_PAD: u32 = 2;
 
 /// The repeated rim round a hidden area's patch on screen, in pixels.
 const PATCH_PAD: u32 = 2;
 
-/// The a–b area of `src` pixelated or blurred, placed at the area's top
-/// left corner clamped to the picture, as strong as `size` says (see
-/// `hide_strength`). Screen and export share it.
-fn hide(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<RgbaImage> {
-    let (l, t, r, bt) = rect(a, b);
-    let (x, y) = (l.floor().max(0.) as u32, t.floor().max(0.) as u32);
-    let w = (r.ceil() as u32).min(src.width()).saturating_sub(x);
-    let h = (bt.ceil() as u32).min(src.height()).saturating_sub(y);
-    if w < 2 || h < 2 {
-        return None;
-    }
-    // Blocks and blur scale with the screenshot so text stays unreadable at any size.
-    let long = src.width().max(src.height());
-    let k = hide_strength(size);
-    match how {
-        Hide::Pixelate => {
-            let block = (((long / 120).clamp(8, 32) as f32 * k).round() as u32).max(3);
-            let region = image::imageops::crop_imm(src, x, y, w, h).to_image();
-            let small = image::imageops::resize(&region, (w / block).max(1), (h / block).max(1), image::imageops::FilterType::Triangle);
-            Some(image::imageops::resize(&small, w, h, image::imageops::FilterType::Nearest))
-        }
-        Hide::Blur => {
-            // Blurred with what's around it, so the edges don't sharpen up.
-            let sigma = (long as f32 / 140.).clamp(6., 24.) * k;
-            let reach = (sigma * 2.).ceil() as u32;
-            let (bx, by) = (x.saturating_sub(reach), y.saturating_sub(reach));
-            let (bw, bh) = ((x + w + reach).min(src.width()) - bx, (y + h + reach).min(src.height()) - by);
-            let region = image::imageops::crop_imm(src, bx, by, bw, bh).to_image();
-            let blurred = image::imageops::fast_blur(&region, sigma);
-            Some(image::imageops::crop_imm(&blurred, x - bx, y - by, w, h).to_image())
-        }
-    }
-}
 
-fn paint_for(c: Hsla, alpha: f32) -> tiny_skia::Paint<'static> {
-    let rgb = crate::ui::rgb_of(c);
-    let mut p = tiny_skia::Paint::default();
-    p.set_color_rgba8((rgb.r * 255.) as u8, (rgb.g * 255.) as u8, (rgb.b * 255.) as u8, (alpha * 255.) as u8);
-    p.anti_alias = true;
-    p
-}
 
-fn stroke_for(width: f32) -> tiny_skia::Stroke {
-    tiny_skia::Stroke { width, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..tiny_skia::Stroke::default() }
-}
 
-fn polyline(points: &[P], closed: bool) -> Option<tiny_skia::Path> {
-    let mut b = tiny_skia::PathBuilder::new();
-    let (first, rest) = points.split_first()?;
-    b.move_to(first.0, first.1);
-    for p in rest {
-        b.line_to(p.0, p.1);
-    }
-    if closed {
-        b.close();
-    }
-    b.finish()
-}
 
-/// The shapes drawn as lines and fills (`Kind::is_vector`), mapped by `tf`.
-/// False for any other kind, which is left alone.
-fn draw_vector(pm: &mut tiny_skia::Pixmap, shape: &Shape, tf: tiny_skia::Transform) -> bool {
-    use tiny_skia::{FillRule, PathBuilder, Rect};
-    let (a, b, c, size) = (shape.a, shape.b, shape.color, shape.size);
-    let solid = paint_for(c, 1.);
-    match &shape.kind {
-        Kind::Rect => {
-            if let Some(path) = polyline(&[a, (b.0, a.1), b, (a.0, b.1)], true) {
-                if shape.filled {
-                    pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
-                } else {
-                    pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
-                }
-            }
-        }
-        Kind::Ellipse => {
-            let (l, t, r, bt) = rect(a, b);
-            if let Some(path) = Rect::from_ltrb(l, t, r, bt).and_then(PathBuilder::from_oval) {
-                if shape.filled {
-                    pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
-                } else {
-                    pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
-                }
-            }
-        }
-        Kind::Line => {
-            if let Some(path) = polyline(&shape.path(), false) {
-                pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
-            }
-        }
-        Kind::Pen(points) => {
-            if let Some(path) = polyline(&smooth(points), false) {
-                pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
-            }
-        }
-        Kind::Marker(points) => {
-            if let Some(path) = polyline(&smooth(points), false) {
-                pm.stroke_path(&path, &paint_for(c, MARKER_ALPHA), &stroke_for(size), tf, None);
-            }
-        }
-        Kind::Arrow => {
-            let (shaft, head) = arrow_parts(&shape.path(), size);
-            if let Some(path) = polyline(&shaft, false) {
-                pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
-            }
-            if let Some(path) = polyline(&head, true) {
-                pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
-            }
-        }
-        _ => return false,
-    }
-    true
-}
 
-/// Draw everything onto the original at full resolution.
-fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
-    use tiny_skia::{FillRule, PathBuilder, Pixmap, Transform};
 
-    // Hiding edits the pixels themselves, beneath every other shape.
-    let mut base = src.clone();
-    for shape in shapes {
-        if let Kind::Blur(how, _) = shape.kind
-            && let Some(patch) = hide(src, shape.a, shape.b, how, shape.size)
-        {
-            let (l, t, _, _) = rect(shape.a, shape.b);
-            image::imageops::replace(&mut base, &patch, l.floor().max(0.) as i64, t.floor().max(0.) as i64);
-        }
-    }
-    let spots: Vec<(f32, f32, f32, f32)> = shapes.iter().filter(|sh| matches!(sh.kind, Kind::Spotlight)).map(|sh| rect(sh.a, sh.b)).collect();
-    if !spots.is_empty() {
-        let keep = 1. - SPOT_SHADE;
-        for (x, y, px) in base.enumerate_pixels_mut() {
-            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            if !spots.iter().any(|&(l, t, r, b)| fx >= l && fx < r && fy >= t && fy < b) {
-                for c in &mut px.0[..3] {
-                    *c = (*c as f32 * keep) as u8;
-                }
-            }
-        }
-    }
-    // Pictures on top of the screenshot, under the drawing.
-    for shape in shapes {
-        if let Kind::Picture(picture) = &shape.kind {
-            let (l, t, r, b) = rect(shape.a, shape.b);
-            let (w, h) = ((r - l).round().max(1.) as u32, (b - t).round().max(1.) as u32);
-            let scaled = image::imageops::resize(picture.pixels.as_ref(), w, h, image::imageops::FilterType::Lanczos3);
-            image::imageops::overlay(&mut base, &scaled, l.round() as i64, t.round() as i64);
-        }
-    }
-    let (w, h) = base.dimensions();
-    let mut data = base.into_raw();
-    // tiny-skia works on premultiplied pixels.
-    for px in data.chunks_exact_mut(4) {
-        let a = px[3] as u32;
-        for c in &mut px[..3] {
-            *c = (*c as u32 * a / 255) as u8;
-        }
-    }
-    let mut pm = Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(w, h)?)?;
 
-    for shape in shapes {
-        if draw_vector(&mut pm, shape, Transform::identity()) {
-            continue;
-        }
-        let (a, c, size) = (shape.a, shape.color, shape.size);
-        let solid = paint_for(c, 1.);
-        match &shape.kind {
-            Kind::Cursor(name) => crate::cursors::draw(name, size, a, &mut pm.as_mut()),
-            Kind::Counter(n) => {
-                if let Some(path) = PathBuilder::from_circle(a.0, a.1, size / 2.) {
-                    pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
-                }
-                let label = n.to_string();
-                let fs = size * 0.55;
-                let m = metrics(fs);
-                let width = text_width(&label, fs);
-                draw_line(&mut pm, &label, (a.0 - width / 2., a.1 - (m.ascent - m.descent) / 2. + m.ascent), fs, on_color(c));
-            }
-            Kind::Text(text) => {
-                let m = metrics(size);
-                if shape.text == TextStyle::Plate {
-                    let (l, t, r, bt) = shape.bounds();
-                    let (_, _, radius) = TextStyle::plate(size);
-                    if let Some(path) = rounded_rect(l, t, r, bt, radius) {
-                        pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
-                    }
-                }
-                let ink = if shape.text == TextStyle::Plate { on_color(c) } else { c };
-                for (i, line) in text.split('\n').enumerate() {
-                    let top = a.1 + i as f32 * m.line;
-                    let baseline = top + (m.line - (m.ascent - m.descent)) / 2. + m.ascent;
-                    if shape.text == TextStyle::Outline {
-                        let o = TextStyle::outline(size);
-                        for k in 0..16 {
-                            let th = k as f32 / 16. * std::f32::consts::TAU;
-                            draw_line(&mut pm, line, (a.0 + o * th.cos(), baseline + o * th.sin()), size, on_color(c));
-                        }
-                    }
-                    draw_line(&mut pm, line, (a.0, baseline), size, ink);
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut data = pm.take();
-    for px in data.chunks_exact_mut(4) {
-        let a = px[3] as u32;
-        if a > 0 && a < 255 {
-            for c in &mut px[..3] {
-                *c = (*c as u32 * 255 / a).min(255) as u8;
-            }
-        }
-    }
-    RgbaImage::from_raw(w, h, data)
-}
 
-fn rounded_rect(l: f32, t: f32, r: f32, b: f32, radius: f32) -> Option<tiny_skia::Path> {
-    let radius = radius.min((r - l) / 2.).min((b - t) / 2.);
-    let mut p = tiny_skia::PathBuilder::new();
-    p.move_to(l + radius, t);
-    p.line_to(r - radius, t);
-    p.quad_to(r, t, r, t + radius);
-    p.line_to(r, b - radius);
-    p.quad_to(r, b, r - radius, b);
-    p.line_to(l + radius, b);
-    p.quad_to(l, b, l, b - radius);
-    p.line_to(l, t + radius);
-    p.quad_to(l, t, l + radius, t);
-    p.close();
-    p.finish()
-}
-
-pub(crate) fn text_width(text: &str, size: f32) -> f32 {
-    let f = font().as_scaled(em(size));
-    let mut prev = None;
-    let mut w = 0.;
-    for ch in text.chars() {
-        let id = font().glyph_id(ch);
-        if let Some(p) = prev {
-            w += f.kern(p, id);
-        }
-        w += f.h_advance(id);
-        prev = Some(id);
-    }
-    w
-}
-
-/// One line of text with its baseline at `origin.1`.
-pub(crate) fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size: f32, color: Hsla) {
-    let font = font();
-    let scale = em(size);
-    let f = font.as_scaled(scale);
-    let rgb = crate::ui::rgb_of(color);
-    let (w, h) = (pm.width() as i32, pm.height() as i32);
-    let data = pm.data_mut();
-    let mut x = origin.0;
-    let mut prev = None;
-    for ch in text.chars() {
-        let id = font.glyph_id(ch);
-        if let Some(p) = prev {
-            x += f.kern(p, id);
-        }
-        let glyph = id.with_scale_and_position(scale, ab_glyph::point(x, origin.1));
-        if let Some(outline) = font.outline_glyph(glyph) {
-            let bb = outline.px_bounds();
-            outline.draw(|gx, gy, coverage| {
-                let (px, py) = (bb.min.x as i32 + gx as i32, bb.min.y as i32 + gy as i32);
-                if px < 0 || py < 0 || px >= w || py >= h {
-                    return;
-                }
-                let i = ((py * w + px) * 4) as usize;
-                let k = coverage.clamp(0., 1.) * rgb.a;
-                for (ch, v) in [rgb.r, rgb.g, rgb.b].into_iter().enumerate() {
-                    data[i + ch] = (data[i + ch] as f32 * (1. - k) + v * 255. * k) as u8;
-                }
-                data[i + 3] = (data[i + 3] as f32 * (1. - k) + 255. * k) as u8;
-            });
-        }
-        x += f.h_advance(id);
-        prev = Some(id);
-    }
-}
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kadr_raster::{framed, hide, rasterize};
 
     fn scribbles(n: usize) -> Vec<Shape> {
         (0..n)
@@ -5250,7 +4480,7 @@ mod tests {
                     (400. + (t * 1.3 + k as f32).cos() * (60. + i as f32 * 0.3), 300. + (t * 1.7).sin() * (40. + i as f32 * 0.2))
                 }).collect();
                 let kind = if k % 5 == 0 { Kind::Marker(points) } else { Kind::Pen(points) };
-                Shape { kind, a: (0., 0.), b: (0., 0.), color: gpui::hsla(k as f32 / n as f32, 0.8, 0.5, 1.), size: 4., filled: false, text: TextStyle::Plain, bend: None }
+                Shape { kind, a: (0., 0.), b: (0., 0.), color: Rgba::hsl(k as f32 / n as f32, 0.8, 0.5, 1.), size: 4., filled: false, text: TextStyle::Plain, bend: None }
             })
             .collect()
     }
@@ -5271,7 +4501,7 @@ mod tests {
     #[test]
     fn cursor_tip_on_the_point() {
         let src = RgbaImage::from_pixel(200, 200, image::Rgba([255, 255, 255, 255]));
-        let shape = Shape { kind: Kind::Cursor("arrow"), a: (80., 60.), b: (80., 60.), color: gpui::hsla(0., 0., 0., 1.), size: 44., filled: false, text: TextStyle::Plain, bend: None };
+        let shape = Shape { kind: Kind::Cursor("arrow"), a: (80., 60.), b: (80., 60.), color: Rgba::hsl(0., 0., 0., 1.), size: 44., filled: false, text: TextStyle::Plain, bend: None };
         let out = rasterize(&src, std::slice::from_ref(&shape)).unwrap();
         // The arrow (from the user's theme or kadr's own) is dark inside a
         // light rim, its tip at the point: ink just below and right of it,
@@ -5340,7 +4570,7 @@ mod tests {
             .step_by(3)
             .collect()
         };
-        let red = gpui::hsla(0.01, 0.6, 0.54, 1.);
+        let red = Rgba::hsl(0.01, 0.6, 0.54, 1.);
         let mut shapes = Vec::new();
         // Raw polyline (old behaviour) via a chain of lines, then the smoothed pen.
         let raw = trace(60.);
@@ -5348,7 +4578,7 @@ mod tests {
             shapes.push(Shape { kind: Kind::Line, a: w[0], b: w[1], color: red, size: 6., filled: false, text: TextStyle::Plain, bend: None });
         }
         shapes.push(Shape { kind: Kind::Pen(trace(160.)), a: (0., 0.), b: (0., 0.), color: red, size: 6., filled: false, text: TextStyle::Plain, bend: None });
-        let png = compose(&src, &Doc { shapes, crop: None, ..Doc::default() }, &Frame::default()).unwrap();
+        let png = kadr_raster::render_png(&src, &Doc { shapes, crop: None, ..Doc::default() }, &Frame::default()).unwrap();
         assert!(!png.is_empty());
         // KADR_TEST_OUT=/path/out.png to look at the result.
         if let Ok(out) = std::env::var("KADR_TEST_OUT") {
@@ -5356,8 +4586,8 @@ mod tests {
         }
     }
 
-    fn red() -> Hsla {
-        gpui::hsla(0.01, 0.6, 0.54, 1.)
+    fn red() -> Rgba {
+        Rgba::hsl(0.01, 0.6, 0.54, 1.)
     }
 
     #[test]
@@ -5376,26 +4606,26 @@ mod tests {
         // A line from inside to 15 px past the right edge (the room is 20).
         let line = Shape { kind: Kind::Line, a: (150., 50.), b: (215., 50.), color: red(), size: 4., filled: false, text: TextStyle::Plain, bend: None };
         let doc = Doc { shapes: vec![line], crop: None, ..Doc::default() };
-        let out = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        let out = image::load_from_memory(&kadr_raster::render_png(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
         assert_eq!(out.dimensions(), (217, 100));
         assert!(out.get_pixel(210, 50).0[3] > 200, "the line goes on past the picture");
         assert_eq!(out.get_pixel(210, 10).0[3], 0, "and the new room is clear");
         // A crop reaching past the picture makes it bigger too.
         let doc = Doc { shapes: Vec::new(), crop: Some(((-10., -10.), (210., 100.))), ..Doc::default() };
-        let out = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        let out = image::load_from_memory(&kadr_raster::render_png(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
         assert_eq!(out.dimensions(), (220, 110));
         assert_eq!(out.get_pixel(5, 5).0[3], 0);
         assert_eq!(out.get_pixel(15, 15).0, [200, 200, 200, 255]);
         // Filled, the new room takes the fill; far past the old margin too.
         let doc = Doc { shapes: Vec::new(), crop: Some(((-60., -10.), (210., 100.))), fill: Some([255, 255, 255, 255]), ..Doc::default() };
-        let out = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        let out = image::load_from_memory(&kadr_raster::render_png(&src, &doc, &Frame::default()).unwrap()).unwrap().to_rgba8();
         assert_eq!(out.dimensions(), (270, 110));
         assert_eq!(out.get_pixel(5, 5).0, [255, 255, 255, 255]);
         assert_eq!(out.get_pixel(65, 15).0, [200, 200, 200, 255]);
         // On a backdrop the line still shows past the rounded picture.
         let frame = Frame { backdrop: Backdrop::Gradient(0), ..Frame::default() };
         let doc = Doc { shapes: doc_line(), crop: None, ..Doc::default() };
-        let png = compose(&src, &doc, &frame).unwrap();
+        let png = kadr_raster::render_png(&src, &doc, &frame).unwrap();
         let framed = image::load_from_memory(&png).unwrap().to_rgba8();
         let ((_, _), (left, top)) = frame.layout(217., 100.);
         let p = framed.get_pixel(left as u32 + 210, top as u32 + 50).0;
@@ -5409,11 +4639,11 @@ mod tests {
         let src = RgbaImage::from_pixel(200, 100, image::Rgba([200, 200, 200, 255]));
         let doc = Doc { shapes: doc_line(), ..Doc::default() };
         let frame = Frame { backdrop: Backdrop::Gradient(0), padding: 0., ..Frame::default() };
-        let out = image::load_from_memory(&compose(&src, &doc, &frame).unwrap()).unwrap().to_rgba8();
+        let out = image::load_from_memory(&kadr_raster::render_png(&src, &doc, &frame).unwrap()).unwrap().to_rgba8();
         assert_eq!(out.dimensions(), (200, 100));
         // With padding, it still grows.
         let frame = Frame { padding: 0.1, ..frame };
-        let out = image::load_from_memory(&compose(&src, &doc, &frame).unwrap()).unwrap().to_rgba8();
+        let out = image::load_from_memory(&kadr_raster::render_png(&src, &doc, &frame).unwrap()).unwrap().to_rgba8();
         assert!(out.width() > frame.layout(200., 100.).0 .0 as u32);
     }
 
@@ -5426,8 +4656,8 @@ mod tests {
         let src = RgbaImage::from_pixel(100, 80, image::Rgba([255, 255, 255, 255]));
         let mut png = Vec::new();
         RgbaImage::from_pixel(10, 10, image::Rgba([200, 0, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
-        let picture = Picture::decode(&png).unwrap();
-        let shape = Shape { kind: Kind::Picture(picture), a: (20., 20.), b: (40., 40.), color: gpui::white(), size: 0., filled: false, text: TextStyle::Plain, bend: None };
+        let picture = decode_picture(&png).unwrap();
+        let shape = Shape { kind: Kind::Picture(picture), a: (20., 20.), b: (40., 40.), color: Rgba::WHITE, size: 0., filled: false, text: TextStyle::Plain, bend: None };
         let out = rasterize(&src, &[shape]).unwrap();
         assert_eq!(out.get_pixel(30, 30).0, [200, 0, 0, 255]);
         assert_eq!(out.get_pixel(45, 30).0, [255, 255, 255, 255]);
@@ -5444,7 +4674,7 @@ mod tests {
         for how in [Hide::Pixelate, Hide::Blur] {
             let patch = hide(&src, (100., 50.), (300., 250.), how, WEIGHT).unwrap();
             assert_eq!(patch.dimensions(), (200, 200));
-            let shape = Shape { kind: Kind::Blur(how, None), a: (100., 50.), b: (300., 250.), color: red(), size: WEIGHT, filled: false, text: TextStyle::Plain, bend: None };
+            let shape = Shape { kind: Kind::Blur(how), a: (100., 50.), b: (300., 250.), color: red(), size: WEIGHT, filled: false, text: TextStyle::Plain, bend: None };
             let out = rasterize(&src, &[shape]).unwrap();
             // The export holds exactly the canvas's patch.
             for (x, y) in [(0, 0), (57, 91), (199, 199)] {
@@ -5502,7 +4732,7 @@ mod tests {
             Shape { kind: Kind::Spotlight, a: (10., 10.), b: (60., 60.), color: red(), size: 3., filled: false, text: TextStyle::Plain, bend: None },
             Shape { kind: Kind::Rect, a: (120., 20.), b: (180., 80.), color: red(), size: 3., filled: true, text: TextStyle::Plain, bend: None },
         ];
-        let out = image::load_from_memory(&compose(&src, &Doc { shapes, crop: None, ..Doc::default() }, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        let out = image::load_from_memory(&kadr_raster::render_png(&src, &Doc { shapes, crop: None, ..Doc::default() }, &Frame::default()).unwrap()).unwrap().to_rgba8();
         assert_eq!(out.get_pixel(30, 30).0[0], 200, "inside the spotlight stays");
         assert!(out.get_pixel(90, 90).0[0] < 100, "outside is dimmed");
         let inner = out.get_pixel(150, 50).0;
@@ -5517,7 +4747,7 @@ mod tests {
         let (l, t, _, _) = plate.bounds();
         assert!(l < 20. && t < 20., "the plate reaches around the text");
         let shapes = vec![plate, text((160., 20.), TextStyle::Outline)];
-        let out = image::load_from_memory(&compose(&src, &Doc { shapes, crop: None, ..Doc::default() }, &Frame::default()).unwrap()).unwrap().to_rgba8();
+        let out = image::load_from_memory(&kadr_raster::render_png(&src, &Doc { shapes, crop: None, ..Doc::default() }, &Frame::default()).unwrap()).unwrap().to_rgba8();
         let corner = out.get_pixel((l + 3.) as u32, 28).0;
         assert!(corner[0] > corner[1] + 40, "plate is the text colour: {corner:?}");
         if let Ok(path) = std::env::var("KADR_TEST_TEXT") {
@@ -5559,20 +4789,20 @@ mod tests {
         let src = RgbaImage::from_pixel(400, 300, image::Rgba([200, 200, 200, 255]));
         let shapes = vec![Shape { kind: Kind::Rect, a: (60., 60.), b: (220., 180.), color: red(), size: 6., filled: false, text: TextStyle::Plain, bend: None }];
         let doc = Doc { shapes, crop: Some(((50., 40.), (250., 200.))), ..Doc::default() };
-        let plain = image::load_from_memory(&compose(&src, &doc, &Frame::default()).unwrap()).unwrap();
+        let plain = image::load_from_memory(&kadr_raster::render_png(&src, &doc, &Frame::default()).unwrap()).unwrap();
         assert_eq!((plain.width(), plain.height()), (200, 160));
         let frame = Frame { backdrop: Backdrop::Gradient(0), ..Frame::default() };
-        let png = compose(&src, &doc, &frame).unwrap();
+        let png = kadr_raster::render_png(&src, &doc, &frame).unwrap();
         let framed = image::load_from_memory(&png).unwrap();
         // 6% of the longer side on each edge.
         assert_eq!((framed.width(), framed.height()), (224, 184));
         // A square output grows the short side.
         let square = Frame { aspect: 3, ..frame.clone() };
-        let sq = image::load_from_memory(&compose(&src, &doc, &square).unwrap()).unwrap();
+        let sq = image::load_from_memory(&kadr_raster::render_png(&src, &doc, &square).unwrap()).unwrap();
         assert_eq!((sq.width(), sq.height()), (224, 224));
         if let Ok(out) = std::env::var("KADR_TEST_FRAME") {
             let big = Doc { shapes: doc.shapes.clone(), crop: None, ..Doc::default() };
-            std::fs::write(out, compose(&src, &big, &frame).unwrap()).unwrap();
+            std::fs::write(out, kadr_raster::render_png(&src, &big, &frame).unwrap()).unwrap();
         }
     }
 }
@@ -5585,7 +4815,7 @@ impl Editor {
             "path": self.path.display().to_string(),
             "tool": format!("{:?}", self.tool).to_lowercase(),
             "selected": self.selected,
-            "shapes": self.doc.shapes.iter().map(project::shape_to_json).collect::<Vec<_>>(),
+            "shapes": self.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
             "crop": self.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
             "cropping": self.cropping.is_some(),
             "frame": self.frame.to_json(),

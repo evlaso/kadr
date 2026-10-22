@@ -4,7 +4,9 @@
 
 use image::RgbaImage;
 
-use super::{Doc, Kind, P, Picture, Shape, rect};
+use kadr_raster::Bounds as _;
+
+use super::{Doc, Kind, P, Shape, rect};
 use crate::i18n::t;
 
 /// A crop box in image pixels: left, top, right, bottom.
@@ -59,43 +61,7 @@ fn gcd(a: u32, b: u32) -> u32 {
     if b == 0 { a } else { gcd(b, a % b) }
 }
 
-/// How the shown picture comes from the one taken: mirrored left to right
-/// first, then turned clockwise by quarter turns.
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub(super) struct Orientation {
-    pub turns: u8,
-    pub mirrored: bool,
-}
-
-impl Orientation {
-    /// A quarter turn clockwise more.
-    pub fn turned(self) -> Orientation {
-        Orientation { turns: (self.turns + 1) % 4, ..self }
-    }
-
-    /// Mirrored left to right as it's shown now. On its side, the picture's
-    /// own left–right is the shown up–down, which is a mirror and a half turn.
-    pub fn mirrored(self) -> Orientation {
-        Orientation { turns: if self.turns % 2 == 1 { (self.turns + 2) % 4 } else { self.turns }, mirrored: !self.mirrored }
-    }
-
-    pub fn is_upright(self) -> bool {
-        self == Orientation::default()
-    }
-
-    /// The shown size of a picture taken at `size`.
-    pub fn size(self, size: (u32, u32)) -> (u32, u32) {
-        if self.turns % 2 == 1 { (size.1, size.0) } else { size }
-    }
-
-    pub fn apply(self, picture: &RgbaImage) -> RgbaImage {
-        let mut out = if self.mirrored { image::imageops::flip_horizontal(picture) } else { picture.clone() };
-        for _ in 0..self.turns {
-            out = image::imageops::rotate90(&out);
-        }
-        out
-    }
-}
+pub(super) use kadr_core::document::Orientation;
 
 /// One step of turning the shown picture.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -146,17 +112,12 @@ fn turn_shape(shape: &mut Shape, turn: Turn, s: (f32, f32)) {
             return;
         }
         Kind::Pen(points) | Kind::Marker(points) => points.iter_mut().for_each(|p| *p = f(*p)),
-        Kind::Picture(picture) => {
-            if let Some(turned) = Picture::from_pixels(turn.picture(&picture.pixels)) {
-                *picture = turned;
-            }
-        }
+        Kind::Picture(picture) => *picture = std::sync::Arc::new(turn.picture(picture)),
         _ => {}
     }
     shape.a = f(shape.a);
     shape.b = f(shape.b);
     shape.bend = shape.bend.map(f);
-    shape.stale_patch();
 }
 
 /// Back to the picture as taken, the drawing turned back with it.
@@ -353,7 +314,7 @@ mod tests {
 
     #[test]
     fn a_turned_drawing_comes_back_upright() {
-        let red = gpui::hsla(0., 1., 0.5, 1.);
+        let red = kadr_core::color::Rgba::hsl(0., 1., 0.5, 1.);
         let line = Shape { kind: Kind::Arrow, a: (10., 20.), b: (70., 25.), color: red, size: 3., filled: false, text: super::super::TextStyle::Plain, bend: Some((40., 5.)) };
         let mut doc = Doc { shapes: vec![line], crop: Some(((5., 6.), (50., 40.))), ..Doc::default() };
         let mut size = (100u32, 60u32);

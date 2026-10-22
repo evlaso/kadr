@@ -3,7 +3,6 @@ mod i18n;
 mod bundle;
 mod capture;
 mod cards;
-mod cursors;
 mod dev;
 mod editor;
 mod history;
@@ -245,6 +244,8 @@ fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<(Vec<Stri
 
 fn main() {
     i18n::set(settings::Settings::load().language);
+    // The cursor stamps and the studio's pointer in the user's own theme.
+    kadr_raster::cursors::set_theme(platform::theme_cursor);
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
         print!("{USAGE}");

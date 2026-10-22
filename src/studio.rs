@@ -835,7 +835,7 @@ fn cursor_pixmap(style: usize, shape: &str, height: f64) -> Option<(tiny_skia::P
         return Some((pm, (c as f64, c as f64)));
     }
     // A macOS-like picture of the pointer's shape, the arrow `h` tall.
-    let (mut pm, hot) = crate::cursors::render(shape, h)?;
+    let (mut pm, hot) = kadr_raster::cursors::render(shape, h)?;
     if style == 2 {
         // Inverted: premultiplied, so each channel turns into alpha less it.
         for px in pm.data_mut().chunks_exact_mut(4) {
@@ -1470,7 +1470,6 @@ mod overlays {
     use std::path::Path;
 
     use super::{Layout, Probe};
-    use crate::editor;
     use crate::track::Track;
 
     /// More than this many of either would mostly slow the render down.
@@ -1655,9 +1654,9 @@ mod overlays {
     /// "Ctrl + C" on a dark rounded pill; returns its size.
     fn write_pill(path: &Path, label: &str, size: f32) -> std::io::Result<(u32, u32)> {
         use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
-        let m = editor::metrics(size);
+        let m = kadr_raster::text::metrics(size);
         let pad = size * 0.75;
-        let w = (editor::text_width(label, size) + 2. * pad).ceil();
+        let w = (kadr_raster::text::text_width(label, size) + 2. * pad).ceil();
         let h = (size * 1.9).ceil();
         let mut pm = Pixmap::new(w as u32, h as u32).ok_or_else(|| std::io::Error::other("pill size"))?;
         let r = h / 2.;
@@ -1677,7 +1676,7 @@ mod overlays {
             pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
         }
         let baseline = (h - (m.ascent - m.descent)) / 2. + m.ascent;
-        editor::draw_line(&mut pm, label, (pad, baseline), size, gpui::white());
+        kadr_raster::text::draw_line(&mut pm, label, (pad, baseline), size, kadr_core::color::Rgba::WHITE);
         pm.save_png(path).map_err(std::io::Error::other)?;
         Ok((w as u32, h as u32))
     }

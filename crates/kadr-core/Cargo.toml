@@ -1,0 +1,10 @@
+[package]
+name = "kadr-core"
+version = "0.2.0"
+edition = "2024"
+description = "kadr's data and logic: no OS, no UI"
+publish = false
+
+[dependencies]
+image.workspace = true
+serde_json.workspace = true
