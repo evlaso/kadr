@@ -88,7 +88,7 @@ pub fn on(background: Hsla) -> Hsla {
 }
 
 /// Corner smoothing for panels and windows (0 is circular).
-pub const SMOOTHING: f32 = 0.6;
+pub const SMOOTHING: f32 = kadr_core::color::SMOOTHING;
 
 pub fn h_flex() -> Div {
     div().flex().flex_row().items_center()

@@ -1170,6 +1170,7 @@ impl StudioEditor {
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| this.preview_down(e, cx)));
 
         let (c0, c1) = self.project.colors();
+        let (c0, c1) = (crate::ui::from_rgba(c0), crate::ui::from_rgba(c1));
         let backdrop = match &self.project.wallpaper {
             Some(path) => div().size_full().child(img(path.clone()).size_full().object_fit(ObjectFit::Cover)),
             None => div().size_full().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))),

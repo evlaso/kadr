@@ -1,0 +1,16 @@
+[package]
+name = "kadr-media"
+version = "0.2.0"
+edition = "2024"
+description = "Recordings and the studio without a UI: the edit, the camera, the export's ffmpeg graph"
+publish = false
+
+[dependencies]
+kadr-core = { path = "../kadr-core" }
+kadr-raster = { path = "../kadr-raster" }
+image.workspace = true
+serde_json.workspace = true
+tiny-skia.workspace = true
+async-io = "2"
+async-process = "2"
+futures = "0.3"

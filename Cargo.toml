@@ -34,6 +34,7 @@ kadr-core = { path = "crates/kadr-core" }
 kadr-raster = { path = "crates/kadr-raster" }
 kadr-ui = { path = "crates/kadr-ui" }
 kadr-platform = { path = "crates/kadr-platform" }
+kadr-media = { path = "crates/kadr-media" }
 crc32fast = "1.5"
 
 # The tray icon speaks StatusNotifierItem over D-Bus (Linux only for now).

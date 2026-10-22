@@ -1,13 +1,9 @@
 //! Long ffmpeg jobs (studio render, trimming, GIF export) with a Zed-style
 //! progress toast at the bottom of the screen that can cancel them.
 
-use std::cell::Cell;
-use std::ffi::OsStr;
-use std::process::Stdio;
 use std::rc::Rc;
 use std::time::Duration;
 
-use futures::{AsyncBufReadExt, StreamExt, io::BufReader};
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{App, AsyncApp, Context, SharedString, Window, WindowHandle};
 use crate::ui::{IconButtonShape, ProgressBar, Tooltip, prelude::*};
@@ -15,32 +11,7 @@ use crate::ui::{IconButtonShape, ProgressBar, Tooltip, prelude::*};
 use crate::kit::{self, Hold, InputRegion, LayerSpec};
 use crate::util;
 use crate::i18n::t;
-
-/// Shared between the running job and its toast.
-#[derive(Default)]
-pub struct Job {
-    fraction: Cell<f64>,
-    cancelled: Cell<bool>,
-    pid: Cell<Option<u32>>,
-}
-
-impl Job {
-    pub fn cancelled(&self) -> bool {
-        self.cancelled.get()
-    }
-
-    /// How far along, 0..1 (short of 1 until it's done).
-    pub fn fraction(&self) -> f32 {
-        self.fraction.get().clamp(0.0, 0.99) as f32
-    }
-
-    pub fn cancel(&self) {
-        self.cancelled.set(true);
-        if let Some(pid) = self.pid.get() {
-            util::signal(pid, util::Signal::Terminate);
-        }
-    }
-}
+pub use kadr_media::job::{Job, ffmpeg};
 
 /// A running job: keeps kadr alive and its progress on screen until
 /// `finish`: a blurred card in the thumbnail stack for a job on a video,
@@ -100,39 +71,6 @@ impl Running {
     }
 }
 
-/// Run ffmpeg (argv without "-progress", which is added) and report progress
-/// against `duration` seconds of output. stderr goes to ~/.cache/kadr/<log>.
-pub async fn ffmpeg(job: &Job, argv: &[&OsStr], duration: f64, log: &str) -> Result<(), String> {
-    let log = util::cache_dir().join(log);
-    let _ = std::fs::create_dir_all(util::cache_dir());
-    let stderr = std::fs::File::create(&log).map_err(|e| e.to_string())?;
-    let (cmd, rest) = argv.split_first().ok_or(t("job.empty_command"))?;
-    let mut child = async_process::Command::new(cmd)
-        .args(["-nostats", "-progress", "pipe:1"])
-        .args(rest)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(stderr)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    job.pid.set(Some(child.id()));
-
-    let stdout = child.stdout.take().ok_or(t("job.no_output_from_ffmpeg"))?;
-    let mut lines = BufReader::new(stdout).lines();
-    while let Some(Ok(line)) = lines.next().await {
-        if let Some(us) = line.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {
-            job.fraction.set(us / 1e6 / duration.max(0.1));
-        }
-    }
-    let status = child.status().await.map_err(|e| e.to_string())?;
-    job.pid.set(None);
-    if status.success() {
-        Ok(())
-    } else {
-        let tail = std::fs::read_to_string(&log).unwrap_or_default();
-        Err(tail.lines().rev().take(3).collect::<Vec<_>>().join("\n"))
-    }
-}
 
 /// Small notification at the bottom of the screen while ffmpeg works.
 pub struct ProgressView {
@@ -160,7 +98,7 @@ impl ProgressView {
 impl Render for ProgressView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.region.reset();
-        let fraction = self.state.fraction.get().clamp(0.0, 0.99) as f32;
+        let fraction = self.state.fraction();
         let state = self.state.clone();
         kit::root(cx).flex().items_center().justify_center().child(
             v_flex()

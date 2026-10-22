@@ -1,3 +1,7 @@
+/// Corner smoothing (0 is circular), for panels and windows and the studio's
+/// rounded camera picture alike.
+pub const SMOOTHING: f32 = 0.6;
+
 /// A colour as plain 0..1 sRGB with straight (not premultiplied) alpha.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rgba {

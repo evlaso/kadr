@@ -3373,6 +3373,7 @@ dependencies = [
  "gpui_ce_platform",
  "image",
  "kadr-core",
+ "kadr-media",
  "kadr-platform",
  "kadr-raster",
  "kadr-ui",
@@ -3396,6 +3397,20 @@ dependencies = [
  "chrono",
  "image",
  "serde_json",
+]
+
+[[package]]
+name = "kadr-media"
+version = "0.2.0"
+dependencies = [
+ "async-io",
+ "async-process",
+ "futures",
+ "image",
+ "kadr-core",
+ "kadr-raster",
+ "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]
