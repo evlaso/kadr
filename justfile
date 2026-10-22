@@ -1,7 +1,7 @@
 # Every check, one command each (docs: SPEC.ru.md, section 6).
 
 # Everything that runs without a person: unit and golden tests.
-test: unit golden
+test: deps unit golden
 
 # Unit tests (the golden ones run separately).
 unit:
@@ -21,3 +21,7 @@ golden-cases:
 # over budget, warns >15% worse than docs/perf.json.
 bench *args:
     python3 scripts/bench.py {{args}}
+
+# The crates' dependency rule (SPEC.ru.md section 3).
+deps:
+    scripts/check-deps.sh

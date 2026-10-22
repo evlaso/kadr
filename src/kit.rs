@@ -317,7 +317,7 @@ pub fn open_layer<V: Render + 'static>(
         titlebar: None,
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         app_id: Some("kadr".into()),
-        display_id: spec.monitor.as_ref().and_then(|m| m.display(cx)),
+        display_id: spec.monitor.as_ref().and_then(|m| crate::util::display_of(m, cx)),
         kind,
         // Overlays rarely have the keyboard, and GPUI holds windows without
         // it to ~30 fps, which made the cards slide in choppily on a 240 Hz
@@ -351,7 +351,7 @@ pub fn open_window<V: Render + 'static>(
     min: (f32, f32),
     build: impl FnOnce(&mut Window, &mut App) -> gpui::Entity<V>,
 ) -> Option<WindowHandle<V>> {
-    let display = mon.and_then(|m| m.display(cx));
+    let display = mon.and_then(|m| crate::util::display_of(m, cx));
     let options = WindowOptions {
         titlebar: crate::platform::titlebar(),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display, gpui::size(px(size.0), px(size.1)), cx))),
@@ -379,7 +379,7 @@ pub fn open_window<V: Render + 'static>(
 /// bounds on its display, for systems without layer-shell.
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 pub fn overlay_bounds(spec: &LayerSpec, cx: &App) -> Bounds<Pixels> {
-    let display = spec.monitor.as_ref().and_then(|m| m.display(cx)).and_then(|id| cx.find_display(id)).or_else(|| cx.primary_display());
+    let display = spec.monitor.as_ref().and_then(|m| crate::util::display_of(m, cx)).and_then(|id| cx.find_display(id)).or_else(|| cx.primary_display());
     let screen = display.map(|d| d.bounds()).unwrap_or(Bounds { origin: point(px(0.), px(0.)), size: size(px(1280.), px(800.)) });
     let (t, r, b, l) = spec.margin;
     let (sw, sh) = (f32::from(screen.size.width), f32::from(screen.size.height));

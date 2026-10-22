@@ -3363,7 +3363,6 @@ version = "0.2.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
- "arboard",
  "async-process",
  "chrono",
  "crc32fast",
@@ -3374,25 +3373,20 @@ dependencies = [
  "gpui_ce_platform",
  "image",
  "kadr-core",
+ "kadr-platform",
  "kadr-raster",
  "kadr-ui",
  "ksni",
  "libc",
- "notify-rust",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation 0.3.2",
  "palette",
  "resvg",
  "serde_json",
  "smallvec",
  "tiny-skia",
- "trash",
  "tray-icon",
  "windows 0.62.2",
- "xcap",
 ]
 
 [[package]]
@@ -3402,6 +3396,23 @@ dependencies = [
  "chrono",
  "image",
  "serde_json",
+]
+
+[[package]]
+name = "kadr-platform"
+version = "0.2.0"
+dependencies = [
+ "arboard",
+ "image",
+ "kadr-core",
+ "libc",
+ "notify-rust",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "serde_json",
+ "trash",
+ "windows 0.62.2",
+ "xcap",
 ]
 
 [[package]]

@@ -5,10 +5,8 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
-use gpui::{App, WindowOptions};
-
 use super::{Signal, home};
-use crate::util::{Mon, spawn};
+use crate::{Mon, spawn};
 
 pub fn signal(pid: u32, signal: Signal) {
     let number = match signal {
@@ -202,42 +200,8 @@ pub fn window_controls() -> super::WindowControls {
     if tiling { super::WindowControls::None } else { super::WindowControls::Own }
 }
 
-/// kadr draws its own window chrome.
-pub fn titlebar() -> Option<gpui::TitlebarOptions> {
-    None
-}
 
-pub fn transparent(options: &mut WindowOptions) {
-    options.linux_window_background = gpui::LinuxWindowBackground::Transparent;
-}
 
-/// Overlays are Wayland layer-shell surfaces above every window.
-pub fn overlay_kind(spec: &crate::kit::LayerSpec, _cx: &App) -> (gpui::WindowKind, gpui::Bounds<gpui::Pixels>) {
-    use crate::kit::{Anchor as A, KeyboardInteractivity as K};
-    use gpui::{layer_shell::*, point, px, size};
-    let (t, r, b, l) = spec.margin;
-    let mut anchor = Anchor::empty();
-    for (ours, theirs) in [(A::TOP, Anchor::TOP), (A::BOTTOM, Anchor::BOTTOM), (A::LEFT, Anchor::LEFT), (A::RIGHT, Anchor::RIGHT)] {
-        if spec.anchor.contains(ours) {
-            anchor |= theirs;
-        }
-    }
-    let keyboard_interactivity = match spec.keyboard {
-        K::None => KeyboardInteractivity::None,
-        K::Exclusive => KeyboardInteractivity::Exclusive,
-        K::OnDemand => KeyboardInteractivity::OnDemand,
-    };
-    let kind = gpui::WindowKind::LayerShell(LayerShellOptions {
-        namespace: spec.namespace.into(),
-        layer: Layer::Overlay,
-        anchor,
-        margin: Some((px(t), px(r), px(b), px(l))),
-        exclusive_zone: spec.ignore_zones.then(|| px(-1.)),
-        keyboard_interactivity,
-        ..Default::default()
-    });
-    (kind, gpui::Bounds { origin: point(px(0.), px(0.)), size: size(px(spec.size.0), px(spec.size.1)) })
-}
 
 
 /// Link a file (the OCR models share the system's English data).
@@ -701,14 +665,14 @@ mod cursor_theme {
 pub fn install_desktop() -> std::io::Result<()> {
     let data = xdg("XDG_DATA_HOME", ".local/share");
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kadr"));
-    crate::bundle::install_desktop(&data, &exe)?;
+    write_desktop(&data, &exe)?;
     let run = |args: &[&str]| {
         let _ = std::process::Command::new(args[0]).args(&args[1..]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
     };
     run(&["update-mime-database", &data.join("mime").to_string_lossy()]);
     run(&["update-desktop-database", &data.join("applications").to_string_lossy()]);
     run(&["gtk-update-icon-cache", "-q", "-t", &data.join("icons/hicolor").to_string_lossy()]);
-    run(&["xdg-mime", "default", "kadr.desktop", crate::bundle::MIME_TYPE]);
+    run(&["xdg-mime", "default", "kadr.desktop", MIME_TYPE]);
     Ok(())
 }
 
@@ -719,5 +683,67 @@ pub fn ensure_desktop() {
         std::thread::spawn(|| {
             let _ = install_desktop();
         });
+    }
+}
+
+/// Linux desktop integration: `.kadr` files get their own type and icon and
+/// open in kadr. Writes under `data` (normally ~/.local/share).
+fn write_desktop(data: &Path, exe: &Path) -> std::io::Result<()> {
+    let write = |rel: &str, text: &str| -> std::io::Result<()> {
+        let path = data.join(rel);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, text)
+    };
+    write("mime/packages/kadr.xml", MIME_XML)?;
+    write("applications/kadr.desktop", &DESKTOP.replace("{exe}", &exe.display().to_string()))?;
+    write("icons/hicolor/scalable/mimetypes/application-x-kadr-project.svg", FILE_ICON)?;
+    write("icons/hicolor/scalable/apps/kadr.svg", APP_ICON)?;
+    Ok(())
+}
+
+pub const MIME_TYPE: &str = "application/x-kadr-project";
+
+const MIME_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-kadr-project">
+    <comment>kadr project</comment>
+    <comment xml:lang="ru">Проект kadr</comment>
+    <sub-class-of type="application/x-tar"/>
+    <icon name="application-x-kadr-project"/>
+    <glob pattern="*.kadr"/>
+  </mime-type>
+</mime-info>
+"#;
+
+const DESKTOP: &str = "[Desktop Entry]
+Type=Application
+Name=kadr
+Comment=Screenshots and screen recording
+Comment[ru]=Скриншоты и запись экрана
+Icon=kadr
+Exec={exe} open %f
+MimeType=application/x-kadr-project;
+Categories=Graphics;Utility;
+Terminal=false
+StartupNotify=false
+";
+
+const FILE_ICON: &str = include_str!("../../../data/icons/kadr-project.svg");
+const APP_ICON: &str = include_str!("../../../data/icons/kadr-app.svg");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_files_land_under_the_given_folder() {
+        let dir = std::env::temp_dir().join(format!("kadr-desktop-{}", std::process::id()));
+        write_desktop(&dir, Path::new("/opt/kadr")).unwrap();
+        assert!(std::fs::read_to_string(dir.join("applications/kadr.desktop")).unwrap().contains("Exec=/opt/kadr open %f"));
+        assert!(dir.join("mime/packages/kadr.xml").exists());
+        assert!(dir.join("icons/hicolor/scalable/mimetypes/application-x-kadr-project.svg").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

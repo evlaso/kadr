@@ -33,29 +33,22 @@ ab_glyph.workspace = true
 kadr-core = { path = "crates/kadr-core" }
 kadr-raster = { path = "crates/kadr-raster" }
 kadr-ui = { path = "crates/kadr-ui" }
+kadr-platform = { path = "crates/kadr-platform" }
 crc32fast = "1.5"
 
 # The tray icon speaks StatusNotifierItem over D-Bus (Linux only for now).
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
 
-# macOS and Windows share one implementation of the clipboard, notifications,
-# the trash, monitors and screenshots (platform/desktop.rs).
+# On macOS and Windows `kadr tray` holds the icon and the global hotkeys.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-arboard = "3.7.0"
 global-hotkey = "0.9.0"
-notify-rust = "4.18.2"
-trash = "5.2.9"
 tray-icon = "0.26.1"
-xcap = "0.9.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch2 = "0.3"
 objc2 = "0.6"
 objc2-app-kit = "0.3.2"
-objc2-core-foundation = "0.3.2"
-objc2-core-graphics = "0.3.2"
-objc2-foundation = "0.3.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

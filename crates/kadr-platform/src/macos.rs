@@ -4,10 +4,8 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use gpui::{App, WindowOptions};
-
 use super::{Signal, home};
-use crate::util::spawn;
+use crate::spawn;
 
 pub fn signal(pid: u32, signal: Signal) {
     let number = match signal {
@@ -74,15 +72,7 @@ pub(super) fn warp(x: f64, y: f64) {
     let _ = objc2_core_graphics::CGWarpMouseCursorPosition(objc2_core_foundation::CGPoint { x, y });
 }
 
-pub fn transparent(options: &mut WindowOptions) {
-    options.macos_window_background = gpui::MacosWindowBackground::Transparent;
-}
 
-/// Overlays are borderless windows above the others, placed like the
-/// Wayland layer would be.
-pub fn overlay_kind(spec: &crate::kit::LayerSpec, cx: &App) -> (gpui::WindowKind, gpui::Bounds<gpui::Pixels>) {
-    (gpui::WindowKind::PopUp, crate::kit::overlay_bounds(spec, cx))
-}
 
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
@@ -159,7 +149,3 @@ pub fn window_controls() -> super::WindowControls {
     super::WindowControls::Left(76.)
 }
 
-/// A transparent title bar over kadr's own top bar, or none at all.
-pub fn titlebar() -> Option<gpui::TitlebarOptions> {
-    Some(gpui::TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(14.))) })
-}

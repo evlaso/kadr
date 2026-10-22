@@ -4,10 +4,8 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use gpui::{App, WindowOptions};
-
 use super::{Signal, home};
-use crate::util::spawn;
+use crate::spawn;
 
 pub fn signal(pid: u32, signal: Signal) {
     // No signals here: stopping means ending the process; pausing isn't possible.
@@ -71,13 +69,7 @@ pub(super) fn warp(x: f64, y: f64) {
     let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::SetCursorPos(x.round() as i32, y.round() as i32) };
 }
 
-pub fn transparent(options: &mut WindowOptions) {
-    options.windows_window_background = gpui::WindowsWindowBackground::Transparent;
-}
 
-pub fn overlay_kind(spec: &crate::kit::LayerSpec, cx: &App) -> (gpui::WindowKind, gpui::Bounds<gpui::Pixels>) {
-    (gpui::WindowKind::PopUp, crate::kit::overlay_bounds(spec, cx))
-}
 
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
     std::fs::copy(target, link).map(|_| ())
@@ -147,7 +139,3 @@ pub fn window_controls() -> super::WindowControls {
     super::WindowControls::Right(138.)
 }
 
-/// A transparent title bar over kadr's own top bar, or none at all.
-pub fn titlebar() -> Option<gpui::TitlebarOptions> {
-    None
-}

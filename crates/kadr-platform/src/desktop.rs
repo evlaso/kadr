@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::util::Mon;
+use crate::Mon;
 
 /// Clipboard work runs off the UI thread: decoding a large PNG takes a while.
 fn clipboard(set: impl FnOnce(arboard::Set) -> Result<(), arboard::Error> + Send + 'static) {

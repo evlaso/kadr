@@ -1,115 +1,86 @@
-//! Everything that differs between operating systems, behind one set of
-//! functions: the clipboard, notifications, files, folders, monitors, the
-//! single-instance socket, overlay windows and screen capture. The rest of
-//! kadr only calls these. Linux (Wayland, Hyprland, Omarchy) is complete;
-//! macOS and Windows share the clipboard, notifications, the trash, monitors
-//! and screenshots through cross-platform crates (desktop.rs), and report
-//! what isn't ported yet.
+//! The OS layer is `kadr_platform`; here are only the window options GPUI
+//! needs on each system.
+
+pub use kadr_platform::*;
 
 #[cfg(target_os = "linux")]
-#[path = "platform/linux.rs"]
-mod imp;
-#[cfg(target_os = "macos")]
-#[path = "platform/macos.rs"]
-mod imp;
-#[cfg(target_os = "windows")]
-#[path = "platform/windows.rs"]
-mod imp;
+mod window {
+    use gpui::{App, WindowOptions};
 
-pub use imp::*;
-
-#[cfg(not(target_os = "linux"))]
-#[path = "platform/desktop.rs"]
-mod desktop;
-#[cfg(not(target_os = "linux"))]
-pub use desktop::*;
-
-use std::path::PathBuf;
-
-/// How to stop or pause a process kadr started.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Signal {
-    /// Ask to finish cleanly (a recorder writes out its file).
-    Interrupt,
-    Terminate,
-    Kill,
-    /// gpu-screen-recorder's pause toggle.
-    Pause,
-}
-
-/// Where a window's own controls live, so its top bar can leave room.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
-pub enum WindowControls {
-    /// The system draws them at the left (macOS's traffic lights); keep this
-    /// much room.
-    Left(f32),
-    /// Minimise, maximise and close at the right, this wide (Windows); kadr
-    /// draws them over the system's hit areas.
-    Right(f32),
-    /// A floating desktop that leaves kadr's windows bare: kadr draws a close
-    /// button at the right.
-    Own,
-    /// A tiling window manager: no controls, Esc and the manager's keys close.
-    None,
-}
-
-/// "Not on this system yet", shown once as a notification.
-#[cfg_attr(target_os = "linux", allow(dead_code))]
-pub fn unsupported(what: &str) {
-    notify("kadr", &tr!("app.linux_only_for_now", what));
-}
-
-/// Hand kadr-core the system's folders, before anything reads settings.
-pub fn set_dirs() {
-    let data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/share")).join("kadr");
-    // Omarchy's screenshots folder where it says.
-    let pictures = std::env::var_os("OMARCHY_SCREENSHOT_DIR").map(PathBuf::from).unwrap_or_else(|| user_dir("PICTURES", "Pictures"));
-    kadr_core::dirs::set(kadr_core::dirs::Dirs { config: config_dir(), cache: cache_dir(), data, pictures, videos: user_dir("VIDEOS", "Videos"), runtime: runtime_dir() });
-}
-
-/// A folder under the user's home, for fallbacks.
-pub fn home() -> PathBuf {
-    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
-}
-
-/// The single-instance channel: later `kadr …` calls hand their arguments to
-/// the running one. A Unix socket where there is one, localhost elsewhere.
-pub mod ipc {
-    #[cfg(unix)]
-    pub use std::os::unix::net::{UnixListener as Listener, UnixStream as Stream};
-    #[cfg(windows)]
-    pub use std::net::{TcpListener as Listener, TcpStream as Stream};
-
-    #[cfg(unix)]
-    fn path() -> std::path::PathBuf {
-        super::runtime_dir().join("kadr.sock")
+    /// kadr draws its own window chrome.
+    pub fn titlebar() -> Option<gpui::TitlebarOptions> {
+        None
     }
 
-    #[cfg(windows)]
-    const ADDRESS: &str = "127.0.0.1:47613";
-
-    pub fn connect() -> Option<Stream> {
-        #[cfg(unix)]
-        return Stream::connect(path()).ok();
-        #[cfg(windows)]
-        return Stream::connect(ADDRESS).ok();
+    pub fn transparent(options: &mut WindowOptions) {
+        options.linux_window_background = gpui::LinuxWindowBackground::Transparent;
     }
 
-    /// Become the running instance; a stale socket from a crash is replaced.
-    pub fn bind() -> std::io::Result<Listener> {
-        #[cfg(unix)]
-        {
-            let _ = std::fs::remove_file(path());
-            Listener::bind(path())
+    /// Overlays are Wayland layer-shell surfaces above every window.
+    pub fn overlay_kind(spec: &crate::kit::LayerSpec, _cx: &App) -> (gpui::WindowKind, gpui::Bounds<gpui::Pixels>) {
+        use crate::kit::{Anchor as A, KeyboardInteractivity as K};
+        use gpui::{layer_shell::*, point, px, size};
+        let (t, r, b, l) = spec.margin;
+        let mut anchor = Anchor::empty();
+        for (ours, theirs) in [(A::TOP, Anchor::TOP), (A::BOTTOM, Anchor::BOTTOM), (A::LEFT, Anchor::LEFT), (A::RIGHT, Anchor::RIGHT)] {
+            if spec.anchor.contains(ours) {
+                anchor |= theirs;
+            }
         }
-        #[cfg(windows)]
-        Listener::bind(ADDRESS)
-    }
-
-    /// Stop taking new commands before quitting.
-    pub fn close() {
-        #[cfg(unix)]
-        let _ = std::fs::remove_file(path());
+        let keyboard_interactivity = match spec.keyboard {
+            K::None => KeyboardInteractivity::None,
+            K::Exclusive => KeyboardInteractivity::Exclusive,
+            K::OnDemand => KeyboardInteractivity::OnDemand,
+        };
+        let kind = gpui::WindowKind::LayerShell(LayerShellOptions {
+            namespace: spec.namespace.into(),
+            layer: Layer::Overlay,
+            anchor,
+            margin: Some((px(t), px(r), px(b), px(l))),
+            exclusive_zone: spec.ignore_zones.then(|| px(-1.)),
+            keyboard_interactivity,
+            ..Default::default()
+        });
+        (kind, gpui::Bounds { origin: point(px(0.), px(0.)), size: size(px(spec.size.0), px(spec.size.1)) })
     }
 }
+
+#[cfg(target_os = "macos")]
+mod window {
+    use gpui::{App, WindowOptions};
+
+    /// A transparent title bar over kadr's own top bar, or none at all.
+    pub fn titlebar() -> Option<gpui::TitlebarOptions> {
+        Some(gpui::TitlebarOptions { title: None, appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(14.))) })
+    }
+
+    pub fn transparent(options: &mut WindowOptions) {
+        options.macos_window_background = gpui::MacosWindowBackground::Transparent;
+    }
+
+    /// Overlays are borderless windows above the others, placed like the
+    /// Wayland layer would be.
+    pub fn overlay_kind(spec: &crate::kit::LayerSpec, cx: &App) -> (gpui::WindowKind, gpui::Bounds<gpui::Pixels>) {
+        (gpui::WindowKind::PopUp, crate::kit::overlay_bounds(spec, cx))
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod window {
+    use gpui::{App, WindowOptions};
+
+    /// A transparent title bar over kadr's own top bar, or none at all.
+    pub fn titlebar() -> Option<gpui::TitlebarOptions> {
+        None
+    }
+
+    pub fn transparent(options: &mut WindowOptions) {
+        options.windows_window_background = gpui::WindowsWindowBackground::Transparent;
+    }
+
+    pub fn overlay_kind(spec: &crate::kit::LayerSpec, cx: &App) -> (gpui::WindowKind, gpui::Bounds<gpui::Pixels>) {
+        (gpui::WindowKind::PopUp, crate::kit::overlay_bounds(spec, cx))
+    }
+}
+
+pub use window::*;

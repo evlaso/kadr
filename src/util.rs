@@ -4,27 +4,6 @@ use std::process::Stdio;
 
 use gpui::{App, DisplayId};
 
-/// Fire-and-forget process, reaped on a helper thread.
-pub fn spawn<S: AsRef<OsStr>>(argv: &[S]) -> Option<u32> {
-    let (cmd, args) = argv.split_first()?;
-    let mut command = std::process::Command::new(cmd);
-    command.args(args).stdin(Stdio::null()).stdout(Stdio::null());
-    // No console window flashing up; a kadr started so passes its windowless
-    // console on to what it runs.
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000); // CREATE_NO_WINDOW
-    match command.spawn() {
-        Ok(mut child) => {
-            let pid = child.id();
-            std::thread::spawn(move || child.wait());
-            Some(pid)
-        }
-        Err(e) => {
-            eprintln!("kadr: {:?}: {e}", cmd.as_ref());
-            None
-        }
-    }
-}
 
 /// Run a command to completion without blocking the UI; returns (success, stdout).
 pub async fn output<S: AsRef<OsStr>>(argv: &[S]) -> Option<(bool, String)> {
@@ -39,7 +18,7 @@ pub async fn output<S: AsRef<OsStr>>(argv: &[S]) -> Option<(bool, String)> {
     Some((out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
-pub use crate::platform::{Signal, cache_dir, config_dir, copy_file, copy_files, copy_image, cursor_pos, hypr, monitors, notify, open_file, runtime_dir, signal, trash};
+pub use crate::platform::{Mon, Signal, spawn, cache_dir, config_dir, copy_file, copy_files, copy_image, cursor_pos, hypr, monitors, notify, open_file, runtime_dir, signal, trash};
 
 pub fn open_folder(path: &Path) {
     if let Some(dir) = path.parent() {
@@ -52,38 +31,17 @@ pub fn format_duration(seconds: f64) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
-#[derive(Clone, Debug)]
-pub struct Mon {
-    pub name: String,
-    /// Logical layout geometry, as Hyprland and slurp report it.
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-    /// Physical mode size in pixels.
-    pub phys: (i64, i64),
-    pub scale: f64,
-    /// Refresh rate in Hz.
-    pub hz: f64,
-    pub focused: bool,
-}
 
-impl Mon {
-    pub fn contains(&self, x: i32, y: i32) -> bool {
-        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
-    }
-
-    /// The GPUI display for this monitor, matched by its position in the layout.
-    pub fn display(&self, cx: &App) -> Option<DisplayId> {
-        let near = |a: f32, b: i32| (a - b as f32).abs() < 2.0;
-        cx.displays()
-            .into_iter()
-            .find(|d| {
-                let o = d.bounds().origin;
-                near(o.x.into(), self.x) && near(o.y.into(), self.y)
-            })
-            .map(|d| d.id())
-    }
+/// The GPUI display for a monitor, matched by its position in the layout.
+pub fn display_of(mon: &Mon, cx: &App) -> Option<DisplayId> {
+    let near = |a: f32, b: i32| (a - b as f32).abs() < 2.0;
+    cx.displays()
+        .into_iter()
+        .find(|d| {
+            let o = d.bounds().origin;
+            near(o.x.into(), mon.x) && near(o.y.into(), mon.y)
+        })
+        .map(|d| d.id())
 }
 
 pub fn focused_monitor() -> Option<Mon> {
