@@ -676,6 +676,8 @@ pub struct ButtonLike {
     children: SmallVec<[AnyElement; 2]>,
     tooltip: Option<TooltipBuilder>,
     on_click: Option<ClickHandler>,
+    /// What `dev dump` reports it as: the kind and its text or icon.
+    dev: (&'static str, SharedString),
 }
 
 impl ButtonLike {
@@ -691,6 +693,7 @@ impl ButtonLike {
             children: SmallVec::new(),
             tooltip: None,
             on_click: None,
+            dev: ("button_like", SharedString::default()),
         }
     }
 
@@ -765,6 +768,7 @@ impl RenderOnce for ButtonLike {
             }
         };
         let height = self.size.height();
+        let probe = crate::dev::on().then(|| crate::dev::probe(&self.id, self.dev.0, self.dev.1.to_string(), self.disabled, self.selected));
         let button: Stateful<Div> = h_flex()
             .id(self.id)
             .relative()
@@ -782,7 +786,8 @@ impl RenderOnce for ButtonLike {
                 b.cursor_pointer().hover(|s| s.bg(hover)).active(|s| s.bg(active))
             })
             .when(self.disabled, |b| b.cursor_not_allowed())
-            .children(self.children);
+            .children(self.children)
+            .children(probe);
         button
             .when_some(self.tooltip, |b, tooltip| b.tooltip(tooltip).child(tip_anchor()))
             .when_some(self.on_click.filter(|_| !self.disabled), |b, on_click| {
@@ -807,7 +812,10 @@ pub struct Button {
 
 impl Button {
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Button { base: ButtonLike::new(id), label: label.into(), label_size: LabelSize::Default, color: Color::Default, start_icon: None, key_binding: None }
+        let label: SharedString = label.into();
+        let mut base = ButtonLike::new(id);
+        base.dev = ("button", label.clone());
+        Button { base, label, label_size: LabelSize::Default, color: Color::Default, start_icon: None, key_binding: None }
     }
 
     pub fn style(mut self, style: ButtonStyle) -> Self {
@@ -908,6 +916,7 @@ impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
         let mut base = ButtonLike::new(id);
         base.square = true;
+        base.dev = ("icon_button", format!("{icon:?}").into());
         IconButton { base, icon, icon_size: IconSize::Small, icon_color: Color::Default }
     }
 
@@ -999,6 +1008,7 @@ impl RenderOnce for Switch {
         let on = self.state == ToggleState::Selected;
         let track = if on { colors.text_accent } else { colors.element_active };
         let next = if on { ToggleState::Unselected } else { ToggleState::Selected };
+        let probe = crate::dev::on().then(|| crate::dev::probe(&self.id, "switch", String::new(), self.disabled, on));
         // A macOS switch: a soft track and a white knob with a small shadow.
         h_flex()
             .id(self.id)
@@ -1018,6 +1028,7 @@ impl RenderOnce for Switch {
                 spread_radius: px(0.),
                 inset: false,
             }]))
+            .children(probe)
             .when_some(self.on_click.filter(|_| !self.disabled), |s, on_click| {
                 s.on_click(move |_, window, cx| {
                     cx.stop_propagation();

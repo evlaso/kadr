@@ -157,7 +157,7 @@ fn points(v: &Value) -> Vec<P> {
     v.as_array().into_iter().flatten().filter_map(point).collect()
 }
 
-fn shape_to_json(shape: &Shape) -> Value {
+pub(super) fn shape_to_json(shape: &Shape) -> Value {
     let pts = |ps: &[P]| ps.iter().map(|p| json!([p.0, p.1])).collect::<Vec<_>>();
     let (kind, extra) = match &shape.kind {
         Kind::Arrow => ("arrow", json!(null)),

@@ -286,6 +286,30 @@ pub fn window_rounding() -> f32 {
         .unwrap_or(0.) as f32
 }
 
+/// One of kadr's own windows as it is on screen, for `kadr dev shot`: an
+/// app window by its title, or a layer (overlays, cards) by its namespace.
+pub fn own_window_shot(title: &str, kind: &str) -> Option<image::RgbaImage> {
+    let pid = std::process::id() as u64;
+    let clients: serde_json::Value = serde_json::from_str(&hypr("j/clients")?).ok()?;
+    let client = clients.as_array()?.iter().find(|c| c["pid"].as_u64() == Some(pid) && c["title"].as_str() == Some(title));
+    let geometry = match client {
+        Some(c) => format!("{},{} {}x{}", c["at"][0], c["at"][1], c["size"][0], c["size"][1]),
+        None => {
+            let layers: serde_json::Value = serde_json::from_str(&hypr("j/layers")?).ok()?;
+            let layer = layers
+                .as_object()?
+                .values()
+                .flat_map(|m| m["levels"].as_object().into_iter().flat_map(|l| l.values()))
+                .flat_map(|level| level.as_array().into_iter().flatten())
+                .find(|l| l["pid"].as_u64() == Some(pid) && l["namespace"].as_str() == Some(kind))?;
+            format!("{},{} {}x{}", layer["x"], layer["y"], layer["w"], layer["h"])
+        }
+    };
+    let out = std::process::Command::new("grim").args(["-g", &geometry, "-t", "ppm", "-"]).output().ok()?;
+    out.status.success().then_some(())?;
+    image::load_from_memory_with_format(&out.stdout, image::ImageFormat::Pnm).ok().map(|i| i.to_rgba8())
+}
+
 /// The monitor as it is now, in physical pixels (grim, without the cursor).
 pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     let out = std::process::Command::new("grim").args(["-o", &mon.name, "-t", "ppm", "-"]).output().ok()?;

@@ -330,7 +330,10 @@ pub fn open_layer<V: Render + 'static>(
         window.set_rem_size(px(REM));
         build(window, cx)
     }) {
-        Ok(handle) => Some(handle),
+        Ok(handle) => {
+            crate::dev::name_window(handle.into(), spec.namespace);
+            Some(handle)
+        }
         Err(e) => {
             crate::util::notify(t("app.kadr_couldnt_open_window"), &e.to_string());
             None
@@ -361,7 +364,10 @@ pub fn open_window<V: Render + 'static>(
         window.set_rem_size(px(REM));
         build(window, cx)
     }) {
-        Ok(handle) => Some(handle),
+        Ok(handle) => {
+            crate::dev::name_window(handle.into(), app_id);
+            Some(handle)
+        }
         Err(e) => {
             crate::util::notify(t("app.kadr_couldnt_open_window"), &e.to_string());
             None

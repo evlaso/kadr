@@ -215,7 +215,7 @@ enum Knob {
     Weight,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tool {
     Select,
     Arrow,
@@ -5574,6 +5574,25 @@ mod tests {
             let big = Doc { shapes: doc.shapes.clone(), crop: None, ..Doc::default() };
             std::fs::write(out, compose(&src, &big, &frame).unwrap()).unwrap();
         }
+    }
+}
+
+impl Editor {
+    /// For `kadr dev state`: the drawing as a project keeps it, and what the
+    /// editor is doing with it.
+    pub(crate) fn dev_state(&self) -> serde_json::Value {
+        serde_json::json!({
+            "path": self.path.display().to_string(),
+            "tool": format!("{:?}", self.tool).to_lowercase(),
+            "selected": self.selected,
+            "shapes": self.doc.shapes.iter().map(project::shape_to_json).collect::<Vec<_>>(),
+            "crop": self.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
+            "cropping": self.cropping.is_some(),
+            "frame": self.frame.to_json(),
+            "undo": self.history.len(),
+            "redo": self.future.len(),
+            "image": self.source.as_ref().map(|s| [s.width(), s.height()]),
+        })
     }
 }
 

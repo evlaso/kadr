@@ -1,0 +1,16 @@
+{
+  "when": "2026-10-23 00:21",
+  "commit": "d22cea3",
+  "tray_idle_s": 300.0,
+  "runs": 5,
+  "metrics": {
+    "binary_mb": 44.7,
+    "hotkey_overlay_cold_ms": 92.6,
+    "hotkey_overlay_warm_ms": 33.4,
+    "edit_window_ms": 297.3,
+    "editor_4k_rss_mb": 388.6,
+    "idle_cpu_percent": 0.1,
+    "tray_rss_mb": 15.0,
+    "incremental_build_s": 11.5
+  }
+}

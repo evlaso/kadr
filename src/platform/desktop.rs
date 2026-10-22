@@ -130,3 +130,12 @@ pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     let (screen, _) = screens().into_iter().find(|(_, m)| m.name == mon.name)?;
     screen.capture_image().map_err(|e| eprintln!("kadr: screenshot: {e}")).ok()
 }
+
+/// One of kadr's own windows as it is on screen, for `kadr dev shot`: by its
+/// title, or kadr's only titled one.
+pub fn own_window_shot(title: &str, _kind: &str) -> Option<image::RgbaImage> {
+    let pid = std::process::id();
+    let mine: Vec<xcap::Window> = xcap::Window::all().ok()?.into_iter().filter(|w| w.pid().ok() == Some(pid)).collect();
+    let window = mine.iter().find(|w| w.title().ok().as_deref() == Some(title)).or(mine.first())?;
+    window.capture_image().ok()
+}

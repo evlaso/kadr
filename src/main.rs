@@ -4,6 +4,7 @@ mod bundle;
 mod capture;
 mod cards;
 mod cursors;
+mod dev;
 mod editor;
 mod history;
 mod launcher;
@@ -65,6 +66,8 @@ Usage:
   kadr history                                   history of screenshots and recordings
   kadr settings                                  settings
   kadr tray                                      tray icon (for autostart)
+  kadr dev <command>                             test hooks of a kadr started with KADR_DEV=1
+                                                 (windows, dump, find, click, drag, key, type, state, shot)
   kadr text [image]                              recognize text (in an area or an image) and copy it
   kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
 ";
@@ -204,16 +207,37 @@ fn send_to_running(args: &[String]) -> bool {
     stream.write_all(format!("{line}\n").as_bytes()).is_ok()
 }
 
-/// Accept commands from later invocations on a helper thread.
-fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<Vec<String>>) {
+/// `kadr dev …`: ask the running kadr and print its answer.
+fn dev_client(args: &[String]) -> ! {
+    let Some(mut stream) = platform::ipc::connect() else {
+        eprintln!("kadr: no kadr is running (start one with KADR_DEV=1)");
+        std::process::exit(2);
+    };
+    let line = serde_json::to_string(args).unwrap_or_default();
+    let mut answer = String::new();
+    if stream.write_all(format!("{line}\n").as_bytes()).is_err() || BufReader::new(stream).read_line(&mut answer).is_err() || answer.is_empty() {
+        eprintln!("kadr: no answer");
+        std::process::exit(2);
+    }
+    print!("{answer}");
+    let ok = serde_json::from_str::<serde_json::Value>(&answer).is_ok_and(|v| v["ok"] == true);
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
+/// Accept commands from later invocations on a helper thread. `dev` ones
+/// keep their connection for the answer.
+fn listen(listener: platform::ipc::Listener, tx: mpsc::UnboundedSender<(Vec<String>, Option<platform::ipc::Stream>)>) {
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let mut line = String::new();
+            let Ok(reply) = stream.try_clone() else { continue };
             if BufReader::new(stream).read_line(&mut line).is_ok()
                 && let Ok(args) = serde_json::from_str::<Vec<String>>(&line)
-                && tx.unbounded_send(args).is_err()
             {
-                break;
+                let reply = (args.first().map(String::as_str) == Some("dev")).then_some(reply);
+                if tx.unbounded_send((args, reply)).is_err() {
+                    break;
+                }
             }
         }
     });
@@ -239,6 +263,9 @@ fn main() {
     // The tray icon is its own small process, without GPUI.
     if args.first().map(String::as_str) == Some("tray") {
         return tray::run();
+    }
+    if args.first().map(String::as_str) == Some("dev") {
+        dev_client(&args);
     }
     // Validate and resolve paths here, before handing off to the running instance.
     let command = match Command::from_args(&args) {
@@ -296,7 +323,11 @@ fn main() {
         command.run(cx);
 
         cx.spawn(async move |cx| {
-            while let Some(args) = rx.next().await {
+            while let Some((args, reply)) = rx.next().await {
+                if let Some(reply) = reply {
+                    let _ = cx.update(|cx| dev::handle(args, reply, cx));
+                    continue;
+                }
                 let _ = cx.update(|cx| match Command::from_args(&args) {
                     Ok(command) => command.run(cx),
                     Err(e) => util::notify("kadr", &e),

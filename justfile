@@ -15,3 +15,9 @@ golden:
 # Writes tests/golden/cases from editor/golden.rs's cases().
 golden-cases:
     cargo test --release make_golden_cases -- --ignored
+
+# The budgets of SPEC.ru.md section 2, on the live Hyprland session (the
+# picker and an editor show for a moment). Writes target/bench.json; fails
+# over budget, warns >15% worse than docs/perf.json.
+bench *args:
+    python3 scripts/bench.py {{args}}

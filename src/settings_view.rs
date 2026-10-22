@@ -15,7 +15,7 @@ use crate::studio::{PADDINGS, ZOOMS};
 use crate::{hotkeys, ocr, palette, storage, tray, util};
 use crate::i18n::t;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
     General,
     Screenshots,
@@ -752,6 +752,18 @@ impl SettingsView {
         if let Err(e) = hotkeys::save(&self.keys) {
             util::notify(t("settings.couldnt_save_shortcuts"), &e.to_string());
         }
+    }
+}
+
+impl SettingsView {
+    /// For `kadr dev state`.
+    pub(crate) fn dev_state(&self) -> serde_json::Value {
+        serde_json::json!({
+            "tab": format!("{:?}", self.tab).to_lowercase(),
+            "query": self.query,
+            "recording_shortcut": self.recording,
+            "keys": self.keys,
+        })
     }
 }
 
