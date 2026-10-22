@@ -1,4 +1,5 @@
-//! macOS: the interface runs; capture and recording aren't ported yet.
+//! macOS: what isn't shared with Windows (desktop.rs). Screenshots work;
+//! recording isn't ported yet.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -6,7 +7,7 @@ use std::path::{Path, PathBuf};
 use gpui::{App, WindowOptions};
 
 use super::{Signal, home};
-use crate::util::{Mon, spawn};
+use crate::util::spawn;
 
 pub fn signal(pid: u32, signal: Signal) {
     let number = match signal {
@@ -21,46 +22,12 @@ pub fn signal(pid: u32, signal: Signal) {
     }
 }
 
-pub fn copy_image(path: &Path) {
-    let script = format!("set the clipboard to (read (POSIX file \"{}\") as «class PNGf»)", path.display());
-    spawn(&["osascript", "-e", &script]);
-}
-
-pub fn copy_text(text: &str) {
-    let script = format!("set the clipboard to \"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
-    spawn(&["osascript", "-e", &script]);
-}
-
-pub fn copy_file(path: &Path) {
-    let script = format!("set the clipboard to (POSIX file \"{}\")", path.display());
-    spawn(&["osascript", "-e", &script]);
-}
-
-/// Several files: only the first for now.
-pub fn copy_files(paths: &[&Path]) {
-    if let Some(path) = paths.first() {
-        copy_file(path);
-    }
-}
-
-pub fn notify(title: &str, body: &str) {
-    let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    spawn(&["osascript", "-e", &format!("display notification \"{}\" with title \"{}\"", quote(body), quote(title))]);
-}
-
 pub fn open_file(path: &Path) {
     spawn(&[OsStr::new("open"), path.as_os_str()]);
 }
 
 pub fn device_holder(_device: &str) -> Option<String> {
     None
-}
-
-pub fn trash(path: &Path) {
-    let script = format!("tell application \"Finder\" to delete (POSIX file \"{}\")", path.display());
-    if spawn(&["osascript", "-e", &script]).is_none() {
-        let _ = std::fs::remove_file(path);
-    }
 }
 
 pub fn runtime_dir() -> PathBuf {
@@ -86,8 +53,6 @@ pub fn hypr(_request: &str) -> Option<String> {
     None
 }
 
-pub fn move_cursor(_x: f64, _y: f64) {}
-
 pub fn cuda() -> bool {
     false
 }
@@ -98,12 +63,15 @@ pub fn sound_output() -> Option<[&'static str; 3]> {
 
 pub fn low_priority(_cmd: &mut std::process::Command) {}
 
-pub fn cursor_pos() -> Option<(f64, f64)> {
-    None
+/// The pointer in points, from the top left of the main display.
+pub(super) fn pointer() -> Option<(f64, f64)> {
+    let event = objc2_core_graphics::CGEvent::new(None)?;
+    let p = objc2_core_graphics::CGEvent::location(Some(&*event));
+    Some((p.x, p.y))
 }
 
-pub fn monitors() -> Vec<Mon> {
-    Vec::new()
+pub(super) fn warp(x: f64, y: f64) {
+    let _ = objc2_core_graphics::CGWarpMouseCursorPosition(objc2_core_foundation::CGPoint { x, y });
 }
 
 pub fn transparent(options: &mut WindowOptions) {
@@ -116,7 +84,6 @@ pub fn overlay_kind(spec: &crate::kit::LayerSpec, cx: &App) -> (gpui::WindowKind
     (gpui::WindowKind::PopUp, crate::kit::overlay_bounds(spec, cx))
 }
 
-
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
 }
@@ -128,11 +95,6 @@ impl CursorOffCapture {
     pub fn start() -> Option<Self> {
         None
     }
-}
-
-pub fn grab_monitor(_mon: &Mon) -> Option<image::RgbaImage> {
-    super::unsupported(crate::i18n::t("app.screenshot"));
-    None
 }
 
 /// GPUI's own appearance is right here.

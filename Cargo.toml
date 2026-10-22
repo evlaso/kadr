@@ -25,6 +25,21 @@ crc32fast = "1.5"
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
 
+# macOS and Windows share one implementation of the clipboard, notifications,
+# the trash, monitors and screenshots (platform/desktop.rs).
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+arboard = "3.7.0"
+notify-rust = "4.18.2"
+trash = "5.2.9"
+xcap = "0.9.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [profile.release]
 strip = true
 

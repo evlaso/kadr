@@ -1,4 +1,5 @@
-//! Windows: the interface runs; capture and recording aren't ported yet.
+//! Windows: what isn't shared with macOS (desktop.rs). Screenshots work;
+//! recording isn't ported yet.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -6,7 +7,7 @@ use std::path::{Path, PathBuf};
 use gpui::{App, WindowOptions};
 
 use super::{Signal, home};
-use crate::util::{Mon, spawn};
+use crate::util::spawn;
 
 pub fn signal(pid: u32, signal: Signal) {
     // No signals here: stopping means ending the process; pausing isn't possible.
@@ -15,44 +16,12 @@ pub fn signal(pid: u32, signal: Signal) {
     }
 }
 
-fn powershell(script: &str) {
-    spawn(&["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script]);
-}
-
-pub fn copy_image(path: &Path) {
-    powershell(&format!(
-        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('{}'))",
-        path.display()
-    ));
-}
-
-pub fn copy_text(text: &str) {
-    powershell(&format!("Set-Clipboard -Value '{}'", text.replace('\'', "''")));
-}
-
-pub fn copy_file(path: &Path) {
-    powershell(&format!("Set-Clipboard -Path '{}'", path.display()));
-}
-
-pub fn copy_files(paths: &[&Path]) {
-    let list: Vec<String> = paths.iter().map(|p| format!("'{}'", p.display().to_string().replace('\'', "''"))).collect();
-    powershell(&format!("Set-Clipboard -Path {}", list.join(",")));
-}
-
-pub fn notify(title: &str, body: &str) {
-    eprintln!("kadr: {title}: {body}");
-}
-
 pub fn open_file(path: &Path) {
     spawn(&[OsStr::new("explorer"), path.as_os_str()]);
 }
 
 pub fn device_holder(_device: &str) -> Option<String> {
     None
-}
-
-pub fn trash(path: &Path) {
-    let _ = std::fs::remove_file(path);
 }
 
 fn local_app_data() -> PathBuf {
@@ -79,8 +48,6 @@ pub fn hypr(_request: &str) -> Option<String> {
     None
 }
 
-pub fn move_cursor(_x: f64, _y: f64) {}
-
 pub fn cuda() -> bool {
     false
 }
@@ -91,12 +58,17 @@ pub fn sound_output() -> Option<[&'static str; 3]> {
 
 pub fn low_priority(_cmd: &mut std::process::Command) {}
 
-pub fn cursor_pos() -> Option<(f64, f64)> {
-    None
+/// The pointer in physical pixels.
+pub(super) fn pointer() -> Option<(f64, f64)> {
+    let mut p = windows::Win32::Foundation::POINT::default();
+    // SAFETY: GetCursorPos writes into the point we pass.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p) }.ok()?;
+    Some((p.x as f64, p.y as f64))
 }
 
-pub fn monitors() -> Vec<Mon> {
-    Vec::new()
+pub(super) fn warp(x: f64, y: f64) {
+    // SAFETY: plain SetCursorPos.
+    let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::SetCursorPos(x.round() as i32, y.round() as i32) };
 }
 
 pub fn transparent(options: &mut WindowOptions) {
@@ -106,7 +78,6 @@ pub fn transparent(options: &mut WindowOptions) {
 pub fn overlay_kind(spec: &crate::kit::LayerSpec, cx: &App) -> (gpui::WindowKind, gpui::Bounds<gpui::Pixels>) {
     (gpui::WindowKind::PopUp, crate::kit::overlay_bounds(spec, cx))
 }
-
 
 pub fn link(target: &Path, link: &Path) -> std::io::Result<()> {
     std::fs::copy(target, link).map(|_| ())
@@ -119,11 +90,6 @@ impl CursorOffCapture {
     pub fn start() -> Option<Self> {
         None
     }
-}
-
-pub fn grab_monitor(_mon: &Mon) -> Option<image::RgbaImage> {
-    super::unsupported(crate::i18n::t("app.screenshot"));
-    None
 }
 
 /// GPUI's own appearance is right here.

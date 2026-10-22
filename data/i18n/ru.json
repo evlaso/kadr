@@ -1,7 +1,6 @@
 {
  "app.kadr_couldnt_open_window": "kadr: не удалось открыть окно",
  "app.linux_only_for_now": "{}: пока только на Linux",
- "app.screenshot": "Снимок экрана",
  "bundle.couldnt_open": "Не получилось открыть проект",
  "bundle.couldnt_save": "Не получилось сохранить проект",
  "bundle.desktop_installed": "Файлы .kadr теперь открываются в kadr",

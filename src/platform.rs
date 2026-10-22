@@ -2,7 +2,9 @@
 //! functions: the clipboard, notifications, files, folders, monitors, the
 //! single-instance socket, overlay windows and screen capture. The rest of
 //! kadr only calls these. Linux (Wayland, Hyprland, Omarchy) is complete;
-//! macOS and Windows build and run the UI, and report what isn't ported yet.
+//! macOS and Windows share the clipboard, notifications, the trash, monitors
+//! and screenshots through cross-platform crates (desktop.rs), and report
+//! what isn't ported yet.
 
 #[cfg(target_os = "linux")]
 #[path = "platform/linux.rs"]
@@ -15,6 +17,12 @@ mod imp;
 mod imp;
 
 pub use imp::*;
+
+#[cfg(not(target_os = "linux"))]
+#[path = "platform/desktop.rs"]
+mod desktop;
+#[cfg(not(target_os = "linux"))]
+pub use desktop::*;
 
 use std::path::PathBuf;
 
