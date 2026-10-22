@@ -81,7 +81,7 @@ kadr install-desktop                               .kadr file type, icon and men
 ## Platforms
 
 - **Linux** (Wayland, Hyprland): everything works.
-- **macOS and Windows:** they build in CI and the interface runs; capture, recording and the tray aren't ported yet. Everything system-specific lives in `src/platform/`, so it can be ported one function at a time.
+- **macOS and Windows:** they build in CI; not yet tried on a real machine. Screenshots, the clipboard, notifications, the tray icon and global hotkeys are written (through cross-platform crates); recording, picking windows and the studio's click log aren't ported yet. Everything system-specific lives in `src/platform/`, so it can be ported one function at a time.
 
 Builds for all three systems are attached to every commit on `main` in [Actions](https://github.com/vlasmn/kadr/actions).
 

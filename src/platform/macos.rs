@@ -131,7 +131,28 @@ pub fn install_desktop() -> std::io::Result<()> {
     Err(std::io::Error::other("not on this system yet"))
 }
 
-pub fn ensure_desktop() {}
+/// `kadr tray` holds the hotkeys: a LaunchAgent starts it at login.
+pub fn ensure_desktop() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let exe = exe.display().to_string().replace('&', "&amp;").replace('<', "&lt;");
+    let agent = home().join("Library/LaunchAgents/kadr.tray.plist");
+    let text = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>kadr.tray</string>
+  <key>ProgramArguments</key><array><string>{exe}</string><string>tray</string></array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+"#
+    );
+    if std::fs::read_to_string(&agent).ok().as_deref() != Some(text.as_str()) {
+        let _ = agent.parent().map(std::fs::create_dir_all);
+        let _ = std::fs::write(&agent, text);
+    }
+}
 
 /// The traffic lights over the top bar's left end.
 pub fn window_controls() -> super::WindowControls {

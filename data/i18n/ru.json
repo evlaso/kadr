@@ -320,7 +320,6 @@
  "settings.off_goes_to_temporary_folder": "Если выключить, файл попадёт во временную папку и пропадёт после перезагрузки",
  "settings.official_tesseract_model_installed_into": "Официальная модель Tesseract, ставится в папку kadr без sudo",
  "settings.old_ones_leave_as_new": "Старые уходят, когда приходят новые",
- "settings.only_set_up_in_hyprland": "Пока настраиваются только в Hyprland",
  "settings.open_editor": "Открывать редактор",
  "settings.open_studio": "Открывать студию",
  "settings.outline_recorded_area_not_recorded": "Подсвечивать записываемую область (в запись не попадает)",

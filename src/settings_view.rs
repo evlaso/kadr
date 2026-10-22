@@ -308,7 +308,9 @@ impl SettingsView {
                         s.tray = on;
                         // Saved first: the new tray process reads the setting.
                         s.save();
-                        if on { tray::start() } else { tray::stop() }
+                        // Started over either way: where it also holds the
+                        // hotkeys, it keeps running without the icon.
+                        tray::restart();
                     }),
                 ),
                 heading(t("settings.thumbnails")),
@@ -401,8 +403,7 @@ impl SettingsView {
                     row(t("settings.russian"), t("settings.official_tesseract_model_installed_into"), action),
                 ]
             }
-            Tab::Shortcuts if cfg!(target_os = "linux") => hotkeys::ACTIONS.iter().enumerate().map(|(i, action)| row(t(action.title), "", self.render_keys(i, cx))).collect(),
-            Tab::Shortcuts => vec![row(t("common.keyboard_shortcuts"), t("settings.only_set_up_in_hyprland"), div().into_any_element())],
+            Tab::Shortcuts => hotkeys::ACTIONS.iter().enumerate().map(|(i, action)| row(t(action.title), "", self.render_keys(i, cx))).collect(),
             Tab::Storage => vec![
                 (format!("{} {} {}", t("settings.used"), t("common.screenshots"), t("common.recordings")), self.render_usage(cx)),
                 row(t("settings.delete_old_captures"),

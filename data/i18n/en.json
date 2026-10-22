@@ -320,7 +320,6 @@
  "settings.off_goes_to_temporary_folder": "Off, it goes to a temporary folder and is gone after a restart",
  "settings.official_tesseract_model_installed_into": "The official Tesseract model, installed into kadr’s folder without sudo",
  "settings.old_ones_leave_as_new": "Old ones leave as new ones come",
- "settings.only_set_up_in_hyprland": "Only set up in Hyprland for now",
  "settings.open_editor": "Open the editor",
  "settings.open_studio": "Open the studio",
  "settings.outline_recorded_area_not_recorded": "Outline the recorded area (not recorded)",

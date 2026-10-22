@@ -1,8 +1,9 @@
-//! kadr's global hotkeys, set in the settings. They are Hyprland binds that
-//! kadr writes to `~/.config/hypr/kadr-keys.lua`, which the hook
+//! kadr's global hotkeys, set in the settings. On Linux they are Hyprland
+//! binds that kadr writes to `~/.config/hypr/kadr-keys.lua`, which the hook
 //! `data/hypr/kadr.lua` loads. The first save takes kadr's binds over from
 //! `bindings.lua`: they are commented out there (after a backup), so nothing
-//! is bound twice.
+//! is bound twice. On macOS and Windows the same lines go to kadr's own
+//! config folder, and `kadr tray` registers them with the system.
 
 use std::path::PathBuf;
 
@@ -36,12 +37,22 @@ fn hypr_dir() -> PathBuf {
 }
 
 fn own_file() -> PathBuf {
-    hypr_dir().join("kadr-keys.lua")
+    if cfg!(target_os = "linux") { hypr_dir().join("kadr-keys.lua") } else { crate::util::config_dir().join("hotkeys.lua") }
 }
+
+/// Where there's no Hyprland config to take them from: Ctrl+Shift and a digit.
+const DEFAULTS: &str = r#"o.bind("CTRL + SHIFT + code:10", "", "kadr shot region")
+o.bind("CTRL + SHIFT + code:11", "", "kadr record")
+o.bind("CTRL + SHIFT + code:12", "", "kadr text")
+o.bind("CTRL + SHIFT + code:13", "", "kadr history")
+o.bind("CTRL + SHIFT + code:14", "", "kadr settings")
+o.bind("CTRL + SHIFT + code:15", "", "kadr shot scroll")
+"#;
 
 /// Hyprland key specs ("CTRL + SHIFT + code:10") for each of `ACTIONS`.
 pub fn load() -> Vec<Vec<String>> {
-    let text = std::fs::read_to_string(own_file()).or_else(|_| std::fs::read_to_string(hypr_dir().join("bindings.lua"))).unwrap_or_default();
+    let fallback = || if cfg!(target_os = "linux") { std::fs::read_to_string(hypr_dir().join("bindings.lua")) } else { Ok(DEFAULTS.to_owned()) };
+    let text = std::fs::read_to_string(own_file()).or_else(|_| fallback()).unwrap_or_default();
     let mut keys = vec![Vec::new(); ACTIONS.len()];
     for (spec, command) in text.lines().filter_map(parse_bind) {
         if let Some(i) = ACTIONS.iter().position(|a| a.command == command)
@@ -64,9 +75,12 @@ fn parse_bind(line: &str) -> Option<(String, String)> {
     }
 }
 
-/// Write kadr's binds and have Hyprland pick them up.
+/// Write kadr's binds and have Hyprland (or `kadr tray`) pick them up.
 pub fn save(keys: &[Vec<String>]) -> std::io::Result<()> {
     let first = !own_file().exists();
+    if let Some(dir) = own_file().parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let mut out = String::from("-- kadr's hotkeys, written by its settings (Shortcuts). Loaded by hypr/kadr.lua.\n");
     for (action, specs) in ACTIONS.iter().zip(keys) {
         for spec in specs {
@@ -74,6 +88,10 @@ pub fn save(keys: &[Vec<String>]) -> std::io::Result<()> {
         }
     }
     std::fs::write(own_file(), out)?;
+    if !cfg!(target_os = "linux") {
+        crate::tray::restart();
+        return Ok(());
+    }
     if first {
         retire_old_binds()?;
     }
@@ -110,6 +128,10 @@ fn reload() {
 
 /// Pause every bind while a shortcut is recorded (`false` brings them back).
 pub fn quiet(on: bool) {
+    // Elsewhere the system holds the keys while `kadr tray` runs.
+    if !cfg!(target_os = "linux") {
+        return if on { crate::tray::stop() } else { crate::tray::restart() };
+    }
     if on {
         hyprctl(&format!(
             r#"hl.define_submap("{QUIET}", function() hl.bind("SUPER + CTRL + ALT + SHIFT + F24", hl.dsp.submap("reset")) end); hl.dispatch(hl.dsp.submap("{QUIET}"))"#
@@ -166,6 +188,27 @@ pub fn spec(key: &str, ctrl: bool, alt: bool, shift: bool, logo: bool) -> Option
     Some(mods.into_iter().chain([name.as_str()]).collect::<Vec<_>>().join(" + "))
 }
 
+/// A key spec as global-hotkey reads it: "CTRL + SHIFT + code:10" → "CTRL+SHIFT+1".
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub fn global(spec: &str) -> String {
+    spec.split('+')
+        .map(|part| {
+            let part = part.trim();
+            if let Some(code) = part.strip_prefix("code:").and_then(|c| c.parse::<u32>().ok()) {
+                return POSITIONS.iter().find(|p| p.2 == code).map(|p| p.0.to_uppercase()).unwrap_or_else(|| part.to_owned());
+            }
+            match part {
+                "PRINT" => "PRINTSCREEN".into(),
+                "RETURN" => "ENTER".into(),
+                "PRIOR" => "PAGEUP".into(),
+                "NEXT" => "PAGEDOWN".into(),
+                _ => part.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// "CTRL + SHIFT + code:10" → "Ctrl+Shift+1".
 pub fn label(spec: &str) -> String {
     spec.split('+')
@@ -175,6 +218,8 @@ pub fn label(spec: &str) -> String {
                 return POSITIONS.iter().find(|p| p.2 == code).map(|p| p.0.to_uppercase()).unwrap_or_else(|| part.to_owned());
             }
             match part {
+                "SUPER" if cfg!(target_os = "macos") => "Cmd".into(),
+                "SUPER" if cfg!(windows) => "Win".into(),
                 "SUPER" => "Super".into(),
                 "CTRL" => "Ctrl".into(),
                 "ALT" => "Alt".into(),
@@ -202,5 +247,14 @@ mod tests {
         assert_eq!(label("ALT + PRINT"), "Alt+Print");
         assert_eq!(parse_bind(r#"o.bind("CTRL + SHIFT + code:11", "Screen recording (kadr)", "kadr record")"#), Some(("CTRL + SHIFT + code:11".into(), "kadr record".into())));
         assert_eq!(parse_bind(r#"-- o.bind("X", "y", "kadr record")"#), None);
+    }
+
+    #[test]
+    fn shortcuts_turn_into_global_hotkeys() {
+        assert_eq!(global("CTRL + SHIFT + code:10"), "CTRL+SHIFT+1");
+        assert_eq!(global("SUPER + ALT + code:38"), "SUPER+ALT+A");
+        assert_eq!(global("ALT + PRINT"), "ALT+PRINTSCREEN");
+        assert_eq!(global("SHIFT + PRIOR"), "SHIFT+PAGEUP");
+        assert_eq!(global("F5"), "F5");
     }
 }

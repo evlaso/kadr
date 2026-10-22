@@ -126,7 +126,21 @@ pub fn install_desktop() -> std::io::Result<()> {
     Err(std::io::Error::other("not on this system yet"))
 }
 
-pub fn ensure_desktop() {}
+/// `kadr tray` holds the hotkeys: the Run key starts it at login, through a
+/// headless console so no window shows. Written again only when kadr moved.
+pub fn ensure_desktop() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let command = format!("conhost.exe --headless \"{}\" tray", exe.display());
+    let marker = config_dir().join("autostart");
+    if std::fs::read_to_string(&marker).ok().as_deref() == Some(command.as_str()) {
+        return;
+    }
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    if spawn(&["reg", "add", key, "/v", "kadr", "/t", "REG_SZ", "/d", &command, "/f"]).is_some() {
+        let _ = std::fs::create_dir_all(config_dir());
+        let _ = std::fs::write(marker, command);
+    }
+}
 
 /// Three caption buttons at the right, 46 px each, as Windows has them.
 pub fn window_controls() -> super::WindowControls {

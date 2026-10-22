@@ -292,6 +292,7 @@ fn main() {
         record::init(cx);
         storage::auto();
         platform::ensure_desktop();
+        tray::ensure();
         command.run(cx);
 
         cx.spawn(async move |cx| {

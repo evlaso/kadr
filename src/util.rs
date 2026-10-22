@@ -7,7 +7,13 @@ use gpui::{App, DisplayId};
 /// Fire-and-forget process, reaped on a helper thread.
 pub fn spawn<S: AsRef<OsStr>>(argv: &[S]) -> Option<u32> {
     let (cmd, args) = argv.split_first()?;
-    match std::process::Command::new(cmd).args(args).stdin(Stdio::null()).stdout(Stdio::null()).spawn() {
+    let mut command = std::process::Command::new(cmd);
+    command.args(args).stdin(Stdio::null()).stdout(Stdio::null());
+    // No console window flashing up; a kadr started so passes its windowless
+    // console on to what it runs.
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000); // CREATE_NO_WINDOW
+    match command.spawn() {
         Ok(mut child) => {
             let pid = child.id();
             std::thread::spawn(move || child.wait());
