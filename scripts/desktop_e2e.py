@@ -290,6 +290,16 @@ def overlay(t):
         head = saved.read_bytes()[16:24]
         size = [int.from_bytes(head[:4], "big"), int.from_bytes(head[4:], "big")]
     t.note("the area is saved", saved and size and size[0] >= 390 and size[1] >= 230, size=size)
+    # Where the time went: kadr's grab and files, the program's own steps,
+    # in kadr's log once the overlay ended.
+    time.sleep(0.3)
+    timing = {}
+    for line in t.log.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "overlay timing:" in line:
+            for part in line.split(":", 1)[1].split():
+                k, _, v = part.partition("=")
+                timing[k] = v
+    t.note("the overlay's timings are logged", timing, **timing)
 
 
 def type_text(s):

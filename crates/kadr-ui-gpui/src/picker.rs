@@ -70,7 +70,9 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     }
     let _picking = Picking;
     let mon = util::focused_monitor()?;
+    let grab_from = std::time::Instant::now();
     let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
+    let grab_ms = grab_from.elapsed().as_millis();
     let windows = windows_on(&mon);
     // The last area, if it was on this monitor.
     let previous = previous_area()
@@ -80,6 +82,8 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     // On Wayland, the overlay's own window: drawn on the CPU, on a thread
     // of its own (SPEC 3.8). GPUI's picker below where it can't show itself,
     // or with KADR_PICKER=gpui.
+    #[cfg(target_os = "linux")]
+    let _ = grab_ms;
     #[cfg(target_os = "linux")]
     if std::env::var("KADR_PICKER").as_deref() != Ok("gpui") {
         let accent = cx.update(|cx| crate::ui::to_rgba(cx.theme().colors().text_accent));
@@ -115,8 +119,12 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
         let (tx, rx) = oneshot::channel();
         std::thread::spawn(move || {
             let run = || {
+                let spec_from = std::time::Instant::now();
                 let spec = kadr_overlay::spec::write(&dir, &screen, &options, &lang).ok()?;
+                // Where the time goes before the overlay shows (KADR_DEV's log).
+                eprintln!("kadr overlay timing: grab={grab_ms}ms spec={}ms", spec_from.elapsed().as_millis());
                 let out = std::process::Command::new(&exe).arg(&spec).output().ok()?;
+                eprint!("{}", String::from_utf8_lossy(&out.stderr));
                 kadr_overlay::spec::parse_outcome(&String::from_utf8_lossy(&out.stdout))
             };
             let _ = tx.send(run());

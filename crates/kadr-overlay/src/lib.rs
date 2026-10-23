@@ -17,6 +17,19 @@ mod wayland;
 
 pub use model::{Outcome, Rect};
 
+/// When the program started, for its timings (`timing`).
+static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Marks the program's start.
+pub fn started() {
+    let _ = STARTED.set(std::time::Instant::now());
+}
+
+/// Milliseconds since `started`, for the timing line the program prints.
+pub fn since_start() -> u128 {
+    STARTED.get().map_or(0, |t| t.elapsed().as_millis())
+}
+
 /// The monitor to pick on, frozen.
 pub struct Screen {
     /// The compositor's name for it ("DP-1").

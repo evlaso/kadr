@@ -49,6 +49,7 @@ pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
         shown_cursor: None,
         outcome: None,
         failed: false,
+        presented: false,
     };
     event_loop.run_app(&mut app).map_err(drop)?;
     if app.failed {
@@ -69,6 +70,7 @@ struct App<'a> {
     shown_cursor: Option<Cursor>,
     outcome: Option<Option<Outcome>>,
     failed: bool,
+    presented: bool,
 }
 
 impl App<'_> {
@@ -123,6 +125,10 @@ impl App<'_> {
         draw::frame(bytes, &self.frozen, &self.model, self.options.accent, &words);
         window.pre_present_notify();
         let _ = buffer.present();
+        if !self.presented {
+            self.presented = true;
+            eprintln!("kadr-overlay timing: first_frame={}ms", crate::since_start());
+        }
     }
 }
 
@@ -166,6 +172,7 @@ impl ApplicationHandler for App<'_> {
             return el.exit();
         };
         let window = Rc::new(window);
+        let window_ms = crate::since_start();
         #[cfg(target_os = "macos")]
         above_everything(&window);
         let surface = softbuffer::Context::new(window.clone()).and_then(|ctx| softbuffer::Surface::new(&ctx, window.clone()));
@@ -173,6 +180,7 @@ impl ApplicationHandler for App<'_> {
             self.failed = true;
             return el.exit();
         };
+        eprintln!("kadr-overlay timing: window={window_ms}ms surface={}ms", crate::since_start());
         window.focus_window();
         self.window = Some(window.clone());
         self.surface = Some(surface);
