@@ -512,7 +512,7 @@ impl History {
                     .items_center()
                     .justify_center()
                     .gap_1p5()
-                    .child(wide("copy", t("common.copy")).tip(Tooltip::text(t("history.copy_ctrl_c"))).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
+                    .child(wide("copy", t("common.copy")).tip(Tooltip::text(format!("{} ({})", t("common.copy"), crate::ui::shortcut(kadr_platform::keymap::Command::Copy)))).on_click(cx.listener(move |this, _: &ClickEvent, window, _| {
                         this.copy(&[index]);
                         window.remove_window();
                     })))
@@ -785,7 +785,7 @@ impl Render for History {
         let hint = |keys: &str, label: &'static str| h_flex().gap_1p5().child(Label::new(label).size(LabelSize::Small)).child(kit::keys(keys));
 
         // Short of room the key hints go from the last; Open and Close stay.
-        let hints = [("e", t("history.editor_studio")), ("ctrl-c", t("common.copy")), ("delete", t("history.delete_selected")), ("p", t("history.pin")), ("tab", t("history.filter"))];
+        let hints = [("e", t("history.editor_studio")), ("secondary-c", t("common.copy")), ("delete", t("history.delete_selected")), ("p", t("history.pin")), ("tab", t("history.filter"))];
         let hint_layout = self.hint_fit.pick(viewport_w - 2. * rem - 2.5 * rem, hints.len() + 1);
         let shown = hints.len() - hint_layout;
 

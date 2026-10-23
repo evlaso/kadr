@@ -1474,7 +1474,7 @@ impl Editor {
                 (g.point.0 + (x - g.at.0) / g.scale).clamp(-m, self.px.0 as f32 + m),
                 (g.point.1 + (y - g.at.1) / g.scale).clamp(-m, self.px.1 as f32 + m),
             );
-            self.drag_crop(p, e.modifiers.control);
+            self.drag_crop(p, e.modifiers.control || e.modifiers.platform);
             return cx.notify();
         }
         let Some(p) = self.to_image(e.position, true) else { return };
@@ -2194,7 +2194,7 @@ impl Editor {
             .child(self.slider(Knob::Weight, self.weight, String::new(), cx))
             .tip(Tooltip::text(t("common.size")));
         // The modes: the background first, then crop and a picture on top.
-        let mode = |id: &'static str, icon: Icon, on: bool, tip: &'static str| {
+        let mode = |id: &'static str, icon: Icon, on: bool, tip: SharedString| {
             ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().toggle_state(on).child(icon).tip(Tooltip::text(tip))
         };
         let modes = h_flex()
@@ -2204,18 +2204,18 @@ impl Editor {
                     "mode-background",
                     Icon::from_path("icons/kadr/frame.svg").size(IconSize::Tool),
                     self.panel,
-                    t("editor.background_padding_corners_shadow_format"),
+                    t("editor.background_padding_corners_shadow_format").into(),
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.panel = !this.panel;
                     cx.notify();
                 })),
             )
-            .child(mode("mode-crop", Icon::from_path("icons/kadr/crop.svg").size(IconSize::Tool), false, t("editor.crop_tip")).on_click(cx.listener(|this, _, _, cx| {
+            .child(mode("mode-crop", Icon::from_path("icons/kadr/crop.svg").size(IconSize::Tool), false, t("editor.crop_tip").into()).on_click(cx.listener(|this, _, _, cx| {
                 this.set_tool(Tool::Crop, cx);
                 cx.notify();
             })))
-            .child(mode("mode-picture", Icon::from_path("icons/image_plus.svg").size(IconSize::Tool), false, t("editor.add_picture")).on_click(cx.listener(|this, _, _, cx| this.pick_picture(cx))));
+            .child(mode("mode-picture", Icon::from_path("icons/image_plus.svg").size(IconSize::Tool), false, tr!("editor.add_picture_tip", crate::ui::shortcut(kadr_platform::keymap::Command::Paste)).into()).on_click(cx.listener(|this, _, _, cx| this.pick_picture(cx))));
 
         let history = h_flex()
             .gap_0p5()
@@ -2224,7 +2224,7 @@ impl Editor {
                     .shape(IconButtonShape::Square)
                     .size(ButtonSize::Large)
                     .disabled(self.vm.history.depth() == 0)
-                    .tip(Tooltip::text(t("editor.undo_ctrl_z")))
+                    .tip(Tooltip::text(tr!("editor.undo_tip", crate::ui::shortcut(kadr_platform::keymap::Command::Undo))))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.undo(cx);
                         cx.notify();
@@ -2236,7 +2236,7 @@ impl Editor {
                     .size(ButtonSize::Large)
                     .disabled(self.vm.history.redo_depth() == 0)
                     .child(div().px_1().child(Icon::from_path("icons/kadr/redo.svg").size(IconSize::Small).color(if self.vm.history.redo_depth() == 0 { Color::Disabled } else { Color::Default })))
-                    .tip(Tooltip::text(t("editor.redo_ctrl_shift_z")))
+                    .tip(Tooltip::text(tr!("editor.redo_tip", crate::ui::shortcut(kadr_platform::keymap::Command::Redo))))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.redo(cx);
                         cx.notify();
@@ -2632,7 +2632,7 @@ impl Editor {
                 (t("editor.copy_the_text").into(), false, pick(|this, _, cx| this.read_text(cx))),
                 (t("editor.pin").into(), false, pick(|this, _, cx| this.pin(cx))),
                 (t("bundle.save_project_tip").into(), false, pick(|this, _, cx| this.save_project(cx))),
-                (format!("{} (Ctrl+C)", t("common.copy")), false, pick(|this, window, cx| this.export(Export::Copy, window, cx))),
+                (format!("{} ({})", t("common.copy"), crate::ui::shortcut(kadr_platform::keymap::Command::Copy)), false, pick(|this, window, cx| this.export(Export::Copy, window, cx))),
             ];
             let icons = vec![
                 Some(Icon::from_path("icons/kadr/scan_text.svg")),
@@ -2663,7 +2663,7 @@ impl Editor {
             .child(action("pin", Icon::new(IconName::Pin).size(IconSize::Medium), t("editor.pin").into()).on_click(cx.listener(|this, _, _, cx| this.pin(cx))))
             .child(action("save-project", Icon::from_path("icons/kadr/project.svg").size(IconSize::Medium), t("bundle.save_project_tip").into()).on_click(cx.listener(|this, _, _, cx| this.save_project(cx))))
             .child(
-                action("copy", Icon::from_path("icons/copy.svg").size(IconSize::Medium), format!("{} (Ctrl+C)", t("common.copy")))
+                action("copy", Icon::from_path("icons/copy.svg").size(IconSize::Medium), format!("{} ({})", t("common.copy"), crate::ui::shortcut(kadr_platform::keymap::Command::Copy)))
                     .on_click(cx.listener(|this, _, window, cx| this.export(Export::Copy, window, cx))),
             );
 
@@ -2680,7 +2680,7 @@ impl Editor {
                 Button::new("save", t("common.save"))
                     .style(ButtonStyle::Accent)
                     .size(ButtonSize::Large)
-                    .when(width >= COMPACT_TOOLBAR, |b| b.key_binding(kit::keys("ctrl-s")))
+                    .when(width >= COMPACT_TOOLBAR, |b| b.key_binding(kit::keys("secondary-s")))
                     .on_click(cx.listener(|this, _, window, cx| this.export(Export::Save, window, cx))),
             );
 
@@ -3029,7 +3029,7 @@ impl Editor {
             .flex_none()
             .relative()
             .gap_1()
-            .child(
+            .children(crate::ui::in_system_order(vec![
                 Button::new("crop-cancel", t("common.cancel"))
                     .style(ButtonStyle::Subtle)
                     .size(ButtonSize::Large)
@@ -3037,9 +3037,8 @@ impl Editor {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.cancel_crop(cx);
                         cx.notify();
-                    })),
-            )
-            .child(
+                    }))
+                    .into_any_element(),
                 Button::new("crop-apply", t("editor.crop"))
                     .style(ButtonStyle::Accent)
                     .size(ButtonSize::Large)
@@ -3047,8 +3046,9 @@ impl Editor {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.apply_crop();
                         cx.notify();
-                    })),
-            )
+                    }))
+                    .into_any_element(),
+            ]))
             .children(kit::window_controls(true, cx))
             .child(self.crop_fit.track(fit, 1));
         self.top_bar(width, cx).justify_between().child(left).child(right).into_any_element()
@@ -3083,7 +3083,10 @@ impl Editor {
                 this.snap = !this.snap;
                 cx.notify();
             }));
-        let hint = t(if on { "editor.hold_ctrl_to_move_freely" } else { "editor.hold_ctrl_to_snap" });
+        // Ctrl on Linux and Windows, Cmd on macOS (where Ctrl-click is the
+        // right button).
+        let held = kadr_platform::keymap::secondary(kadr_platform::keymap::Os::current());
+        let hint = if on { tr!("editor.hold_to_move_freely", held) } else { tr!("editor.hold_to_snap", held) };
         let changed = self.vm.doc.crop.is_some() || !self.vm.doc.view.is_upright() || self.vm.doc.scale != 1.;
         h_flex()
             .w(px(width))

@@ -1597,7 +1597,7 @@ impl StudioEditor {
                                 Button::new("export-now", if gif { t("studio.export_gif") } else { t("studio.export") })
                                     .style(ButtonStyle::Accent)
                                     .size(ButtonSize::Large)
-                                    .key_binding(kit::keys("ctrl-s"))
+                                    .key_binding(kit::keys("secondary-s"))
                                     .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
                             ),
                     )

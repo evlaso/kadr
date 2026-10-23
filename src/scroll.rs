@@ -308,22 +308,22 @@ impl Render for ScrollBar {
                         .elevation_3(cx)
                         .child(Label::new(t("scroll.scroll_kadr_stitches")).color(Color::Muted))
                         .child(div().w(px(90.)).font_family(kit::MONO_FONT).text_color(cx.theme().colors().text_muted).child(format!("{height} px")))
-                        .child(
+                        .children(crate::ui::in_system_order(vec![
                             Button::new("cancel", t("common.cancel"))
                                 .style(ButtonStyle::Subtle)
                                 .size(ButtonSize::Large)
                                 .on_click(move |_, _, _| {
                                     cancel.cancelled.store(true, Ordering::Relaxed);
                                     cancel.stop.store(true, Ordering::Relaxed);
-                                }),
-                        )
-                        .child(
+                                })
+                                .into_any_element(),
                             Button::new("done", t("scroll.done"))
                                 .style(ButtonStyle::Accent)
                                 .size(ButtonSize::Large)
                                 .tip(Tooltip::text(t("scroll.press_hotkey_again")))
-                                .on_click(move |_, _, _| stop.stop.store(true, Ordering::Relaxed)),
-                        )
+                                .on_click(move |_, _, _| stop.stop.store(true, Ordering::Relaxed))
+                                .into_any_element(),
+                        ]))
                         .child(self.region.mark()),
                 ),
             )

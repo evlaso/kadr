@@ -19,6 +19,9 @@ mod imp;
 
 pub use imp::*;
 
+pub mod keymap;
+pub mod style;
+
 #[cfg(not(target_os = "linux"))]
 mod desktop;
 #[cfg(not(target_os = "linux"))]

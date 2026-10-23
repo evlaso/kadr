@@ -476,27 +476,26 @@ impl Trimmer {
                             .key_binding(kit::keys("space"))
                             .on_click(cx.listener(|this, _, _, _| this.play())),
                     )
-                    .child(
+                    .children(crate::ui::in_system_order(vec![
                         Button::new("cancel", t("common.cancel"))
                             .style(ButtonStyle::Subtle)
                             .color(Color::Muted)
                             .key_binding(kit::keys("escape"))
-                            .on_click(|_, window, _| window.remove_window()),
-                    )
-                    .child(
+                            .on_click(|_, window, _| window.remove_window())
+                            .into_any_element(),
                         Button::new("gif", t("trim.save_gif"))
                             .style(ButtonStyle::Subtle)
                             .key_binding(kit::keys("g"))
-                            .on_click(cx.listener(|this, _, window, cx| this.gif(window, cx))),
-                    )
-                    .child(
+                            .on_click(cx.listener(|this, _, window, cx| this.gif(window, cx)))
+                            .into_any_element(),
                         Button::new("save", t("common.save"))
                             .style(ButtonStyle::Accent)
                             .disabled(!self.trimmed())
                             .tip(Tooltip::text(t("trim.as_new_file_original_stays")))
-                            .key_binding(kit::keys("ctrl-s"))
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
+                            .key_binding(kit::keys("secondary-s"))
+                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx)))
+                            .into_any_element(),
+                    ])),
             )
     }
 }

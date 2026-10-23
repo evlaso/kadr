@@ -442,6 +442,23 @@ impl RenderOnce for Divider {
 // ---------------------------------------------------------------- key hints
 
 /// A shortcut as Zed shows it on Linux: "Ctrl-S", "Escape".
+/// A row of buttons like Cancel … Save, given with the confirming one last:
+/// where the system puts it last (macOS, GNOME) they stay so, Windows has
+/// it first.
+pub fn in_system_order(mut buttons: Vec<AnyElement>) -> Vec<AnyElement> {
+    if !kadr_platform::style::current().confirm_last {
+        buttons.reverse();
+    }
+    buttons
+}
+
+/// A command's usual shortcut on this system, as running text ("⌘C",
+/// "Ctrl+C"); empty when it has none.
+pub fn shortcut(command: kadr_platform::keymap::Command) -> String {
+    use kadr_platform::keymap;
+    keymap::key(command).map(|k| keymap::text(keymap::Os::current(), k)).unwrap_or_default()
+}
+
 #[derive(Clone, IntoElement)]
 pub struct KeyBinding {
     text: SharedString,
@@ -449,26 +466,15 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    /// From a GPUI keystroke source like "ctrl-shift-z" or "escape".
+    /// From a GPUI keystroke source like "secondary-shift-z" or "escape",
+    /// written the system's way (⇧⌘Z on macOS, Ctrl+Shift+Z elsewhere).
     pub fn new(source: &str) -> Self {
-        let words = source.split_whitespace().map(|stroke| {
-            stroke
-                .split('-')
-                .map(|part| match part {
-                    "ctrl" => "Ctrl".to_string(),
-                    "shift" => "Shift".to_string(),
-                    "alt" => "Alt".to_string(),
-                    "super" | "cmd" | "platform" => "Super".to_string(),
-                    key if key.chars().count() == 1 => key.to_uppercase(),
-                    key => {
-                        let mut chars = key.chars();
-                        chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("-")
-        });
-        KeyBinding { text: words.collect::<Vec<_>>().join(" ").into(), color: None }
+        Self::for_os(kadr_platform::keymap::Os::current(), source)
+    }
+
+    fn for_os(os: kadr_platform::keymap::Os, source: &str) -> Self {
+        let words: Vec<String> = source.split_whitespace().map(|stroke| kadr_platform::keymap::text(os, stroke)).collect();
+        KeyBinding { text: words.join(" ").into(), color: None }
     }
 }
 
@@ -1081,11 +1087,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn key_hints_read_like_zed() {
-        assert_eq!(KeyBinding::new("ctrl-s").text.as_ref(), "Ctrl-S");
-        assert_eq!(KeyBinding::new("ctrl-shift-z").text.as_ref(), "Ctrl-Shift-Z");
-        assert_eq!(KeyBinding::new("escape").text.as_ref(), "Escape");
-        assert_eq!(KeyBinding::new("x").text.as_ref(), "X");
+    fn key_hints_follow_the_system() {
+        use kadr_platform::keymap::Os;
+        assert_eq!(KeyBinding::for_os(Os::Linux, "secondary-s").text.as_ref(), "Ctrl+S");
+        assert_eq!(KeyBinding::for_os(Os::Windows, "ctrl-shift-z").text.as_ref(), "Ctrl+Shift+Z");
+        assert_eq!(KeyBinding::for_os(Os::MacOs, "secondary-shift-z").text.as_ref(), "⇧⌘Z");
+        assert_eq!(KeyBinding::for_os(Os::Linux, "escape").text.as_ref(), "Esc");
+        assert_eq!(KeyBinding::for_os(Os::MacOs, "x").text.as_ref(), "X");
     }
 }
 
