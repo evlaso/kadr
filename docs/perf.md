@@ -147,6 +147,22 @@ What's left is the picture once to draw and export from, and once on the
 GPU's side; drawings are a layer of shapes on top, and undo keeps changes
 to it, not copies.
 
+## The overlay draws itself (kadr-overlay)
+
+2026-10-23, `just bench` in the nested Hyprland, median of 5. The area
+picker is kadr-overlay's own layer-shell surface on Wayland, drawn on the
+CPU into shared memory on a thread of its own (SPEC §3.8), instead of a GPUI
+window.
+
+| Metric | GPUI picker | kadr-overlay |
+|---|---|---|
+| Hotkey → overlay, warm | 56.8 ms | **28.7 ms** (−49 %) |
+| Hotkey → overlay, cold | 67.2 ms | **50.3 ms** (−25 %) |
+| Binary (dist) | 25.0 MB | 25.9 MB (rfd, muda's tables, sctk; over the 25 MB soft budget, under 30) |
+
+The rest held: tray 4.8 MB, editor with a 4K picture 243.6 MB, idle CPU
+0.1 %, edit → window 283.8 ms, incremental build 0.7 s.
+
 ## How each is measured
 
 - **Tray RSS**: a fresh `kadr tray` (on Linux the StatusNotifierItem through
