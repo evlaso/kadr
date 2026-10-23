@@ -1170,6 +1170,70 @@ pub fn scrollbar(handle: &gpui::ScrollHandle, grab: &std::rc::Rc<std::cell::Cell
 /// it lands; check `contains` first.
 pub type MenuBounds = std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>;
 
+/// The width an element took in the last frame, for bars that rearrange
+/// themselves to fit (see `track_width`).
+pub type Width = std::rc::Rc<std::cell::Cell<f32>>;
+
+/// Put inside an element to keep `width` at its width; a change redraws
+/// the window, so a bar that depends on it settles on the next frame.
+pub fn track_width(width: &Width) -> impl IntoElement {
+    let cell = width.clone();
+    gpui::canvas(
+        move |b, window, _| {
+            let w = f32::from(b.size.width);
+            if (cell.get() - w).abs() > 0.5 {
+                cell.set(w);
+                // Not now: a refresh while drawing is dropped.
+                window.on_next_frame(|window, _| window.refresh());
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
+/// Which of a bar's layouts, from the fullest to the most compact, fits its
+/// room: each remembers its parts' widths as last drawn, and the first that
+/// fits (or hasn't been drawn yet, to find out) is the one to draw. A change
+/// of width redraws, so a bar settles within a frame or two and then stays.
+#[derive(Clone, Default)]
+pub struct Fit(std::rc::Rc<std::cell::RefCell<Vec<Vec<f32>>>>);
+
+impl Fit {
+    pub fn pick(&self, room: f32, layouts: usize) -> usize {
+        let widths = self.0.borrow();
+        (0..layouts)
+            .find(|&k| widths.get(k).is_none_or(|parts| parts.is_empty() || parts.iter().sum::<f32>() <= room))
+            .unwrap_or(layouts.saturating_sub(1))
+    }
+
+    /// Put inside part `part` of layout `layout` to keep its width.
+    pub fn track(&self, layout: usize, part: usize) -> impl IntoElement {
+        let widths = self.0.clone();
+        gpui::canvas(
+            move |b, window, _| {
+                let w = f32::from(b.size.width);
+                let mut all = widths.borrow_mut();
+                if all.len() <= layout {
+                    all.resize(layout + 1, Vec::new());
+                }
+                let parts = &mut all[layout];
+                if parts.len() <= part {
+                    parts.resize(part + 1, 0.);
+                }
+                if (parts[part] - w).abs() > 0.5 {
+                    parts[part] = w;
+                    window.on_next_frame(|window, _| window.refresh());
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
+    }
+}
+
 /// Put inside a menu to keep `bounds` up to date.
 pub fn track_bounds(bounds: &MenuBounds) -> impl IntoElement {
     let cell = bounds.clone();

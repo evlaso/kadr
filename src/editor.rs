@@ -430,6 +430,10 @@ struct CropSession {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CropMenu {
+    /// The tools that don't fit in a narrow toolbar.
+    Tools,
+    /// The footer's actions, in a narrow window.
+    Actions,
     Aspect,
     Scale,
     Zoom,
@@ -510,6 +514,12 @@ pub struct Editor {
     /// The crop mode's open dropdown.
     crop_menu: Option<CropMenu>,
     crop_menu_bounds: crate::ui::MenuBounds,
+    /// The footer's sides as last drawn: the left one, and the right one
+    /// with its actions unfolded, to know when they must fold.
+    footer_left: crate::ui::Width,
+    footer_right: crate::ui::Width,
+    /// How compact the crop mode's top bar must be.
+    crop_fit: crate::ui::Fit,
     /// On-screen size of the picture.
     disp: (f32, f32),
     /// The drawing and its undo history.
@@ -735,6 +745,9 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 size_field: None,
                 crop_menu: None,
                 crop_menu_bounds: Default::default(),
+                footer_left: Default::default(),
+                footer_right: Default::default(),
+                crop_fit: Default::default(),
                 disp,
                 vm: EditorVm::new(doc),
                 draft: None,
@@ -2103,11 +2116,7 @@ impl Editor {
                 }))
         };
         // The crop is a mode of its own, beside the background at the left.
-        let groups: Vec<_> = Tool::GROUPS
-            .iter()
-            .filter(|group| !group.contains(&Tool::Crop))
-            .map(|group| h_flex().gap_0p5().children(group.iter().map(|&t| tool_button(t, cx))))
-            .collect();
+        let groups: Vec<&[Tool]> = Tool::GROUPS.iter().copied().filter(|group| !group.contains(&Tool::Crop)).collect();
 
         let ring = cx.theme().colors().text;
         let current = crate::ui::from_rgba(self.current_color());
@@ -2233,9 +2242,6 @@ impl Editor {
                         cx.notify();
                     })),
             );
-        // Bare icons, only the chosen one filled; the
-        // groups apart with a little space.
-        let tools = h_flex().gap(px(6.)).children(groups);
         // Solid or outline, for boxes and ellipses.
         let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
             || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
@@ -2403,9 +2409,80 @@ impl Editor {
                 })
                 .child(Divider::vertical().h_5().mx_1())
         });
-        // A narrow window folds the style controls into a "⋯" menu, like
-        // toolbars in the OS do.
-        let compact = width < COMPACT_TOOLBAR;
+        // What fits, from the widths of the bar's parts (measured, in rems
+        // so they scale with the UI). Short of room, the style controls fold
+        // into a "⋯" menu first, then the tools that don't fit go under a
+        // chevron, last ones first; the window's minimum size keeps a few.
+        let rem = kit::REM;
+        let (button, g05, g1, g2) = (2. * rem, 0.125 * rem, 0.25 * rem, 0.5 * rem);
+        let controls = |right: bool| match crate::platform::window_controls() {
+            crate::platform::WindowControls::Left(w) if !right => w + g1,
+            crate::platform::WindowControls::Right(w) if right => w,
+            crate::platform::WindowControls::Own if right => button,
+            _ => 0.,
+        };
+        // The modes, a spacer and undo/redo (redo's icon has a little more
+        // room), in the bar's inset.
+        let left_w = g1 + controls(false) + 5. * button + 3. * g05 + 3. * g1 + 13.;
+        let hide_w = if width >= WIDE_TOOLBAR { 13. } else { 7.9 };
+        let options: f32 = [(shapes_fill, 5.4), (texts, 9.), (cursor_options.is_some(), 3.6), (hide_options.is_some(), hide_w)].iter().filter(|o| o.0).map(|o| o.1 * rem).sum();
+        let right_w = |compact: bool| (if compact { button } else { 10.8 * rem + options }) + g2 + controls(true) + g1;
+        let flat: Vec<(usize, Tool)> = groups.iter().enumerate().flat_map(|(g, group)| group.iter().map(move |&t| (g, t))).collect();
+        let tools_w = |n: usize| flat.iter().take(n).enumerate().map(|(i, &(g, _))| button + if i == 0 { 0. } else if g != flat[i - 1].0 { 6. } else { g05 }).sum::<f32>();
+        let room = |compact: bool| width - left_w - right_w(compact) - 2. * g2;
+        let compact = room(false) < tools_w(flat.len());
+        let chevron_w = button + 0.75 * rem;
+        // In the middle while the wider side leaves them room, else right
+        // after the left side.
+        let centred = tools_w(flat.len()) <= width - 2. * left_w.max(right_w(compact)) - 2. * g2;
+        let shown = if tools_w(flat.len()) <= room(compact) {
+            flat.len()
+        } else {
+            (0..flat.len()).rev().find(|&n| tools_w(n) + 6. + chevron_w <= room(compact)).unwrap_or(0)
+        };
+        // Bare icons, only the chosen one filled; the groups apart with a
+        // little space.
+        let mut rows: Vec<Vec<Tool>> = Vec::new();
+        for (i, &(g, t)) in flat.iter().take(shown).enumerate() {
+            if i == 0 || g != flat[i - 1].0 {
+                rows.push(Vec::new());
+            }
+            rows.last_mut().expect("a group").push(t);
+        }
+        let hidden: Vec<Tool> = flat.iter().skip(shown).map(|&(_, t)| t).collect();
+        let overflow = (!hidden.is_empty()).then(|| {
+            let open = self.crop_menu == Some(CropMenu::Tools);
+            // The chosen tool shows on the chevron when it's one of those
+            // under it.
+            let current = hidden.contains(&self.tool).then_some(self.tool);
+            let items: Vec<MenuItem> = hidden
+                .iter()
+                .map(|&t| (format!("{} ({})", t.label(), t.key().to_uppercase()), t == self.tool, Rc::new(move |this: &mut Editor, _: &mut Window, cx: &mut Context<Editor>| this.set_tool(t, cx)) as MenuPick))
+                .collect();
+            let icons = hidden.iter().map(|t| Some(t.icon())).collect();
+            let menu = open.then(|| self.menu_list(items, icons, false, true, cx));
+            self.menu_anchor(CropMenu::Tools, cx)
+                .child(
+                    ButtonLike::new("tools-more")
+                        .style(if current.is_some() { ButtonStyle::Accent } else if open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                        .size(ButtonSize::Large)
+                        .toggle_state(open)
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .px_1()
+                                .children(current.map(|t| t.icon().size(IconSize::Tool).color(Color::Custom(gpui::white()))))
+                                .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(if current.is_some() { Color::Custom(gpui::white()) } else { Color::Muted })),
+                        )
+                        .when(!open, |b| b.tip(Tooltip::text(t("editor.more_tools"))))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.crop_menu = if this.crop_menu == Some(CropMenu::Tools) { None } else { Some(CropMenu::Tools) };
+                            cx.notify();
+                        })),
+                )
+                .children(menu)
+        });
+        let tools = h_flex().gap(px(6.)).children(rows.into_iter().map(|row| h_flex().gap_0p5().children(row.into_iter().map(|t| tool_button(t, cx))))).children(overflow);
         let style = if compact {
             let menu = self.more_open.then(|| {
                 gpui::deferred(
@@ -2455,7 +2532,7 @@ impl Editor {
         // The window's controls (or room for them), the modes and history at
         // the left; the tools in the middle; their style at the right.
         let left = h_flex()
-            .flex_1()
+            .when(centred, |d| d.flex_1())
             .min_w_0()
             .h_full()
             .gap_1()
@@ -2534,7 +2611,52 @@ impl Editor {
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(out, false)])))
             });
 
+        // What fits, from the sides' widths as last drawn: the drag-out sits
+        // in the middle while the wider side leaves it room, else right
+        // after the zoom; short of room for everything, the actions fold
+        // into a "⋯" menu.
+        let rem = kit::REM;
+        let (button, g05, g1, g2) = (2. * rem, 0.125 * rem, 0.25 * rem, 0.5 * rem);
+        let drag_w = if width >= COMPACT_TOOLBAR { 6. * rem } else { 2.6 * rem };
+        let (left_w, right_full) = (self.footer_left.get(), self.footer_right.get());
+        let edges = 2. * g2 + 2. * g1;
+        let fold = right_full > 0. && left_w + drag_w + right_full + edges > width;
+        let right_w = if fold { right_full - 3. * (button + g05) } else { right_full };
+        let centred = drag_w <= width - 2. * left_w.max(right_w) - edges;
+
         let action = |id: &'static str, icon: Icon, tip: String| ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).square().child(icon).tip(Tooltip::text(tip));
+        let more = fold.then(|| {
+            let open = self.crop_menu == Some(CropMenu::Actions);
+            let pick = |f: fn(&mut Editor, &mut Window, &mut Context<Editor>)| Rc::new(f) as MenuPick;
+            let items: Vec<MenuItem> = vec![
+                (t("editor.copy_the_text").into(), false, pick(|this, _, cx| this.read_text(cx))),
+                (t("editor.pin").into(), false, pick(|this, _, cx| this.pin(cx))),
+                (t("bundle.save_project_tip").into(), false, pick(|this, _, cx| this.save_project(cx))),
+                (format!("{} (Ctrl+C)", t("common.copy")), false, pick(|this, window, cx| this.export(Export::Copy, window, cx))),
+            ];
+            let icons = vec![
+                Some(Icon::from_path("icons/kadr/scan_text.svg")),
+                Some(Icon::new(IconName::Pin)),
+                Some(Icon::from_path("icons/kadr/project.svg")),
+                Some(Icon::from_path("icons/copy.svg")),
+            ];
+            let menu = open.then(|| self.menu_list(items, icons, true, true, cx));
+            self.menu_anchor(CropMenu::Actions, cx)
+                .child(
+                    ButtonLike::new("actions-more")
+                        .style(if open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                        .size(ButtonSize::Large)
+                        .square()
+                        .toggle_state(open)
+                        .child(Icon::from_path("icons/kadr/more.svg").size(IconSize::Medium))
+                        .when(!open, |b| b.tip(Tooltip::text(t("editor.more_actions"))))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.crop_menu = if this.crop_menu == Some(CropMenu::Actions) { None } else { Some(CropMenu::Actions) };
+                            cx.notify();
+                        })),
+                )
+                .children(menu)
+        });
         let actions = h_flex()
             .gap_0p5()
             .child(action("ocr", Icon::from_path("icons/kadr/scan_text.svg").size(IconSize::Medium), t("editor.copy_text_tip").into()).on_click(cx.listener(|this, _, _, cx| this.read_text(cx))))
@@ -2563,7 +2685,7 @@ impl Editor {
             );
 
         // Zoom (and undoing a crop or a reopened drawing) at the left, the
-        // drag-out in the middle, the results at the right.
+        // drag-out in the middle (or after them), the results at the right.
         h_flex()
             .w(px(width))
             .gap_2()
@@ -2574,9 +2696,10 @@ impl Editor {
             .when(!self.windowed, |d| d.rounded_b(px(kit::WINDOW_RADIUS - 1.)))
             .rounded_smoothing(crate::ui::SMOOTHING)
             .child(
+                h_flex().when(centred, |d| d.flex_1()).min_w_0().child(
                 h_flex()
-                    .flex_1()
-                    .min_w_0()
+                    .flex_none()
+                    .relative()
                     .gap_1()
                     .child(self.zoom_menu(cx))
                     .when(self.vm.doc.crop.is_some(), |row| {
@@ -2601,21 +2724,43 @@ impl Editor {
                                     cx.notify();
                                 })),
                         )
-                    }),
+                    })
+                    .child(crate::ui::track_width(&self.footer_left)),
+                ),
             )
             .child(drag_out.flex_none())
-            .child(h_flex().flex_1().min_w_0().justify_end().gap_2().child(actions).child(save))
+            .child(
+                h_flex().flex_1().min_w_0().justify_end().child(
+                    h_flex()
+                        .flex_none()
+                        .relative()
+                        .gap_2()
+                        .when(!fold, |d| d.child(actions).child(crate::ui::track_width(&self.footer_right)))
+                        .children(more)
+                        .child(save),
+                ),
+            )
             .into_any_element()
     }
 
     /// A dropdown's open list: the choices, under its button (or over it,
     /// in the footer), from its left edge or its right one.
     fn menu_popup(&self, items: Vec<MenuItem>, up: bool, right: bool, cx: &mut Context<Self>) -> AnyElement {
+        self.menu_list(items, Vec::new(), up, right, cx)
+    }
+
+    /// `menu_popup` with an icon before each choice that has one; the
+    /// current one is marked at the right.
+    fn menu_list(&self, items: Vec<MenuItem>, icons: Vec<Option<Icon>>, up: bool, right: bool, cx: &mut Context<Self>) -> AnyElement {
         let hover = cx.theme().colors().element_hover;
+        let mut icons = icons.into_iter();
         let rows: Vec<_> = items
             .into_iter()
             .enumerate()
             .map(|(i, (text, on, pick))| {
+                let icon = icons.next().flatten();
+                let with_icon = icon.is_some();
+                let check = || Icon::new(IconName::Check).size(IconSize::XSmall);
                 h_flex()
                     .id(SharedString::from(format!("menu-row-{i}")))
                     .w_full()
@@ -2625,8 +2770,11 @@ impl Editor {
                     .rounded(px(6.))
                     .cursor_pointer()
                     .hover(move |d| d.bg(hover))
-                    .child(div().w(px(14.)).children(on.then(|| Icon::new(IconName::Check).size(IconSize::XSmall))))
+                    .when(!with_icon, |row| row.child(div().w(px(14.)).children(on.then(check))))
+                    .when(with_icon, |row| row.pr_1())
+                    .children(icon.map(|icon| icon.size(IconSize::Small)))
                     .child(Label::new(text).size(LabelSize::Small))
+                    .when(with_icon, |row| row.child(div().flex_1()).child(div().w(px(14.)).children(on.then(check))))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.crop_menu = None;
                         pick(this, window, cx);
@@ -2845,7 +2993,11 @@ impl Editor {
         // The result's size; smaller ones from the menu.
         let (el, et, er, eb) = self.extent();
         let (ow, oh) = (er - el, eb - et);
-        let sized = |k: f32| format!("{}×{} px", (ow * k).round().max(1.), (oh * k).round().max(1.));
+        // Its layouts, from the fullest: everything; no label and no key
+        // hints; no size fields; no spacers and no "px".
+        let fit = self.crop_fit.pick(width - 2. * kit::REM * 0.25 - kit::REM * 0.5, 4);
+        let (narrow, tight, tiny) = (fit >= 1, fit >= 2, fit >= 3);
+        let sized = |k: f32| format!("{}×{}{}", (ow * k).round().max(1.), (oh * k).round().max(1.), if tiny { "" } else { " px" });
         let scales: Vec<MenuItem> = SCALES
             .iter()
             .map(|&k| (format!("{}% · {}", (k * 100.).round(), sized(k)), (self.vm.doc.scale - k).abs() < 1e-3, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| this.pick_scale(k)) as MenuPick))
@@ -2856,25 +3008,26 @@ impl Editor {
         // swatches like the pen colour's, see-through first.
         let fill = self.fill_picker(cx);
 
-        let narrow = width < COMPACT_TOOLBAR;
-        let tight = width < 780.;
+        let spacer = || (!tiny).then(|| div().w(px(12.)));
         let left = h_flex()
-            .flex_1()
-            .min_w_0()
+            .flex_none()
+            .relative()
             .gap_1()
             .children(kit::window_controls(false, cx))
             .child(leave)
             .child(aspect)
             .when(!tight, |row| row.child(field("crop-width", false, cw, cx)).child(swap).child(field("crop-height", true, ch, cx)))
-            .child(div().w(px(12.)))
+            .children(spacer())
             .child(rotate)
             .child(flip)
-            .child(div().w(px(12.)))
+            .children(spacer())
             .when(!narrow, |row| row.child(Label::new(t("editor.image_size")).size(LabelSize::Small).color(Color::Muted)))
             .child(scale)
-            .child(fill);
+            .child(fill)
+            .child(self.crop_fit.track(fit, 0));
         let right = h_flex()
             .flex_none()
+            .relative()
             .gap_1()
             .child(
                 Button::new("crop-cancel", t("common.cancel"))
@@ -2896,7 +3049,8 @@ impl Editor {
                         cx.notify();
                     })),
             )
-            .children(kit::window_controls(true, cx));
+            .children(kit::window_controls(true, cx))
+            .child(self.crop_fit.track(fit, 1));
         self.top_bar(width, cx).justify_between().child(left).child(right).into_any_element()
     }
 
