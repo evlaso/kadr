@@ -101,6 +101,31 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
             _ => {}
         }
     }
+    // On macOS and Windows, the overlay's own window in the kadr-overlay
+    // program beside kadr (winit wants the main thread, which GPUI has).
+    #[cfg(not(target_os = "linux"))]
+    if std::env::var("KADR_PICKER").as_deref() != Ok("gpui")
+        && let Some(exe) = overlay_exe()
+    {
+        let accent = cx.update(|cx| crate::ui::to_rgba(cx.theme().colors().text_accent));
+        let screen = kadr_overlay::Screen { output: mon.name.clone(), logical: (mon.w as u32, mon.h as u32), scale: mon.scale, frozen: frozen.clone(), windows: windows.clone(), previous, origin: (mon.x as f64, mon.y as f64) };
+        let options = kadr_overlay::Options { snap, color, accent, free: t("picker.free").to_owned(), t: |k| crate::i18n::t(k).to_owned(), pointer: None };
+        let lang = crate::settings::Settings::load().language.code().to_owned();
+        let dir = util::runtime_dir().join("kadr-overlay");
+        let (tx, rx) = oneshot::channel();
+        std::thread::spawn(move || {
+            let run = || {
+                let spec = kadr_overlay::spec::write(&dir, &screen, &options, &lang).ok()?;
+                let out = std::process::Command::new(&exe).arg(&spec).output().ok()?;
+                kadr_overlay::spec::parse_outcome(&String::from_utf8_lossy(&out.stdout))
+            };
+            let _ = tx.send(run());
+        });
+        // Nothing readable back: it couldn't show itself; GPUI's picker below.
+        if let Ok(Some(outcome)) = rx.await {
+            return picked(outcome, mon, frozen);
+        }
+    }
     let (tx, rx) = oneshot::channel();
     let shown = frozen.clone();
     let spec = LayerSpec {
@@ -134,9 +159,15 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     to_picked(rect, window, mon, frozen)
 }
 
+/// The kadr-overlay program beside kadr's own.
+#[cfg(not(target_os = "linux"))]
+fn overlay_exe() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?.with_file_name(if cfg!(windows) { "kadr-overlay.exe" } else { "kadr-overlay" });
+    exe.exists().then_some(exe)
+}
+
 /// What the overlay ended in, as what the app takes: an area, or the
 /// colour under a plain click copied (and nothing to take).
-#[cfg(target_os = "linux")]
 fn picked(outcome: Option<kadr_overlay::Outcome>, mon: Mon, frozen: Arc<image::RgbaImage>) -> Option<Picked> {
     match outcome? {
         kadr_overlay::Outcome::Done(picked) => {

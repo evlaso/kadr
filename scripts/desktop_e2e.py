@@ -177,7 +177,8 @@ def gpui(t, work):
     """kadr's editor: the window and the tool's button from the dev hooks,
     which give real screen positions on macOS and Windows."""
     # KADR_DEV also puts GPUI's log (the GPU it took) on stderr.
-    proc = t.start(BIN / f"kadr{EXE}", "edit", work, env=dict(os.environ, KADR_DEV="1"))
+    # Screenshots land in the test's folder (the overlay step below).
+    proc = t.start(BIN / f"kadr{EXE}", "edit", work, env=dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(t.out / "shots")))
     win = wait_for(lambda: proc.poll() is None and next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None))
     if not t.note("the editor opens", win):
         return proc
@@ -269,6 +270,31 @@ def typing(t, screen, tool, ww, wh):
     key("escape")
 
 
+def overlay(t):
+    """The area picker, kadr-overlay's own window on macOS and Windows:
+    shown by `kadr shot region`, a box dragged with the real pointer, the
+    screenshot saved at that size."""
+    shots = t.out / "shots"
+    shots.mkdir(exist_ok=True)
+    t0 = time.monotonic()
+    subprocess.Popen([str(BIN / f"kadr{EXE}"), "shot", "region"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    found = wait_for(lambda: next((w for w in json.loads(run(SHOT, "windows").stdout) if w["title"] == "kadr-picker"), None), timeout=10)
+    if not t.note("the overlay shows", found, ms=round((time.monotonic() - t0) * 1000), window=found and [found["x"], found["y"], found["w"], found["h"]]):
+        return
+    time.sleep(0.5)
+    t.shot("overlay")
+    sx, sy, sw, sh = screen()
+    cx, cy = sx + sw / 2, sy + sh / 2
+    run(POINTER, "drag", cx - 200, cy - 120, cx + 200, cy + 120)
+    saved = wait_for(lambda: next(iter(sorted(shots.glob("*.png"))), None), timeout=10)
+    size = None
+    if saved:
+        # The PNG's own size, from its header.
+        head = saved.read_bytes()[16:24]
+        size = [int.from_bytes(head[:4], "big"), int.from_bytes(head[4:], "big")]
+    t.note("the area is saved", saved and size and size[0] >= 390 and size[1] >= 230, size=size)
+
+
 def type_text(s):
     if LINUX:
         run("wtype", s)
@@ -341,6 +367,8 @@ def main():
         key("ctrl+s")
         t.note("Ctrl+S saves a changed file", wait_for(lambda: work.read_bytes() != before, timeout=10))
         t.shot("saved")
+        if shell == "gpui" and not LINUX:
+            overlay(t)
     if proc is not None and proc.poll() is None:
         proc.kill()
     outcome = t.finish()

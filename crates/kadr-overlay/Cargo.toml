@@ -6,11 +6,16 @@ license.workspace = true
 description = "Picking an area of the screen: the model now, its own windows (layer-shell, winit) next"
 publish = false
 
+[[bin]]
+name = "kadr-overlay"
+path = "src/main.rs"
+
 [dependencies]
 kadr-core = { path = "../kadr-core" }
 kadr-raster = { path = "../kadr-raster" }
 image.workspace = true
 tiny-skia.workspace = true
+serde_json.workspace = true
 
 # The overlay's own window on Wayland: a layer-shell surface drawn on the CPU.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -18,3 +23,13 @@ smithay-client-toolkit = "0.21.1"
 wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 libc = "0.2"
+
+# macOS and Windows: a borderless window above everything, drawn through
+# softbuffer, in the kadr-overlay program.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+winit = "0.30.12"
+softbuffer = "0.4.8"
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", features = ["NSView", "NSWindow", "NSResponder"] }

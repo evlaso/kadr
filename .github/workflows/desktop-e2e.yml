@@ -25,7 +25,7 @@ jobs:
 
       - name: Build kadr and the test tools
         run: |
-          cargo build --release --locked -p kadr -p kadr-testkit
+          cargo build --release --locked -p kadr -p kadr-testkit -p kadr-overlay
           # The spike with wgpu, tiny-skia as its fallback, saying which drew.
           if [ -d crates/kadr-ui-iced ]; then cargo build --release --locked -p kadr-ui-iced --features info; fi
 

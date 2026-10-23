@@ -1,13 +1,17 @@
 //! The area-selection overlay (SPEC §3.8): the selection and what the
 //! pointer and keys do to it (`model`), its drawing on the CPU (`draw`),
 //! and its own window, without a GPU or a UI framework: a layer-shell
-//! surface on Wayland (`wayland`). macOS and Windows still pick with the
-//! app's GPUI picker, over the same model.
+//! surface on Wayland (`wayland`, on a thread of the app), a borderless
+//! window above everything through winit on macOS and Windows (`desktop`,
+//! in the `kadr-overlay` program; `spec` is what passes between them).
 
 use std::sync::Arc;
 
+#[cfg(not(target_os = "linux"))]
+mod desktop;
 pub mod draw;
 pub mod model;
+pub mod spec;
 #[cfg(target_os = "linux")]
 mod wayland;
 
@@ -47,16 +51,19 @@ pub struct Options {
     pub pointer: Option<(fn() -> Option<(f64, f64)>, fn(f64, f64))>,
 }
 
-/// Shows the overlay and runs it to its end, on the calling thread: what it
-/// ended in (None: cancelled), or Err(()) where it can't show itself (not
-/// Wayland, no layer shell), for the app to pick its own way.
+/// Shows the overlay and runs it to its end, on the calling thread (on
+/// macOS the main one): what it ended in (None: cancelled), or Err(())
+/// where it can't show itself (not Wayland, no layer shell), for the app to
+/// pick its own way.
 pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
     #[cfg(target_os = "linux")]
     {
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             return wayland::pick(screen, options);
         }
+        let _ = (screen, options);
+        Err(())
     }
-    let _ = (screen, options);
-    Err(())
+    #[cfg(not(target_os = "linux"))]
+    desktop::pick(screen, options)
 }
