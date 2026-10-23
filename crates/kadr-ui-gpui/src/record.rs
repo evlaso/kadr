@@ -1,11 +1,9 @@
-//! Screen recording: a gpu-screen-recorder session with optional webcam
-//! overlay and audio, an on-screen control pill, and Omarchy's
-//! post-processing before the result lands in a quick-access card.
+//! Screen recording: the system's recorder (`kadr_platform::record`) with
+//! optional webcam overlay and audio, an on-screen control pill, and
+//! Omarchy's post-processing before the result lands in a quick-access card.
 
 use std::cell::Cell;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -30,18 +28,9 @@ use crate::i18n::t;
 const BAR_GAP: f32 = 14.;
 const BAR_HEIGHT: f32 = 56. * kit::SCALE;
 
-/// Microphones as gpu-screen-recorder names them: (source name, description).
+/// The microphones there are: (id, what to show).
 pub fn microphones() -> Vec<(String, String)> {
-    let out = std::process::Command::new("gpu-screen-recorder")
-        .arg("--list-audio-devices")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
-    out.lines()
-        .filter_map(|l| l.split_once('|'))
-        .filter(|(name, _)| !name.starts_with("default_") && !name.ends_with(".monitor"))
-        .map(|(n, d)| (n.to_owned(), d.to_owned()))
-        .collect()
+    crate::platform::record::microphones()
 }
 
 fn log_file() -> PathBuf {
@@ -98,10 +87,6 @@ impl Opts {
         let v = serde_json::json!({ "mic": self.mic, "mic_device": self.mic_device, "audio": self.audio, "webcam": self.webcam, "keys": self.keys, "studio": self.studio, "countdown": self.countdown });
         let _ = std::fs::write(path, v.to_string());
     }
-
-    fn mic_source(&self) -> &str {
-        if self.mic_device.is_empty() { "default_input" } else { &self.mic_device }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -132,7 +117,7 @@ impl Target {
     }
 
     /// The region shrunk onto whole screen pixels, so the video shows it edge
-    /// to edge. gpu-screen-recorder starts a region at floor(x * scale) and
+    /// to edge. A recorder starts a region at floor(x * scale) and
     /// rounds its size up to even pixels, padding with black or taking in the
     /// next pixel, so on a fractional scale the edges have to land exactly.
     fn fitted(self, mons: &[Mon]) -> Target {
@@ -143,18 +128,6 @@ impl Target {
         Target::Region { x: mon.x + fx, y: mon.y + fy, w: fw, h: fh }
     }
 
-    /// gpu-screen-recorder takes regions in logical coordinates and scales them itself.
-    fn gsr_args(&self, mons: &[Mon]) -> Vec<String> {
-        match self {
-            Target::Monitor(name) => {
-                // Cap anything above 4K, like Omarchy does.
-                let (pw, ph) = mons.iter().find(|m| &m.name == name).map(|m| m.phys).unwrap_or((0, 0));
-                let size = if pw > 3840 || ph > 2160 { "3840x2160" } else { "0x0" };
-                vec!["-w".into(), name.clone(), "-s".into(), size.into()]
-            }
-            Target::Region { x, y, w, h } => vec!["-w".into(), format!("{w}x{h}+{x}+{y}")],
-        }
-    }
 }
 
 /// A logical span (start, length) on a monitor with this scale, moved and
@@ -187,7 +160,9 @@ enum State {
 }
 
 struct Session {
-    gsr: u32,
+    /// Which recording this is, to tell its end from a later one's.
+    id: u64,
+    recording: crate::platform::record::Recording,
     file: PathBuf,
     webcam: Option<u32>,
     target: Target,
@@ -247,7 +222,10 @@ struct Started {
     keys: bool,
     studio: bool,
     cursor_off: Option<crate::platform::CursorOffCapture>,
-    gsr: async_process::Child,
+    id: u64,
+    recording: crate::platform::record::Recording,
+    /// Fires when the recording is over.
+    ended: futures::channel::oneshot::Receiver<()>,
     file: PathBuf,
     webcam: Option<u32>,
     target: Target,
@@ -409,11 +387,10 @@ impl Recorder {
     }
 
     fn on_started(&mut self, started: Started, hold: Hold, cx: &mut Context<Self>) {
-        let Started { keys, studio, cursor_off, mut gsr, file, webcam, target, opts } = started;
-        let pid = gsr.id();
+        let Started { keys, studio, cursor_off, id, recording, ended, file, webcam, target, opts } = started;
         cx.spawn(async move |this, cx| {
-            let _ = gsr.status().await;
-            let _ = this.update(cx, |rec, cx| rec.on_gsr_exit(pid, cx));
+            let _ = ended.await;
+            let _ = this.update(cx, |rec, cx| rec.on_end(id, cx));
         })
         .detach();
 
@@ -427,7 +404,8 @@ impl Recorder {
         windows.extend(self.open_indicator(&target, clock.clone(), cx));
         let tracker = Tracker::start(cx, keys, studio, |rec: &Recorder| rec.clock());
         self.state = State::Recording(Session {
-            gsr: pid,
+            id,
+            recording,
             file,
             webcam,
             target,
@@ -460,31 +438,23 @@ impl Recorder {
         }
         s.discard = discard;
         // A window that is mid-update (the pill's own button) can't be closed
-        // from here; it closed itself, and on_gsr_exit retries the rest.
+        // from here; it closed itself, and on_end retries the rest.
         for w in &s.windows {
             let _ = w.update(cx, |_, window, _| window.remove_window());
         }
-        // SIGINT lets gpu-screen-recorder finalize the file.
-        let pid = s.gsr;
-        util::signal(pid, util::Signal::Interrupt);
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(5)).await;
-            let still = this.update(cx, |rec, _| matches!(&rec.state, State::Recording(s) if s.gsr == pid)).unwrap_or(false);
-            if still {
-                util::signal(pid, util::Signal::Kill);
-            }
-        })
-        .detach();
+        // The recorder writes out its file; on_end follows.
+        s.recording.stop();
     }
 
     fn toggle_pause(&mut self) -> Option<bool> {
         let State::Recording(s) = &mut self.state else { return None };
-        util::signal(s.gsr, util::Signal::Pause);
-        Some(s.clock.toggle())
+        let paused = s.clock.toggle();
+        s.recording.set_paused(paused);
+        Some(paused)
     }
 
-    fn on_gsr_exit(&mut self, pid: u32, cx: &mut Context<Self>) {
-        if !matches!(&self.state, State::Recording(s) if s.gsr == pid) {
+    fn on_end(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !matches!(&self.state, State::Recording(s) if s.id == id) {
             return;
         }
         let State::Recording(mut s) = std::mem::replace(&mut self.state, State::Busy) else { unreachable!() };
@@ -606,77 +576,53 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
         }
     };
 
-    let mut args: Vec<OsString> = target.gsr_args(&mons).into_iter().map(OsString::from).collect();
     // Source: as often as the screen refreshes.
-    let rate = match settings.fps {
+    let fps = match settings.fps {
         0 => target.monitor(&mons).map_or(60, |m| m.hz.round().max(1.) as u32),
         n => n,
     };
-    let fps = rate.to_string();
-    // NVENC's H.264 drops to a frame or two a second at 4K 240, while HEVC
-    // keeps up.
-    let codec = if rate > 144 { "hevc" } else { "auto" };
-    let quality = crate::settings::QUALITIES[settings.quality].0;
+    let monitor = target.monitor(&mons).cloned().ok_or_else(|| Some(t("record.no_active_monitor_found").to_string()))?;
+    let area = match target {
+        Target::Region { x, y, w, h } => Some((x, y, w, h)),
+        Target::Monitor(_) => None,
+    };
     // Studio recordings leave the cursor out; the studio draws its own.
     let cursor_off = opts.studio.then(crate::platform::CursorOffCapture::start).flatten();
-    if opts.studio {
-        args.extend(["-cursor".into(), "no".into()]);
-    }
-    for a in ["-k", codec, "-f", &fps, "-q", quality, "-fm", "cfr", "-fallback-cpu-encoding", "yes", "-o"] {
-        args.push(a.into());
-    }
-    args.push(file.clone().into());
-    // Separate tracks (system first) so finalize() can center the mic
-    // before mixing them into one: players usually play only the first.
-    let audio: Vec<&str> = [(opts.audio, "default_output"), (opts.mic, opts.mic_source())]
-        .into_iter()
-        .filter_map(|(on, dev)| on.then_some(dev))
-        .collect();
-    for dev in &audio {
-        args.extend(["-a".into(), (*dev).into()]);
-    }
-    if !audio.is_empty() {
-        args.extend(["-ac".into(), "aac".into()]);
-    }
-
     let _ = std::fs::create_dir_all(util::cache_dir());
-    let stop_cam = || {
-        if let Some(cam) = webcam {
-            util::signal(cam, util::Signal::Terminate);
-        }
+    let spec = crate::platform::record::Spec {
+        monitor,
+        area,
+        fps,
+        quality: settings.quality,
+        cursor: !opts.studio,
+        system_audio: opts.audio,
+        mic: opts.mic.then(|| opts.mic_device.clone()),
+        out: file.clone(),
+        log: log_file(),
     };
-    let stderr = std::fs::File::create(log_file()).map_err(|e| Some(e.to_string()))?;
-    let mut gsr = match async_process::Command::new("gpu-screen-recorder")
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(stderr)
-        .spawn()
-    {
-        Ok(child) => child,
+    let (tx, ended) = futures::channel::oneshot::channel();
+    // Starting waits for the first frames: off the UI thread.
+    let start = async move {
+        crate::platform::record::Recording::start(&spec, move || {
+            let _ = tx.send(());
+        })
+    };
+    let recording = cx.background_executor().spawn(start).await;
+    let recording = match recording {
+        Ok(r) => r,
         Err(e) => {
-            stop_cam();
-            return Err(Some(e.to_string()));
+            if let Some(cam) = webcam {
+                util::signal(cam, util::Signal::Terminate);
+            }
+            return Err(Some(if e.is_empty() { t("record.gpu_screen_recorder_exited_without").into() } else { e }));
         }
     };
-
-    // The output file appears once capture has actually started.
-    for _ in 0..100 {
-        if file.exists() || !matches!(gsr.try_status(), Ok(None)) {
-            break;
-        }
-        cx.background_executor().timer(Duration::from_millis(100)).await;
-    }
-    if !file.exists() || !matches!(gsr.try_status(), Ok(None)) {
-        let _ = gsr.kill();
-        stop_cam();
-        let _ = std::fs::remove_file(&file);
-        return Err(Some(log_tail()));
-    }
     if let Some(began) = camera_began {
         crate::studio::save_camera(&file, began.elapsed().as_secs_f64(), webcam::Look::load());
     }
-    Ok(Started { keys: opts.keys, studio: opts.studio, cursor_off, gsr, file, webcam, target, opts: opts.clone() })
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(Started { keys: opts.keys, studio: opts.studio, cursor_off, id, recording, ended, file, webcam, target, opts: opts.clone() })
 }
 
 /// The camera bubble over the recorded area.
@@ -960,10 +906,7 @@ fn refresh_omarchy_indicator() {
 }
 
 fn log_tail() -> String {
-    let log = std::fs::read_to_string(log_file()).unwrap_or_default();
-    let lines: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
-    let tail = lines[lines.len().saturating_sub(3)..].join("\n");
-    if tail.is_empty() { t("record.gpu_screen_recorder_exited_without").into() } else { tail }
+    crate::platform::record::log_tail(&log_file()).unwrap_or_else(|| t("record.gpu_screen_recorder_exited_without").into())
 }
 
 /// A countdown over the area before recording starts.
