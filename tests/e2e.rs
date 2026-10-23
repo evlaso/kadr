@@ -248,6 +248,38 @@ fn the_editor_saves_what_the_rasteriser_draws() {
     assert!(share > 0.999, "the saved file isn't the rasteriser's: {:.2}% alike", share * 100.);
 }
 
+/// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word
+/// out with Ctrl+Backspace, Shift+Left selecting and typing over it, all
+/// through the input handler the input method uses too.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_editor_types_with_the_systems_keys() {
+    let s = Session::start();
+    let path = fixture(&s, "shot.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    let (x, y) = s.middle("tool-t");
+    s.pointer(&["click", &x, &y]);
+    // On the picture, left of the middle (Hyprland knows where the window is).
+    let out = s.cmd("hyprctl").args(["-j", "activewindow"]).output().expect("hyprctl");
+    let w: Value = serde_json::from_slice(&out.stdout).expect("activewindow");
+    let at = |i: usize, d: f64| (w["at"][i].as_f64().unwrap() + w["size"][i].as_f64().unwrap() / 2. + d).round().to_string();
+    s.pointer(&["click", &at(0, -150.), &at(1, 60.)]);
+    let typed = || s.try_dev(&["state"]).and_then(|v| v["view"]["typing"]["text"].as_str().map(str::to_owned));
+    let expect = |want: &str| wait(Duration::from_secs(3), || typed().filter(|t| t == want)).unwrap_or_else(|| panic!("typed {:?}, not {want:?}", typed()));
+    let wtype = |args: &[&str]| assert!(s.cmd("wtype").args(args).status().expect("wtype").success());
+    wtype(&["Hello world"]);
+    expect("Hello world");
+    wtype(&["-M", "ctrl", "-k", "BackSpace", "-m", "ctrl"]);
+    expect("Hello ");
+    wtype(&["мир ✓"]);
+    expect("Hello мир ✓");
+    wtype(&["-M", "shift", "-k", "Left", "-k", "Left", "-m", "shift"]);
+    wtype(&["!"]);
+    expect("Hello мир!");
+}
+
 /// Scenario 2 again, with a real pointer: the tool's button clicked where
 /// it's drawn, the box dragged out on the picture.
 #[test]

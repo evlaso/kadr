@@ -59,7 +59,10 @@ GPU_ERRORS = [
 def key(combo):
     if LINUX:
         mods = combo.split("+")[:-1]
-        args = sum((["-M", m] for m in mods), []) + [combo.split("+")[-1]] + sum((["-m", m] for m in mods), [])
+        last = combo.split("+")[-1]
+        names = {"backspace": "BackSpace", "left": "Left", "right": "Right", "escape": "Escape", "enter": "Return", "delete": "Delete"}
+        press = ["-k", names[last]] if last in names else [last]
+        args = sum((["-M", m] for m in mods), []) + press + sum((["-m", m] for m in mods), [])
         run("wtype", *args)
     else:
         run(POINTER, "key", combo)
@@ -210,7 +213,44 @@ def gpui(t, work):
     shapes = wait_for(lambda: (dev("state") or {}).get("view", {}).get("shapes"), timeout=5)
     t.note("a box is drawn", shapes and shapes[0]["kind"] == "rect", shapes=len(shapes or []))
     t.shot("drawn")
+    typing(t, screen, b, ww, wh)
     return proc
+
+
+def typing(t, screen, tool, ww, wh):
+    """The text tool with the system's text keys: Unicode typed in, a word
+    deleted with Option+Backspace (macOS) or Ctrl+Backspace, a selection
+    made with Shift+Left and typed over."""
+    mac = platform.system() == "Darwin"
+    text_tool = dev("find", "tool-t")
+    if not t.note("the text tool is found", text_tool):
+        return
+    tb = text_tool["bounds"]
+    run(POINTER, "click", *screen(tb[0] + tb[2] / 2, tb[1] + tb[3] / 2))
+    run(POINTER, "click", *screen(ww / 2 - 150, wh / 2 + 90))
+    started = wait_for(lambda: (dev("state") or {}).get("view", {}).get("typing") is not None, timeout=5)
+    if not t.note("a text is started", started):
+        return
+    typed = lambda: ((dev("state") or {}).get("view", {}).get("typing") or {}).get("text")
+    type_text("Hello world")
+    t.note("text types", wait_for(lambda: typed() == "Hello world", timeout=5), text=typed())
+    key("alt+backspace" if mac else "ctrl+backspace")
+    t.note("a word goes with the system's key", wait_for(lambda: typed() == "Hello ", timeout=5), text=typed())
+    type_text("мир ✓")
+    t.note("Cyrillic and a symbol type", wait_for(lambda: typed() == "Hello мир ✓", timeout=5), text=typed())
+    key("shift+left")
+    key("shift+left")
+    type_text("!")
+    t.note("typing replaces the selection", wait_for(lambda: typed() == "Hello мир!", timeout=5), text=typed())
+    t.shot("typed")
+    key("escape")
+
+
+def type_text(s):
+    if LINUX:
+        run("wtype", s)
+    else:
+        run(POINTER, "type", s)
 
 
 def iced(t, work):

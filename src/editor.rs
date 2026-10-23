@@ -532,6 +532,12 @@ pub struct Editor {
     marked: Vec<usize>,
     /// Index of the text shape being typed.
     editing: Option<usize>,
+    /// The text being typed into it: caret, selection, the input method's
+    /// marked text. Its text is the shape's.
+    field: kadr_ui::text::Field,
+    /// Where the caret was drawn, in the stage's pixels: the input method
+    /// puts its candidates there.
+    caret_at: Cell<Option<Bounds<gpui::Pixels>>>,
     tool: Tool,
     colors: Vec<Hsla>,
     color: usize,
@@ -755,6 +761,8 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 selected: None,
                 marked: Vec::new(),
                 editing: None,
+                field: Default::default(),
+                caret_at: Default::default(),
                 tool: Tool::Arrow,
                 colors: palette::annotation_colors(),
                 color: 0,
@@ -1329,6 +1337,9 @@ impl Editor {
             self.checkpoint();
             self.selected = Some(i);
             self.editing = Some(i);
+            if let Kind::Text(t) = &self.vm.doc.shapes[i].kind {
+                self.field = kadr_ui::text::Field::new(t);
+            }
             return cx.notify();
         }
         self.finish_text();
@@ -1383,6 +1394,7 @@ impl Editor {
                 self.vm.doc.shapes.push(Shape { kind: Kind::Text(String::new()), a: p, b: p, color, size: sized(FONT_SIZES, self.weight) / s, filled: false, text: self.text_style, bend: None });
                 self.editing = Some(self.vm.doc.shapes.len() - 1);
                 self.selected = self.editing;
+                self.field = kadr_ui::text::Field::default();
                 return cx.notify();
             }
             Tool::Cursor => {
@@ -1596,23 +1608,38 @@ impl Editor {
             return cx.notify();
         }
 
-        if let Some(i) = self.editing {
-            match k.key.as_str() {
-                "escape" => self.finish_text(),
-                "enter" if !shift => self.finish_text(),
-                "enter" => push_text(&mut self.vm.doc.shapes[i], "\n"),
-                "backspace" => {
-                    if let Kind::Text(t) = &mut self.vm.doc.shapes[i].kind {
-                        t.pop();
-                    }
+        if self.editing.is_some() {
+            // The system's text keys; what types goes on to the input
+            // handler (and the input method) below.
+            use kadr_platform::keymap::Command as C;
+            use kadr_ui::text::Move;
+            let f = &mut self.field;
+            let is = |c| crate::ui::is_command(k, c);
+            let moves = [(C::WordLeft, Move::WordLeft), (C::WordRight, Move::WordRight), (C::LineStart, Move::LineStart), (C::LineEnd, Move::LineEnd)];
+            if let Some(&(_, to)) = moves.iter().find(|(c, _)| is(*c)) {
+                f.go(to, shift);
+            } else if is(C::DeleteWordBack) {
+                f.delete_word_back();
+            } else if is(C::SelectAll) {
+                f.select_all();
+            } else if is(C::Paste) {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    f.insert(&text);
                 }
-                _ if !ctrl => {
-                    if let Some(ch) = &k.key_char {
-                        push_text(&mut self.vm.doc.shapes[i], ch);
-                    }
+            } else {
+                match k.key.as_str() {
+                    "escape" => self.finish_text(),
+                    "enter" if !shift => self.finish_text(),
+                    "enter" => f.insert("\n"),
+                    "backspace" => f.backspace(),
+                    "delete" => f.delete(),
+                    "left" => f.go(Move::Left, shift),
+                    "right" => f.go(Move::Right, shift),
+                    _ => return,
                 }
-                _ => {}
             }
+            self.sync_field();
+            cx.stop_propagation();
             return cx.notify();
         }
 
@@ -3596,9 +3623,14 @@ impl Editor {
         let finished = placed.map(|(image, at, size)| img(gpui::ImageSource::Render(image)).absolute().left(px(at.0)).top(px(at.1)).w(px(size.0)).h(px(size.1)).object_fit(ObjectFit::Fill));
         let lifted = lifted.map(|(_, image, at, size)| img(gpui::ImageSource::Render(image)).absolute().left(px(at.0)).top(px(at.1)).w(px(size.0)).h(px(size.1)).object_fit(ObjectFit::Fill));
         let strokes = self.strokes.clone();
+        // While a text is typed, the input method writes into it.
+        let input = self.editing.is_some().then(|| (self.focus.clone(), cx.entity()));
         let over = canvas(
             |bounds, _, _| bounds,
-            move |_, bounds, window, _| {
+            move |_, bounds, window, cx| {
+                if let Some((focus, entity)) = &input {
+                    window.handle_input(focus, gpui::ElementInputHandler::new(bounds, entity.clone()), cx);
+                }
                 for old in strokes.borrow_mut().retired.drain(..) {
                     let _ = window.drop_image(old);
                 }
@@ -3619,12 +3651,50 @@ impl Editor {
                 let (x, y) = at(shape.a);
                 let m = metrics(shape.size);
                 let editing = self.editing == Some(i);
-                let lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
-                let count = lines.len();
+                // While typed: the caret as a bar that takes no room, the
+                // selection on a tint, the input method's text underlined.
+                let (caret, selection, marked) = if editing { (Some(self.field.caret()), self.field.selection(), self.field.marked()) } else { (None, 0..0, None) };
+                let mut tint = cx.theme().colors().text_accent;
+                tint.alpha = 0.3;
+                let lines: Vec<(usize, String)> = text.split('\n').scan(0, |start, line| {
+                    let at = *start;
+                    *start += line.len() + 1;
+                    Some((at, line.to_owned()))
+                }).collect();
+                let line_h = m.line * s;
+                if let Some(c) = caret
+                    && let Some(li) = lines.iter().rposition(|(start, _)| *start <= c)
+                {
+                    // Near enough for the input method's candidates: the
+                    // caret's line, at the text's left.
+                    self.caret_at.set(Some(Bounds { origin: point(x, y + px(li as f32 * line_h)), size: gpui::size(px(1.), px(line_h)) }));
+                }
                 let block = |color: Hsla| {
-                    div().text_color(color).children(lines.iter().enumerate().map(|(li, line)| {
-                        let caret = editing && li + 1 == count;
-                        div().h(px(m.line * s)).line_height(px(m.line * s)).child(if caret { format!("{line}▏") } else { line.clone() })
+                    div().text_color(color).children(lines.iter().map(|(start, line)| {
+                        let row = div().h(px(line_h)).line_height(px(line_h)).flex().flex_row();
+                        if caret.is_none() {
+                            return row.child(line.clone());
+                        }
+                        // Cut where the caret, the selection and the marked text start and end.
+                        let end = start + line.len();
+                        let mut cuts: Vec<usize> = [selection.start, selection.end].into_iter().chain(marked.iter().flat_map(|r| [r.start, r.end])).chain(caret).filter(|&c| c > *start && c < end).collect();
+                        cuts.extend([*start, end]);
+                        cuts.sort_unstable();
+                        cuts.dedup();
+                        let mut row = row;
+                        for w in cuts.windows(2) {
+                            if caret == Some(w[0]) {
+                                row = row.child(caret_bar(line_h, color));
+                            }
+                            let piece = &text[w[0]..w[1]];
+                            let selected = w[0] >= selection.start && w[1] <= selection.end && selection.start < selection.end;
+                            let composing = marked.as_ref().is_some_and(|r| w[0] >= r.start && w[1] <= r.end);
+                            row = row.child(div().when(selected, |d| d.bg(tint)).when(composing, |d| d.underline()).child(piece.to_owned()));
+                        }
+                        if caret == Some(end) {
+                            row = row.child(caret_bar(line_h, color));
+                        }
+                        row
                     }))
                 };
                 // The export draws text with the bundled font; the canvas must match it.
@@ -4271,9 +4341,86 @@ fn checkerboard(cell: f32) -> gpui::Canvas<()> {
     )
 }
 
-fn push_text(shape: &mut Shape, s: &str) {
-    if let Kind::Text(t) = &mut shape.kind {
-        t.push_str(s);
+/// The caret: a bar over the text that takes no room in it.
+fn caret_bar(height: f32, color: Hsla) -> gpui::Div {
+    div().relative().w(px(0.)).h(px(height)).child(div().absolute().left(px(-0.75)).top(px(height * 0.12)).w(px(1.5)).h(px(height * 0.76)).bg(color))
+}
+
+impl Editor {
+    /// The text being typed into its shape.
+    fn sync_field(&mut self) {
+        if let Some(i) = self.editing
+            && let Some(Kind::Text(t)) = self.vm.doc.shapes.get_mut(i).map(|s| &mut s.kind)
+            && t != self.field.text()
+        {
+            *t = self.field.text().to_owned();
+        }
+    }
+}
+
+/// The input method's side of typing a text (and plain typing, which GPUI
+/// hands here once the keys above let it through). Offsets are UTF-16.
+impl gpui::EntityInputHandler for Editor {
+    fn text_for_range(&mut self, range: std::ops::Range<usize>, adjusted: &mut Option<std::ops::Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
+        self.editing?;
+        let range = range.start.min(self.field.len_utf16())..range.end.min(self.field.len_utf16());
+        *adjusted = Some(range.clone());
+        Some(self.field.text_utf16(range))
+    }
+
+    fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<gpui::UTF16Selection> {
+        self.editing?;
+        Some(gpui::UTF16Selection { range: self.field.selection_utf16(), reversed: false })
+    }
+
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<std::ops::Range<usize>> {
+        self.editing?;
+        self.field.marked_utf16()
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.field.unmark();
+        cx.notify();
+    }
+
+    fn replace_text_in_range(&mut self, range: Option<std::ops::Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_none() || text.chars().any(char::is_control) && text != "\n" {
+            return;
+        }
+        self.field.replace(range, text);
+        self.sync_field();
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(&mut self, range: Option<std::ops::Range<usize>>, text: &str, selected: Option<std::ops::Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.is_none() {
+            return;
+        }
+        self.field.mark(range, text, selected);
+        self.sync_field();
+        cx.notify();
+    }
+
+    fn bounds_for_range(&mut self, _: std::ops::Range<usize>, element: Bounds<gpui::Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<gpui::Pixels>> {
+        let caret = self.caret_at.get()?;
+        Some(Bounds { origin: element.origin + caret.origin, size: caret.size })
+    }
+
+    fn character_index_for_point(&mut self, _: Point<gpui::Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        None
+    }
+
+    fn set_selected_text_range(&mut self, range: std::ops::Range<usize>, _: &mut Window, cx: &mut Context<Self>) {
+        self.field.select_utf16(range);
+        cx.notify();
+    }
+
+    fn text_length_utf16(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        Some(self.field.len_utf16())
+    }
+
+    fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
+        self.editing.is_some()
     }
 }
 
@@ -4863,6 +5010,14 @@ impl Editor {
             "shapes": self.vm.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
             "crop": self.vm.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
             "cropping": self.cropping.is_some(),
+            // The text being typed: its content, the caret and selection
+            // (bytes), the input method's marked part.
+            "typing": self.editing.map(|_| serde_json::json!({
+                "text": self.field.text(),
+                "caret": self.field.caret(),
+                "selection": [self.field.selection().start, self.field.selection().end],
+                "marked": self.field.marked().map(|r| [r.start, r.end]),
+            })),
             "frame": self.frame.to_json(),
             "undo": self.vm.history.depth(),
             "redo": self.vm.history.redo_depth(),

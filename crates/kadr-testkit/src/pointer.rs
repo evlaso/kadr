@@ -170,6 +170,11 @@ mod device {
                 "enter" | "return" => Key::Return,
                 "tab" => Key::Tab,
                 "backspace" => Key::Backspace,
+                "delete" => Key::Delete,
+                "left" => Key::LeftArrow,
+                "right" => Key::RightArrow,
+                "home" => Key::Home,
+                "end" => Key::End,
                 other => Key::Unicode(other.chars().next().unwrap_or(' ')),
             };
             let (last, mods) = parts.split_last().unwrap_or_else(|| super::usage());

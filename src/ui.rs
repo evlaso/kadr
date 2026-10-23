@@ -476,6 +476,20 @@ pub fn in_system_order(mut buttons: Vec<AnyElement>) -> Vec<AnyElement> {
     buttons
 }
 
+/// Whether `k` is one of this system's keys for `command`, Shift aside
+/// (with a move, it extends the selection).
+pub fn is_command(k: &gpui::Keystroke, command: kadr_platform::keymap::Command) -> bool {
+    use kadr_platform::keymap;
+    keymap::keys(keymap::Os::current(), command).iter().any(|pattern| {
+        let (mods, key) = match pattern.strip_suffix("--") {
+            Some(m) => (m, "-"),
+            None => pattern.rsplit_once('-').unwrap_or(("", pattern)),
+        };
+        let has = |m: &str| mods.split('-').any(|p| p == m);
+        k.key == key && k.modifiers.control == has("ctrl") && k.modifiers.alt == has("alt") && k.modifiers.platform == (has("cmd") || has("super"))
+    })
+}
+
 /// A command's usual shortcut on this system, as running text ("⌘C",
 /// "Ctrl+C"); empty when it has none.
 pub fn shortcut(command: kadr_platform::keymap::Command) -> String {
