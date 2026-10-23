@@ -368,6 +368,8 @@
  "settings.window_shadow": "Тень окна",
  "settings.screenshot_size": "Размер скриншота",
  "settings.screenshot_size_tip": "1× — пиксель в пиксель с макетом",
+ "settings.self_timer": "Таймер",
+ "settings.self_timer_tip": "Сколько «Таймер» отсчитывает, прежде чем снять экран",
  "settings.screen_pixels": "Пиксели экрана",
  "settings.check_for_updates": "Проверять обновления",
  "settings.tray_looks_for_new_release": "Раз в день трей проверяет, вышел ли новый релиз, и показывает карточку. Ничего не скачивается.",

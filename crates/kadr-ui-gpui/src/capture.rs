@@ -43,11 +43,11 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     }
     let picked = match mode {
         "fullscreen" => picker::whole_monitor().await?,
-        // The self-timer: 3, 2, 1 over the screen, then all of it.
+        // The self-timer: counting down over the screen, then all of it.
         "timer" => {
             let mons = util::monitors();
             let name = mons.iter().find(|m| m.focused)?.name.clone();
-            if !crate::record::countdown(&crate::record::Target::Monitor(name), 3, &mons, cx).await {
+            if !crate::record::countdown(&crate::record::Target::Monitor(name), settings.timer_seconds, &mons, cx).await {
                 return None;
             }
             picker::whole_monitor().await?

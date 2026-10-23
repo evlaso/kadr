@@ -10,7 +10,7 @@ use gpui::{
 use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 
 use crate::kit;
-use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side, ThemeMode};
+use crate::settings::{CARD_SECONDS, FPS, TIMER_SECONDS, MAX_CARDS, QUALITIES, Settings, Side, ThemeMode};
 use crate::studio::{PADDINGS, ZOOMS};
 use crate::{hotkeys, ocr, palette, storage, util};
 use crate::i18n::t;
@@ -326,6 +326,11 @@ impl SettingsView {
                         t("settings.screenshot_size"),
                         t("settings.screenshot_size_tip"),
                         chips(cx, "shot-size", vec!["1×".into(), t("settings.screen_pixels").into()], Some((!s.logical_size) as usize), |s, i| s.logical_size = i == 0),
+                    ),
+                    row(
+                        t("settings.self_timer"),
+                        t("settings.self_timer_tip"),
+                        chips(cx, "timer", TIMER_SECONDS.iter().map(|&n| tr!("common.seconds", n)).collect(), TIMER_SECONDS.iter().position(|&n| n == s.timer_seconds), |s, i| s.timer_seconds = TIMER_SECONDS[i]),
                     ),
                 ];
                 // A choice only where windows tile; elsewhere it's a window.

@@ -368,6 +368,8 @@
  "settings.window_shadow": "Window shadow",
  "settings.screenshot_size": "Screenshot size",
  "settings.screenshot_size_tip": "1× matches the design pixel for pixel",
+ "settings.self_timer": "Self-timer",
+ "settings.self_timer_tip": "How long Timer counts down before it takes the screen",
  "settings.screen_pixels": "Screen pixels",
  "settings.check_for_updates": "Check for updates",
  "settings.tray_looks_for_new_release": "Once a day the tray looks for a new release and shows a card. Nothing is downloaded.",

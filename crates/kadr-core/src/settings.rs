@@ -17,6 +17,8 @@ pub enum Side {
 /// gpu-screen-recorder's quality presets.
 pub const QUALITIES: [(&str, &str); 4] = [("medium", "common.medium"), ("high", "common.high"), ("very_high", "settings.very_high"), ("ultra", "settings.maximum")];
 pub const CARD_SECONDS: [u32; 4] = [5, 10, 20, 0];
+/// The self-timer's choices, in seconds.
+pub const TIMER_SECONDS: [u32; 3] = [3, 5, 10];
 pub const MAX_CARDS: [usize; 3] = [2, 4, 6];
 /// Recording frame rates; 0 is the screen's own refresh rate.
 pub const FPS: [u32; 4] = [0, 30, 60, 120];
@@ -65,6 +67,9 @@ pub struct Settings {
     /// Screenshots are scaled down to logical pixels (1×), so a pixel of the
     /// picture is a pixel of the design; off keeps every screen pixel.
     pub logical_size: bool,
+    /// How long the self-timer counts down (`kadr shot timer`), one of
+    /// `TIMER_SECONDS`.
+    pub timer_seconds: u32,
     /// 0 keeps cards until closed.
     pub card_seconds: u32,
     pub card_side: Side,
@@ -111,6 +116,7 @@ impl Default for Settings {
             name_template: crate::storage::DEFAULT_NAME.into(),
             window_shadow: true,
             logical_size: true,
+            timer_seconds: 3,
             card_seconds: 10,
             card_side: Side::Left,
             tray: true,
@@ -153,6 +159,7 @@ impl Settings {
             name_template: v["name_template"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or(&d.name_template).to_owned(),
             window_shadow: bool_or("window_shadow", d.window_shadow),
             logical_size: bool_or("logical_size", d.logical_size),
+            timer_seconds: Some(num_or("timer_seconds", d.timer_seconds as u64) as u32).filter(|n| TIMER_SECONDS.contains(n)).unwrap_or(d.timer_seconds),
             card_seconds: num_or("card_seconds", d.card_seconds as u64) as u32,
             card_side: if v["card_side"].as_str() == Some("right") { Side::Right } else { Side::Left },
             tray: bool_or("tray", d.tray),
@@ -186,6 +193,7 @@ impl Settings {
             "name_template": self.name_template,
             "window_shadow": self.window_shadow,
             "logical_size": self.logical_size,
+            "timer_seconds": self.timer_seconds,
             "card_seconds": self.card_seconds,
             "card_side": if self.card_side == Side::Right { "right" } else { "left" },
             "tray": self.tray,
