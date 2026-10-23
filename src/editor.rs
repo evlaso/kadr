@@ -1,4 +1,4 @@
-//! Annotation editor in Zed's look with CleanShot's tools: draw on a
+//! Annotation editor: draw on a
 //! screenshot, select and move what you drew, crop, put it on a backdrop,
 //! then copy or save. The view lives on a full-monitor layer (GPUI can't
 //! move or resize layers, and a modal overlay suits it anyway). Saving
@@ -41,8 +41,8 @@ mod redact;
 const WEIGHT: f32 = 0.22;
 
 
-/// Room around the picture to draw and crop in, the same way: like
-/// CleanShot, the result grows to take in what's drawn outside the picture.
+/// Room around the picture to draw and crop in, the same way: the
+/// result grows to take in what's drawn outside the picture.
 const WORK_PAD: f32 = 0.1;
 /// How far the canvas zooms out from fitting the stage.
 const MIN_ZOOM: f32 = 0.2;
@@ -178,7 +178,7 @@ impl Tool {
         }
     }
 
-    /// Single-key shortcut, CleanShot-style.
+    /// Single-key shortcut.
     fn key(self) -> &'static str {
         match self {
             Tool::Select => "v",
@@ -642,8 +642,8 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
     // physical pixels), shrunk to leave room for the toolbars and a backdrop.
     let density = cards::png_density(&bytes).unwrap_or(mon.scale) as f32;
     let natural = (w as f32 / density, h as f32 / density);
-    // The window takes at most about two thirds of the screen, like
-    // CleanShot's; a bigger picture opens smaller than 100% to fit it with
+    // The window takes at most about two thirds of the screen; a bigger
+    // picture opens smaller than 100% to fit it with
     // its work margin (`pad` below) and the bars.
     let (max_w, max_h) = (mw * 0.7, mh * 0.72);
     let grown = |n: f32| n + natural.0.max(natural.1) * WORK_PAD * 2.;
@@ -960,7 +960,7 @@ impl Editor {
         self.colors_open = false;
         self.more_open = false;
         self.panel = false;
-        // Like CleanShot, the frame starts round the whole picture.
+        // The frame starts round the whole picture.
         if self.vm.doc.crop.is_none() {
             self.vm.doc.crop = Some(((0., 0.), (self.px.0 as f32, self.px.1 as f32)));
         }
@@ -1544,7 +1544,7 @@ impl Editor {
                         }
                         _ => (shape.a.0 - shape.b.0).abs() < 3. && (shape.a.1 - shape.b.1).abs() < 3.,
                     };
-                    // Like CleanShot, what's just drawn isn't selected: the
+                    // What's just drawn isn't selected: the
                     // next stroke starts right away.
                     if !tiny {
                         self.checkpoint();
@@ -2082,7 +2082,7 @@ impl Editor {
         .detach();
     }
 
-    /// CleanShot-like top bar: history on the left, tools in the middle, the
+    /// The top bar: history on the left, tools in the middle, the
     /// current style (color, weight) on the right.
     fn render_toolbar(&self, width: f32, cx: &mut Context<Self>) -> AnyElement {
         if self.cropping.is_some() {
@@ -2233,7 +2233,7 @@ impl Editor {
                         cx.notify();
                     })),
             );
-        // Bare icons like CleanShot's, only the chosen one filled; the
+        // Bare icons, only the chosen one filled; the
         // groups apart with a little space.
         let tools = h_flex().gap(px(6.)).children(groups);
         // Solid or outline, for boxes and ellipses.
@@ -2500,7 +2500,7 @@ impl Editor {
         self.crop_dropdown(CropMenu::Zoom, percent(self.disp.0 / self.real.0), t("editor.zoom"), zooms, true, cx)
     }
 
-    /// CleanShot-like bottom bar.
+    /// The bottom bar.
     fn render_footer(&self, width: f32, cx: &mut Context<Self>) -> AnyElement {
         if self.cropping.is_some() {
             return self.render_crop_footer(width, cx);
@@ -2773,7 +2773,7 @@ impl Editor {
             .into_any_element()
     }
 
-    /// The crop mode's top bar, like CleanShot's: the mode, the shape and
+    /// The crop mode's top bar: the mode, the shape and
     /// size of the crop, turning, the result's size, then Cancel and Crop.
     fn render_crop_bar(&self, width: f32, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
@@ -3001,7 +3001,7 @@ impl Editor {
             .into_any_element()
     }
 
-    /// The background tool as a sidebar, like CleanShot's: presets, then
+    /// The background tool as a sidebar: presets, then
     /// what's behind the picture (nothing, gradients, wallpapers, the
     /// screenshot blurred, plain colours), then its margins, corners, shadow
     /// and the output's shape.
@@ -3570,7 +3570,7 @@ impl Editor {
                 } else if grown {
                     window.paint_quad(outline(area(el, et, er, eb), gpui::hsla(0., 0., 1., 0.45), BorderStyle::Dashed));
                 }
-                // Like CleanShot: a soft, wide band just outside anything
+                // A soft, wide band just outside anything
                 // boxy with knobs on its corners; lines show their ends.
                 // Marked shapes: the selection's band, without knobs.
                 let mut band = accent;
@@ -3750,7 +3750,7 @@ impl Render for Editor {
             remember_frame(&self.frame);
             self.remembered = frame;
         }
-        // A CleanShot-like window: tools on top, the picture on a stage
+        // The window: tools on top, the picture on a stage
         // (with the background panel beside it when open), actions at the
         // bottom. The picture fits the stage, its background included.
         let viewport = window.viewport_size();
@@ -3845,7 +3845,7 @@ impl Render for Editor {
             .flex_1()
             .min_h_0()
             .child(measure)
-            // The background sidebar at the left, like CleanShot's.
+            // The background sidebar at the left.
             .when(self.panel, |row| row.child(self.render_panel(self.stage_h.get(), cx)))
             .child(
                 div()
@@ -3858,7 +3858,7 @@ impl Render for Editor {
                     .overflow_hidden()
                     .when(self.space, |d| d.cursor(CursorStyle::OpenHand))
                     // The bars' tone, so the picture sits in one surface;
-                    // black while cropping, like CleanShot.
+                    // black while cropping.
                     .bg(if self.cropping.is_some() { gpui::black() } else { cx.theme().colors().title_bar_background })
                     // Ctrl and the wheel zoom at the pointer; the wheel alone pans.
                     .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
@@ -3940,7 +3940,7 @@ impl Render for Editor {
     }
 }
 
-/// The crop mode's frame, like CleanShot's: a thin line, thick white
+/// The crop mode's frame: a thin line, thick white
 /// brackets at the corners and short bars on the edges' middles, and the
 /// thirds while it's dragged.
 fn paint_crop_frame(window: &mut Window, b: Bounds<gpui::Pixels>, thirds: bool) {

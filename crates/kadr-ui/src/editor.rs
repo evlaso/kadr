@@ -63,7 +63,7 @@ impl Edit for Shape {
     }
 
     /// How far the selection band sits outside a boxy shape, in image
-    /// pixels at `scale`: clear of the stroke, like CleanShot's.
+    /// pixels at `scale`: clear of the stroke.
     fn band_pad(&self, scale: f32) -> f32 {
         let stroke = if matches!(self.kind, Kind::Rect | Kind::Ellipse) && !self.filled { self.size } else { 0. };
         stroke + BAND_GAP / scale

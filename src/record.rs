@@ -355,7 +355,7 @@ impl Recorder {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
                 webcam::hide(cx);
             }
-            // Like CleanShot: pick the area first, then show the bar by it.
+            // Pick the area first, then show the bar by it.
             State::Idle => match mode {
                 None => {
                     self.state = State::Busy;
@@ -504,7 +504,7 @@ impl Recorder {
                     tracker.save(s.target.rect(&util::monitors()), s.studio, &file);
                 }
                 finalize(&file, s.opts.audio, s.opts.mic).await;
-                // Studio recordings go straight to the editor, like CleanShot.
+                // Studio recordings go straight to the editor.
                 let studio = s.studio;
                 let _ = cx.update(|cx| if studio { crate::studio_editor::open(file, cx) } else { cards::after_capture(file, crate::storage::Capture::Recording, cx) });
             }
@@ -895,7 +895,7 @@ impl Render for RecBar {
 }
 
 /// kadr's picker, like for screenshots: it closes on release, and the
-/// recording bar then lets the area be adjusted, like CleanShot's.
+/// recording bar then lets the area be adjusted.
 async fn pick_target(cx: &mut AsyncApp) -> Option<Target> {
     let picked = crate::picker::pick(true, false, cx).await?;
     if picked.whole {
@@ -960,7 +960,7 @@ fn log_tail() -> String {
     if tail.is_empty() { t("record.gpu_screen_recorder_exited_without").into() } else { tail }
 }
 
-/// A countdown over the area before recording starts, like CleanShot's.
+/// A countdown over the area before recording starts.
 /// False when cancelled with Esc.
 pub(crate) async fn countdown(target: &Target, seconds: u32, mons: &[Mon], cx: &mut AsyncApp) -> bool {
     if seconds == 0 {
@@ -1053,7 +1053,7 @@ impl Render for Countdown {
                     .child(div().absolute().left(px(x - 2.)).top(px(y - 2.)).w(px(w + 4.)).h(px(h + 4.)).border_2().border_color(gpui::white()))
             })
             .child(
-                // Only the digit changes from second to second, like CleanShot.
+                // Only the digit changes from second to second.
                 div()
                     .absolute()
                     .left(px(self.center.0 - side / 2.))

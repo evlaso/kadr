@@ -21,8 +21,7 @@ pub const MAX_CARDS: [usize; 3] = [2, 4, 6];
 /// Recording frame rates; 0 is the screen's own refresh rate.
 pub const FPS: [u32; 4] = [0, 30, 60, 120];
 
-/// What happens right after a capture, like CleanShot's "After capture"
-/// list; any number of them at once.
+/// What happens right after a capture; any number of them at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct After {
     /// The thumbnail card in the screen corner.

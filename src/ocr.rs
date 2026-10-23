@@ -1,4 +1,4 @@
-//! Text recognition, like CleanShot's "Capture Text": pick an area (or use
+//! Text recognition: pick an area (or use
 //! a screenshot you already have), the text goes to the clipboard and a
 //! card like a screenshot's shows what was found. Tesseract does the reading, with
 //! every installed language that matters here; QR codes are read too (with

@@ -1,4 +1,4 @@
-//! The camera bubble, like CleanShot's: a live camera picture over the area
+//! The camera bubble: a live camera picture over the area
 //! being recorded. It's set up before recording: dragged, it snaps to a
 //! corner or the middle of an edge at a fixed margin; on hover it grows,
 //! shrinks and changes its rounding. The look is remembered and the studio

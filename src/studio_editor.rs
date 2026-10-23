@@ -1,4 +1,4 @@
-//! The studio's video editor, like CleanShot's Studio Mode: a live preview
+//! The studio's video editor: a live preview
 //! of the framed, zoomed picture that plays in place, a timeline to trim the
 //! ends, cut pieces out and place zoom segments (on clicks to start with),
 //! and a sidebar for the look (format, backdrop, padding, corners, shadow,
@@ -77,7 +77,7 @@ enum Knob {
     Zoom,
 }
 
-/// The rail's sections, like CleanShot's: one shown at a time.
+/// The rail's sections: one shown at a time.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     Zoom,
@@ -1517,7 +1517,7 @@ impl StudioEditor {
             .child(right)
     }
 
-    /// Export, like CleanShot's: the button opens the output settings, and
+    /// Export: the button opens the output settings, and
     /// the export starts from there (or with Ctrl+S right away).
     fn render_export(&self, cx: &mut Context<Self>) -> AnyElement {
         let gif = self.project.format == Format::Gif;
@@ -1618,7 +1618,7 @@ impl StudioEditor {
     }
 
     /// Time on the left, play controls in the middle, the timeline's zoom on
-    /// the right, like CleanShot's.
+    /// the right.
     fn render_transport(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let time = h_flex()
@@ -1693,7 +1693,7 @@ impl StudioEditor {
             )
     }
 
-    /// A slider's track and knob; `ticks` marks under it, like CleanShot's.
+    /// A slider's track and knob; `ticks` marks under it.
     fn slider(&self, knob: Knob, value: f64, ticks: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let (track, filled, knob_color, knob_edge) = (colors.element_active, colors.text_accent, gpui::white(), colors.border);
@@ -1733,7 +1733,7 @@ impl StudioEditor {
         )
     }
 
-    /// A slider under its name, the value at the right, like CleanShot's.
+    /// A slider under its name, the value at the right.
     fn labeled_slider(&self, name: &'static str, knob: Knob, value: f64, shown: String, ticks: usize, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
             .w_full()
@@ -2510,7 +2510,7 @@ impl Render for StudioEditor {
     }
 }
 
-/// Ruler text, like CleanShot's: "00:05", halves as "00:05.5".
+/// Ruler text: "00:05", halves as "00:05.5".
 fn ruler_label(t: f64, step: f64) -> String {
     if step < 1. {
         format!("{:02}:{:04.1}", (t / 60.) as u64, t % 60.)

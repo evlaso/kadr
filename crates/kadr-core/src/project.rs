@@ -2,7 +2,7 @@
 //! edited screenshot: the shapes, the crop, the turn, the size and the
 //! background. Pictures laid on top are files beside it, named in the JSON.
 //!
-//! What keeps an annotated screenshot editable, like CleanShot's projects:
+//! What keeps an annotated screenshot editable:
 //! the untouched picture and the drawing, kept in kadr's data folder and
 //! keyed by the saved file. `kadr edit` on that file opens the drawing
 //! again, as long as the file is still what kadr wrote. The same folder,

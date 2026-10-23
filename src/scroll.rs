@@ -1,4 +1,4 @@
-//! Scrolling screenshot, like CleanShot's: pick an area, scroll it yourself,
+//! Scrolling screenshot: pick an area, scroll it yourself,
 //! and kadr keeps grabbing it and stitches the new rows on at the bottom by
 //! matching the rows it has already seen. "scroll.done" saves one tall picture.
 

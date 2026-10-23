@@ -1,9 +1,9 @@
-//! Area picker, like CleanShot's: the screen freezes, you drag a rectangle
+//! Area picker: the screen freezes, you drag a rectangle
 //! over the frozen picture (or click a window), with crosshair guides, a
 //! magnifier with the pixel's colour and the selection's size. Shared by
 //! screenshots, recording, scrolling capture and text recognition.
 //!
-//! The area is taken when the mouse is let go, like CleanShot's (a
+//! The area is taken when the mouse is let go (a
 //! recording's is adjusted afterwards, on the recording bar). Once the
 //! keyboard has touched it the selection stays: it has handles, moves when dragged from inside, nudges with the arrows, keeps
 //! an aspect ratio (A), takes a typed size (digits) and is taken with Enter.
@@ -62,7 +62,7 @@ impl Picked {
 
 /// Freeze the monitor under the pointer and let the user pick an area on it.
 /// With `snap`, hovering highlights windows and a plain click takes one.
-/// Space switches to picking windows only and back, like CleanShot.
+/// Space switches to picking windows only and back.
 /// A click on nothing takes the whole monitor, or with `color` copies the
 /// colour under the pointer instead. None when cancelled.
 pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> {

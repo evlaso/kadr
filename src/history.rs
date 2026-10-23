@@ -1,4 +1,4 @@
-//! Capture history, CleanShot-style, laid out like Zed's palettes: every
+//! Capture history, laid out as a palette: every
 //! screenshot, recording and GIF kadr (or Omarchy) made, newest first, with
 //! type-to-search, filters, keyboard navigation and the card actions.
 

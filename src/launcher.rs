@@ -1,4 +1,4 @@
-//! `kadr capture`: every mode on one bar, like CleanShot's all-in-one, so
+//! `kadr capture`: every mode on one bar, so
 //! one hotkey is enough. Pick with a click, the arrows and Enter, or 1–8;
 //! Esc or a click outside closes it.
 

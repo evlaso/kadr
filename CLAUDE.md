@@ -1,6 +1,6 @@
 # kadr
 
-CleanShot X–style screenshots and screen recording in Rust on GPUI CE (the community fork of Zed's GPUI). The main target is Linux: Omarchy (Arch, Hyprland, Wayland). macOS and Windows build in CI (on a `v*` tag or a manual run; Linux on every push) and share one implementation of most system pieces through cross-platform crates (`kadr-platform/src/desktop.rs`: arboard, notify-rust, trash, xcap; `tray.rs`: tray-icon, global-hotkey); recording and window picking there are still stubs. Nobody has run them on a real machine yet.
+Screenshots and screen recording for the desktop in Rust on GPUI CE (the community fork of Zed's GPUI). The main target is Linux: Omarchy (Arch, Hyprland, Wayland). macOS and Windows build in CI (on a `v*` tag or a manual run; Linux on every push) and share one implementation of most system pieces through cross-platform crates (`kadr-platform/src/desktop.rs`: arboard, notify-rust, trash, xcap; `tray.rs`: tray-icon, global-hotkey); recording and window picking there are still stubs. Nobody has run them on a real machine yet.
 
 Where it's heading: `docs/SPEC.ru.md` (a workspace with the UI as a replaceable layer, tests, budgets, a measured experiment on leaving GPUI). Phases 0 and 1 are done: the base numbers in `docs/perf.md`, golden tests of the rasteriser, dev hooks; core, raster, ui (the editor's state), platform and media as crates under the GPUI app. E2e and the bench run in a nested Hyprland. View-models so far: editor, settings, cards. Phase 2's spikes are on branches `spike/iced` and `spike/tauri`, measured by `scripts/spike.py <gpui|iced|tauri>`; results and the open decision in `docs/perf.md`. The tray is its own crate.
 
@@ -49,6 +49,6 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 ## Conventions
 
 - Nested corners are concentric: an inner element's radius is the outer radius less the inset (see `cards::CORNER`, `history::BUTTON`, `studio_editor::TILE_RADIUS`). Scrolling panes get `ui::scrollbar`.
-- Look and feel: CleanShot X UX in a soft, clean Apple-like look (references: CleanShot, Raycast, Atlas for Mac). No glass. Separate groups with space and tone, not lines. The main action uses the accent color.
+- Look and feel: a soft, clean Apple-like look, like a well-made Mac utility. No glass. Separate groups with space and tone, not lines. The main action uses the accent color.
 - Before changing the user's Hyprland config (`~/.config/hypr/*.lua`), back up the file (`.bak-<timestamp>`).
-- Commits go to `main` (GitHub `vlasmn/kadr`, public: no personal paths, tokens or real screenshots in commits; test pictures are drawn). End commit messages with the `Co-Authored-By` trailer the session specifies.
+- Commits go to `main` (GitHub `vlasmn/kadr`, public: no personal paths, tokens or real screenshots in commits; test pictures are drawn; don't name other products as the model for kadr's design, in docs or comments). End commit messages with the `Co-Authored-By` trailer the session specifies.

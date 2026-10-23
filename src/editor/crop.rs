@@ -1,4 +1,4 @@
-//! The crop mode's geometry, like CleanShot's: aspect ratios, turning and
+//! The crop mode's geometry: aspect ratios, turning and
 //! mirroring the picture with everything drawn on it, and snapping the
 //! crop's edges to the picture's own edges.
 

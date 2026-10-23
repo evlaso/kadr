@@ -73,7 +73,7 @@ pub fn quad(bounds: Bounds<Pixels>, radius: Pixels, background: impl Into<Backgr
     PaintQuad::new(bounds).corner_radii(radius).background(background).border_widths(border).border_color(border_color).border_style(style)
 }
 
-/// A selection knob like CleanShot's: an accent dot in a white ring with
+/// A selection knob: an accent dot in a white ring with
 /// a soft shadow under it, centred on `c`.
 pub fn paint_knob(window: &mut gpui::Window, c: gpui::Point<Pixels>, accent: Hsla) {
     let disc = |r: f32, dy: f32| Bounds::new(gpui::point(c.x - px(r), c.y - px(r) + px(dy)), gpui::size(px(2. * r), px(2. * r)));

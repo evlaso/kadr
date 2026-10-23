@@ -1,4 +1,4 @@
-//! The recording bar, laid out like CleanShot's: you pick the area first,
+//! The recording bar: you pick the area first,
 //! then the bar sits right under it (above, or inside, when there's no room)
 //! with the area's size, the audio, camera and keys toggles and Record. The
 //! area stays adjustable meanwhile: knobs on its corners and edges, dragged
@@ -481,7 +481,7 @@ impl Render for Panel {
             self.watching_camera = Some(state.entity_id());
             cx.observe(state, |_, _, cx| cx.notify()).detach();
         }
-        // CleanShot-style: icons only, names and shortcuts in tooltips.
+        // Icons only, names and shortcuts in tooltips.
         let tip = |title: &'static str, keys: Option<&'static str>| {
             move |_: &mut Window, cx: &mut App| -> AnyView { cx.new(|_| Tooltip::new(title).key_binding(keys.map(kit::keys))).into() }
         };

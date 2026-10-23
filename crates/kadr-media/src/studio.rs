@@ -56,7 +56,7 @@ pub const ASPECTS: [(&str, Option<f64>); 9] = [
     ("3:2", Some(1.5)),
     ("3:4", Some(0.75)),
 ];
-/// The aspect menu, CleanShot's order: wide shapes, then tall ones.
+/// The aspect menu's order: wide shapes, then tall ones.
 pub const ASPECT_ORDER: [&[usize]; 2] = [&[0, 2, 5, 6, 7, 1], &[3, 8, 4]];
 /// Export size by the output's short side.
 pub const RESOLUTIONS: [(&str, u32); 4] = [("720p", 720), ("1080p", 1080), ("1440p", 1440), ("4K", 2160)];

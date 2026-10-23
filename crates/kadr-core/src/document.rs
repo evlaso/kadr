@@ -265,11 +265,11 @@ pub enum Backdrop {
     Wallpaper(PathBuf),
     /// Nothing behind the picture: a PNG with transparency around it.
     Transparent,
-    /// The screenshot itself, blurred, like CleanShot's.
+    /// The screenshot itself, blurred.
     Blurred,
 }
 
-/// The background the picture is put on, like CleanShot's background tool.
+/// The background the picture is put on.
 #[derive(Clone, Debug)]
 pub struct Frame {
     pub backdrop: Backdrop,

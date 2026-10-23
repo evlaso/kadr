@@ -1,4 +1,4 @@
-//! `.kadr` project files, like CleanShot's `.cleanshot`: one file that keeps
+//! `.kadr` project files: one file that keeps
 //! an edit whole, to reopen later or on another machine. Inside is a plain
 //! tar (any `tar` lists it) with `manifest.json` first, then the pieces:
 //! - a screenshot (`shot`): the untouched picture, added pictures, the

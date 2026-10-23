@@ -1,5 +1,5 @@
 //! Quick-access overlay: a stack of thumbnails in the bottom-left corner of
-//! the focused monitor, like CleanShot's floating preview. One layer surface
+//! the focused monitor, a floating preview. One layer surface
 //! holds the whole stack; only the cards themselves take input.
 
 use std::path::{Path, PathBuf};
@@ -360,7 +360,7 @@ impl CardStack {
         self.vm.hover(id, hovered, Instant::now());
     }
 
-    /// CleanShot's Quick Access look in Zed's components: just the picture;
+    /// Just the picture;
     /// hovering shows the main actions in the middle and the rest in the
     /// corners. Drag it out as a file; double-click to edit.
     fn render_card(&self, card: &Card, inside: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -386,7 +386,7 @@ impl CardStack {
                 action(this, &path, id, window, cx)
             })
         };
-        // Solid white pills with dark ink, like CleanShot's overlay buttons.
+        // Solid white pills with dark ink, readable over any picture.
         let ink = hsla(0., 0., 0.12, 1.);
         let pill = |el: Stateful<Div>| {
             el.flex()

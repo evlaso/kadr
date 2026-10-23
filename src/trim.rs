@@ -1,4 +1,4 @@
-//! Trim a recording and export GIFs, CleanShot-style: a modal with a large
+//! Trim a recording and export GIFs: a modal with a large
 //! frame preview, a filmstrip timeline with start/end handles, and Save
 //! (a new "-trim" file) or GIF. Quick GIF export from a card skips the modal.
 
