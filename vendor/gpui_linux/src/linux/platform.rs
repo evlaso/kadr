@@ -649,6 +649,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.with_common(|common| common.auto_hide_scrollbars)
     }
 
+    #[cfg(feature = "keyring")]
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         let url = url.to_string();
         let username = username.to_string();
@@ -671,6 +672,13 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         })
     }
 
+    #[cfg(not(feature = "keyring"))]
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        let _ = (url, username, password);
+        Task::ready(Err(anyhow::anyhow!("built without the keyring feature")))
+    }
+
+    #[cfg(feature = "keyring")]
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         let label = self
@@ -702,6 +710,13 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         })
     }
 
+    #[cfg(not(feature = "keyring"))]
+    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        let _ = url;
+        Task::ready(Err(anyhow::anyhow!("built without the keyring feature")))
+    }
+
+    #[cfg(feature = "keyring")]
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
         let label = self
@@ -722,6 +737,12 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
             Ok(())
         })
+    }
+
+    #[cfg(not(feature = "keyring"))]
+    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+        let _ = url;
+        Task::ready(Err(anyhow::anyhow!("built without the keyring feature")))
     }
 
     fn window_appearance(&self) -> WindowAppearance {

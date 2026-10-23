@@ -20,7 +20,7 @@ dev = []
 
 [dependencies]
 # GPUI Community Edition, pinned; updated on purpose, not automatically.
-gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", default-features = false, features = ["font-kit", "wayland", "image-default-formats"] }
+gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", default-features = false, features = ["font-kit", "wayland"] }
 gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", features = ["wayland"] }
 smallvec = { version = "1", features = ["union"] }
 palette = "0.7"
@@ -65,6 +65,63 @@ strip = true
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+# Smaller where speed doesn't matter: the D-Bus stack (the tray, the portal,
+# notifications), accessibility, regex, the decoders of formats kadr only
+# meets in wallpapers (GIF, WebP), SVG parsing (icons, once) and the shader
+# translator (once at start), X11's protocol code (best effort, idle on
+# Wayland), JSON (settings and logs) and dates. The renderer, PNG, JPEG (the studio's scrub
+# frames) and the rasteriser keep full optimisation.
+[profile.release.package.zbus]
+opt-level = "s"
+[profile.release.package.zvariant]
+opt-level = "s"
+[profile.release.package.zbus_names]
+opt-level = "s"
+[profile.release.package.ksni]
+opt-level = "s"
+[profile.release.package.accesskit]
+opt-level = "s"
+[profile.release.package.accesskit_unix]
+opt-level = "s"
+[profile.release.package.accesskit_atspi_common]
+opt-level = "s"
+[profile.release.package.atspi]
+opt-level = "s"
+[profile.release.package.atspi-common]
+opt-level = "s"
+[profile.release.package.atspi-proxies]
+opt-level = "s"
+[profile.release.package.ashpd]
+opt-level = "s"
+[profile.release.package.regex-automata]
+opt-level = "s"
+[profile.release.package.regex-syntax]
+opt-level = "s"
+[profile.release.package.notify-rust]
+opt-level = "s"
+[profile.release.package.gif]
+opt-level = "s"
+[profile.release.package.image-webp]
+opt-level = "s"
+[profile.release.package.usvg]
+opt-level = "s"
+[profile.release.package.svgtypes]
+opt-level = "s"
+[profile.release.package.roxmltree]
+opt-level = "s"
+[profile.release.package.naga]
+opt-level = "s"
+[profile.release.package.aho-corasick]
+opt-level = "s"
+[profile.release.package.x11rb]
+opt-level = "s"
+[profile.release.package.x11rb-protocol]
+opt-level = "s"
+[profile.release.package.serde_json]
+opt-level = "s"
+[profile.release.package.chrono]
+opt-level = "s"
 
 # For working on kadr: release speed without the whole-program pass, which
 # takes an incremental build from ~11 s to ~2.5 min. `cargo build --profile

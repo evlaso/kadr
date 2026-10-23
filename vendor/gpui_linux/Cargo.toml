@@ -15,6 +15,9 @@ path = "src/gpui_linux.rs"
 [features]
 default = ["wayland", "x11"]
 test-support = ["gpui/test-support"]
+# GPUI's credentials API through the Secret Service (kadr's change: off by
+# default, kadr stores no passwords and it pulled in a whole keyring client).
+keyring = ["dep:oo7"]
 wayland = [
   "bitflags",
   "gpui_wgpu",
@@ -69,11 +72,10 @@ strum = { version = "0.27.2", features = ["derive"] }
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 
-# Always used
 oo7 = { version = "0.6", default-features = false, features = [
   "async-std",
   "native_crypto",
-] }
+], optional = true }
 calloop = "0.14.3"
 notify-rust = "4"
 raw-window-handle = "0.6"

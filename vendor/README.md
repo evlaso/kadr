@@ -12,6 +12,11 @@ kadr's changes:
   doesn't bind the tablet protocol, and Hyprland doesn't turn pen input into
   pointer input, so a pen did nothing in kadr's windows.
 
+- `Cargo.toml` and `src/linux/platform.rs`: the Secret Service client (`oo7`)
+  behind a `keyring` feature, off by default. kadr stores no passwords, and
+  it was a keyring client in every binary. Without it GPUI's credentials
+  calls return an error.
+
 When bumping GPUI CE, copy the new `crates/gpui_linux` over this one, keep
 the manifest's explicit (non-workspace) dependencies at the new revision and
 apply the changes above again.

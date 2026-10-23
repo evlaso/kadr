@@ -63,6 +63,40 @@ unstripped; .text 29.5 MiB):
 The obvious cuts toward 25 MB: `image` without AVIF/EXR/TIFF (needs GPUI's
 `image-default-formats` off), and fewer D-Bus stacks.
 
+## Within the size budget, and phase 1 done
+
+2026-10-23, after phase 1 (the crates, two copies of the picture) and the
+size work below.
+
+| Metric | Budget | Base | Now |
+|---|---|---|---|
+| `kadr tray` after 5 min, RSS | ≤ 15 MB | 15.0 MB | 12.3 MB |
+| Editor with a 4K PNG, RSS | ≤ 250 MB | 388.6 MB | **234.8 MB** |
+| Idle CPU, editor open | ≤ 0.5 % | 0.1 % | 0.07–0.13 % (one bench window caught 2.1 %, see below) |
+| Hotkey → overlay, warm / cold | ≤ 80 / 300 ms | 33.4 / 92.6 ms | 33.6 / 88.5 ms |
+| Edit → window | ≤ 400 ms | 297.3 ms | 294.1 ms |
+| Release binary | ≤ 25 MB | 44.7 MB | **24.99 MB** |
+| Incremental release build | ≤ 20 s | 11.5 s | 103 s (fat LTO; `fast`: 0.7 s) |
+
+Every budget is met but the incremental release build (see the profile
+section above). The idle CPU window that read 2.1 % didn't repeat (0.07 % and
+0.13 % on two 30 s runs); the bench now takes the median of three windows.
+
+What took the binary from 34.4 to 25.0 MB:
+- GPUI's `image-default-formats` off: no AVIF encoder (rav1e, ravif), EXR or
+  TIFF; kadr reads PNG, JPEG, WebP and PNM (and GPUI GIF). 34.4 → 26.4 MB.
+- The Secret Service client (`oo7`) out of the vendored GPUI Linux crate,
+  behind a `keyring` feature: kadr keeps no passwords.
+- `opt-level = "s"` for crates off the hot path only: the D-Bus stack,
+  accessibility, regex, the GIF and WebP decoders, SVG parsing, the shader
+  translator (once at start), X11's protocol code, JSON and dates. The
+  renderer, PNG, JPEG (the studio's scrub frames), text and the rasteriser
+  keep full optimisation; cold start and edit → window didn't move.
+  26.4 → 25.0 MB.
+- The allocation counter only in `--features dev` builds.
+
+The X11 backend costs about 14 KB, so it stays (best effort, per the spec).
+
 ## Copies of the picture in the editor
 
 `kadr dev mem` with a 3840×2160 picture (a noise PNG of 40.8 MB, so the

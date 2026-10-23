@@ -208,9 +208,14 @@ def measure_editor_rss_and_cpu(image, seconds=30):
     wait_for(editor_ready, timeout=10)
     time.sleep(2)
     rss = rss_mb(proc.pid)
-    before, t0 = cpu_ticks(proc.pid), time.monotonic()
-    time.sleep(seconds)
-    cpu = (cpu_ticks(proc.pid) - before) / TICK / (time.monotonic() - t0) * 100
+    # Three windows, the median: one window can catch the pointer passing
+    # over the editor (hover redraws) or the session doing something.
+    samples = []
+    for _ in range(3):
+        before, t0 = cpu_ticks(proc.pid), time.monotonic()
+        time.sleep(seconds / 3)
+        samples.append((cpu_ticks(proc.pid) - before) / TICK / (time.monotonic() - t0) * 100)
+    cpu = statistics.median(samples)
     stop_all()
     return rss, cpu
 
