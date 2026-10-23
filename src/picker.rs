@@ -77,6 +77,30 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
         .filter(|(name, _)| *name == mon.name)
         .map(|(_, (x, y, w, h))| ((x - mon.x) as f32, (y - mon.y) as f32, w as f32, h as f32))
         .filter(|r| r.0 >= 0. && r.1 >= 0. && r.0 + r.2 <= mon.w as f32 + 0.5 && r.1 + r.3 <= mon.h as f32 + 0.5);
+    // On Wayland, the overlay's own window: drawn on the CPU, on a thread
+    // of its own (SPEC 3.8). GPUI's picker below where it can't show itself,
+    // or with KADR_PICKER=gpui.
+    #[cfg(target_os = "linux")]
+    if std::env::var("KADR_PICKER").as_deref() != Ok("gpui") {
+        let accent = cx.update(|cx| crate::ui::to_rgba(cx.theme().colors().text_accent));
+        let screen = kadr_overlay::Screen { output: mon.name.clone(), logical: (mon.w as u32, mon.h as u32), scale: mon.scale, frozen: frozen.clone(), windows: windows.clone(), previous, origin: (mon.x as f64, mon.y as f64) };
+        let options = kadr_overlay::Options {
+            snap,
+            color,
+            accent,
+            free: t("picker.free").to_owned(),
+            t: |k| crate::i18n::t(k).to_owned(),
+            pointer: Some((crate::platform::cursor_pos, crate::platform::move_cursor)),
+        };
+        let (tx, rx) = oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(kadr_overlay::pick(&screen, &options));
+        });
+        match rx.await {
+            Ok(Ok(outcome)) => return picked(outcome, mon, frozen),
+            _ => {}
+        }
+    }
     let (tx, rx) = oneshot::channel();
     let shown = frozen.clone();
     let spec = LayerSpec {
@@ -107,6 +131,30 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
         })
     });
     let (rect, window) = rx.await.ok().flatten()?;
+    to_picked(rect, window, mon, frozen)
+}
+
+/// What the overlay ended in, as what the app takes: an area, or the
+/// colour under a plain click copied (and nothing to take).
+#[cfg(target_os = "linux")]
+fn picked(outcome: Option<kadr_overlay::Outcome>, mon: Mon, frozen: Arc<image::RgbaImage>) -> Option<Picked> {
+    match outcome? {
+        kadr_overlay::Outcome::Done(picked) => {
+            let (rect, window) = picked?;
+            to_picked(rect, window, mon, frozen)
+        }
+        kadr_overlay::Outcome::Color((x, y)) => {
+            let s = mon.scale as f32;
+            let p = frozen.get_pixel_checked((x * s) as u32, (y * s) as u32)?.0;
+            let hex = format!("#{:02X}{:02X}{:02X}", p[0], p[1], p[2]);
+            crate::platform::copy_text(&hex);
+            crate::platform::notify(t("picker.color_copied"), &hex);
+            None
+        }
+    }
+}
+
+fn to_picked(rect: Rect, window: bool, mon: Mon, frozen: Arc<image::RgbaImage>) -> Option<Picked> {
     let whole = rect.2 >= mon.w as f32 - 1. && rect.3 >= mon.h as f32 - 1.;
     let area = (mon.x + rect.0.round() as i32, mon.y + rect.1.round() as i32, rect.2.round().max(1.) as i32, rect.3.round().max(1.) as i32);
     if !whole {

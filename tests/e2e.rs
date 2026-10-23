@@ -190,12 +190,20 @@ fn an_area_screenshot_is_what_was_on_screen() {
 
     let t0 = Instant::now();
     s.spawn(&["shot", "region"]);
-    let picker = s.window("kadr-picker");
+    // The overlay is a layer of its own (kadr-overlay), not a GPUI window:
+    // the compositor says when it's up.
+    let layer = || {
+        let out = s.cmd("hyprctl").args(["-j", "layers"]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).contains("\"kadr-picker\"").then_some(())
+    };
+    wait(Duration::from_secs(3), layer).expect("no picker on screen");
     let shown = t0.elapsed();
     assert!(shown < Duration::from_millis(300), "the picker took {shown:?}");
+    std::thread::sleep(Duration::from_millis(100));
 
-    let id = picker["id"].to_string();
-    s.dev(&["drag", &format!("{},{}", area.0, area.1), &format!("{},{}", area.2, area.3), &id]);
+    // Dragged with a real pointer, corner to corner.
+    let n = |v: i32| v.to_string();
+    s.pointer(&["drag", &n(area.0 as i32), &n(area.1 as i32), &n((area.0 + area.2) as i32), &n((area.1 + area.3) as i32)]);
     let shots = s.var("OMARCHY_SCREENSHOT_DIR");
     let saved = wait(Duration::from_secs(5), || newest(&shots).filter(|p| p.extension().is_some_and(|e| e == "png"))).expect("no screenshot saved");
     std::thread::sleep(Duration::from_millis(200));

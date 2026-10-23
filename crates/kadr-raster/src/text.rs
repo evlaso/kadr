@@ -51,11 +51,17 @@ pub fn text_width(text: &str, size: f32) -> f32 {
 
 /// One line of text with its baseline at `origin.1`, onto premultiplied pixels.
 pub fn draw_line(pm: &mut tiny_skia::Pixmap, text: &str, origin: P, size: f32, color: Rgba) {
+    let (w, h) = (pm.width(), pm.height());
+    draw_line_into(pm.data_mut(), (w, h), text, origin, size, color);
+}
+
+/// `draw_line` onto any four-byte pixels of that size (the overlay's
+/// shared-memory buffer).
+pub fn draw_line_into(data: &mut [u8], (w, h): (u32, u32), text: &str, origin: P, size: f32, color: Rgba) {
     let font = font();
     let scale = em(size);
     let f = font.as_scaled(scale);
-    let (w, h) = (pm.width() as i32, pm.height() as i32);
-    let data = pm.data_mut();
+    let (w, h) = (w as i32, h as i32);
     let mut x = origin.0;
     let mut prev = None;
     for ch in text.chars() {

@@ -17,3 +17,4 @@ tiny-skia.workspace = true
 smithay-client-toolkit = "0.21.1"
 wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+libc = "0.2"

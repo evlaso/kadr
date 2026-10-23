@@ -51,3 +51,8 @@ longer story and the debts that don't block a release.
 - **The nested Hyprland and the user's files.** Without its own
   `user-dirs.dirs`, kadr in the nested session read the real `~/Videos`, and
   the history showed the user's recordings. `scripts/nested.sh` writes one.
+- **The nested Hyprland stops getting frames.** While the real session
+  shows one of its own special workspaces (a scratchpad) the nested window,
+  hidden on another, seems to get no frames, and every capture in it (grim,
+  the picker's freeze) hangs. `scripts/nested.sh start` now checks for a
+  frame and says so instead of hanging later.

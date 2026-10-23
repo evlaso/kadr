@@ -58,6 +58,22 @@ start() {
   fi
   # Nothing of Hyprland's own on screen: its notices would land in captures.
   XDG_RUNTIME_DIR="$dir" HYPRLAND_INSTANCE_SIGNATURE="$sig" hyprctl dismissnotify >/dev/null 2>&1 || true
+  # Frames come: every capture waits for one. The real session stops
+  # drawing the hidden window while one of its own special workspaces (a
+  # scratchpad) is shown, and then every grim would hang.
+  local frames=""
+  for _ in $(seq 1 20); do
+    if [ "$(XDG_RUNTIME_DIR="$dir" WAYLAND_DISPLAY=wayland-1 timeout 1 grim -g "0,0 1x1" -t ppm - 2>/dev/null | wc -c)" -gt 0 ]; then
+      frames=1
+      break
+    fi
+    sleep 0.2
+  done
+  if [ -z "$frames" ]; then
+    echo "nested.sh: the nested Hyprland gets no frames; is a special workspace (a scratchpad) shown in the real session? Close it and try again." >&2
+    stop "$dir"
+    exit 1
+  fi
   cat <<VARS
 export KADR_E2E_DIR=$dir
 export XDG_RUNTIME_DIR=$dir

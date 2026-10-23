@@ -3336,6 +3336,7 @@ dependencies = [
  "image",
  "kadr-core",
  "kadr-raster",
+ "libc",
  "smithay-client-toolkit",
  "tiny-skia",
  "wayland-client",
