@@ -3469,11 +3469,17 @@ dependencies = [
 name = "kadr-overlay"
 version = "0.2.0"
 dependencies = [
+ "block2 0.6.2",
  "image",
  "kadr-core",
  "kadr-raster",
  "libc",
+ "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "objc2-screen-capture-kit",
  "raw-window-handle",
  "serde_json",
  "smithay-client-toolkit 0.21.1",

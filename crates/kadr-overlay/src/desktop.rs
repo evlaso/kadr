@@ -4,7 +4,9 @@
 //! softbuffer. It runs in the `kadr-overlay` program, since winit wants the
 //! main thread, which the app's UI has: once per pick (`pick`), or kept
 //! running with its event loop warm, taking picks over a socket (`serve`,
-//! macOS), since starting AppKit takes most of a cold start there.
+//! macOS), since starting AppKit takes most of a cold start there. The
+//! warm one keeps its window made and hidden between picks, and on macOS
+//! freezes the screen itself, ScreenCaptureKit warmed up (`sck`).
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -55,7 +57,7 @@ pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
         options: Options { free: options.free.clone(), ..*options },
         reply: Box::new(move |o| *sink.lock().unwrap() = Some(o)),
     };
-    let mut app = App { first: Some(first), session: None, once: true, failed: false };
+    let mut app = App { first: Some(first), session: None, spare: None, once: true, failed: false };
     event_loop.run_app(&mut app).map_err(drop)?;
     if app.failed {
         return Err(());
@@ -64,7 +66,9 @@ pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
 }
 
 /// Keeps the overlay's event loop running and takes picks over `socket`:
-/// a line with a spec's path in (`spec::write`), the outcome's line back.
+/// a line with a spec's path in (`spec::write`, or `spec::write_request`
+/// for it to freeze the screen itself), the outcome's line back (with the
+/// frozen file it wrote beside the spec, for a request).
 #[cfg(unix)]
 pub fn serve(socket: &std::path::Path) -> Result<(), ()> {
     use std::io::{BufRead, BufReader, Write};
@@ -73,34 +77,91 @@ pub fn serve(socket: &std::path::Path) -> Result<(), ()> {
     let _ = std::fs::remove_file(socket);
     let listener = std::os::unix::net::UnixListener::bind(socket).map_err(drop)?;
     std::thread::spawn(move || {
+        // Warmed up before the first pick; picks wait in the socket's queue.
+        #[cfg(target_os = "macos")]
+        let mut grabber = crate::sck::Grabber::new();
         for stream in listener.incoming().flatten() {
             let mut line = String::new();
             let Ok(mut reply) = stream.try_clone() else { continue };
             if BufReader::new(stream).read_line(&mut line).is_err() {
                 continue;
             }
-            let Some((screen, options, lang)) = crate::spec::read(std::path::Path::new(line.trim())) else {
-                let _ = writeln!(reply, "{}", serde_json::json!({ "error": "can't read the spec" }));
+            let path = std::path::Path::new(line.trim());
+            let error = |mut reply: std::os::unix::net::UnixStream, what: &str| {
+                let _ = writeln!(reply, "{}", serde_json::json!({ "error": what }));
+            };
+            let Some((mut screen, options, lang, capture)) = crate::spec::read_request(path) else {
+                error(reply, "can't read the spec");
                 continue;
             };
+            let mut frozen_file = None;
+            if capture {
+                let from = Instant::now();
+                #[cfg(target_os = "macos")]
+                let image = grabber.as_mut().and_then(|g| g.grab(screen.origin, screen.logical, screen.scale));
+                #[cfg(not(target_os = "macos"))]
+                let image = None;
+                // No picture: kadr takes its own and asks again with it.
+                let Some(image) = image else {
+                    error(reply, "can't freeze the screen");
+                    continue;
+                };
+                eprintln!("kadr-overlay timing: grab={}ms", from.elapsed().as_millis());
+                screen.frozen = std::sync::Arc::new(image);
+                frozen_file = Some(path.with_file_name("frozen.rgba"));
+            }
             kadr_core::i18n::set(kadr_core::i18n::Lang::from_code(&lang));
             let options = Options { free: kadr_core::i18n::t("picker.free").to_owned(), ..options };
-            let reply: Reply = Box::new(move |o| {
-                let _ = writeln!(reply, "{}", crate::spec::outcome_line(o));
-            });
-            if proxy.send_event(Request { screen, options, reply }).is_err() {
+            let frozen = screen.frozen.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let request = Request { screen, options, reply: Box::new(move |o| {
+                let _ = tx.send(o);
+            }) };
+            if proxy.send_event(request).is_err() {
                 break;
             }
+            // Written while the overlay is up; the outcome waits for it.
+            let written = frozen_file.filter(|f| crate::spec::write_frozen(f, &frozen).is_ok());
+            let Ok(outcome) = rx.recv() else { break };
+            let _ = writeln!(reply, "{}", crate::spec::outcome_line_with(outcome, written.as_deref()));
         }
     });
-    let mut app = App { first: None, session: None, once: false, failed: false };
+    let mut app = App { first: None, session: None, spare: None, once: false, failed: false };
     event_loop.run_app(&mut app).map_err(drop)
+}
+
+/// The overlay's window and what it's drawn through.
+type Shown = (Rc<Window>, softbuffer::Surface<Rc<Window>, Rc<Window>>);
+
+/// A borderless window above everything, `size` big at `at` (logical).
+fn make_window(el: &ActiveEventLoop, at: (f64, f64), size: (f64, f64), visible: bool) -> Option<Shown> {
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut attrs = Window::default_attributes()
+        .with_title("kadr-picker")
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_visible(visible)
+        .with_window_level(WindowLevel::AlwaysOnTop)
+        .with_position(LogicalPosition::new(at.0, at.1))
+        .with_inner_size(LogicalSize::new(size.0, size.1));
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::WindowAttributesExtWindows;
+        attrs = attrs.with_skip_taskbar(true);
+    }
+    let window = Rc::new(el.create_window(attrs).ok()?);
+    #[cfg(target_os = "macos")]
+    above_everything(&window);
+    let surface = softbuffer::Context::new(window.clone()).and_then(|ctx| softbuffer::Surface::new(&ctx, window.clone())).ok()?;
+    Some((window, surface))
 }
 
 struct App {
     /// The pick to show once the loop is up (a one-time run).
     first: Option<Request>,
     session: Option<Session>,
+    /// The warm one's window between picks, hidden.
+    spare: Option<Shown>,
     /// Ends the loop after the first pick.
     once: bool,
     failed: bool,
@@ -131,37 +192,21 @@ impl App {
         }
         let asked = Instant::now();
         let Request { screen, options, reply } = request;
-        let (ox, oy) = screen.origin;
-        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-        let mut attrs = Window::default_attributes()
-            .with_title("kadr-picker")
-            .with_decorations(false)
-            .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_position(LogicalPosition::new(ox, oy))
-            .with_inner_size(LogicalSize::new(screen.logical.0 as f64, screen.logical.1 as f64));
-        #[cfg(target_os = "windows")]
-        {
-            use winit::platform::windows::WindowAttributesExtWindows;
-            attrs = attrs.with_skip_taskbar(true);
-        }
-        let Ok(window) = el.create_window(attrs) else {
+        let at = screen.origin;
+        let size = (screen.logical.0 as f64, screen.logical.1 as f64);
+        // The warm one's spare, moved onto this monitor; else a new one.
+        let reused = self.spare.take().map(|(window, surface)| {
+            window.set_outer_position(LogicalPosition::new(at.0, at.1));
+            let _ = window.request_inner_size(LogicalSize::new(size.0, size.1));
+            (window, surface)
+        });
+        let spare = reused.is_some();
+        let Some((window, surface)) = reused.or_else(|| make_window(el, at, size, true)) else {
             self.failed = true;
             reply(None);
             return if self.once { el.exit() } else {};
         };
-        let window = Rc::new(window);
-        let window_ms = crate::since_start();
-        #[cfg(target_os = "macos")]
-        above_everything(&window);
-        let surface = softbuffer::Context::new(window.clone()).and_then(|ctx| softbuffer::Surface::new(&ctx, window.clone()));
-        let Ok(surface) = surface else {
-            self.failed = true;
-            reply(None);
-            return if self.once { el.exit() } else {};
-        };
-        eprintln!("kadr-overlay timing: window={window_ms}ms surface={}ms asked_to_window={}ms", crate::since_start(), asked.elapsed().as_millis());
-        window.focus_window();
+        eprintln!("kadr-overlay timing: window={}ms spare={spare} asked_to_window={}ms", crate::since_start(), asked.elapsed().as_millis());
         let mut model = Model::new((screen.logical.0 as f32, screen.logical.1 as f32), screen.scale as f32);
         model.windows = screen.windows.clone();
         model.previous = screen.previous;
@@ -184,7 +229,13 @@ impl App {
         });
         if let Some(s) = self.session.as_mut() {
             s.update_cursor();
+            if spare {
+                // Its frame before it shows, not the last pick's.
+                s.draw();
+                s.window.set_visible(true);
+            }
         }
+        window.focus_window();
         window.request_redraw();
     }
 
@@ -194,11 +245,17 @@ impl App {
             Outcome::Done(None) => None,
             o => Some(o),
         };
-        // The window goes with the session.
-        if let Some(mut s) = self.session.take()
-            && let Some(reply) = s.reply.take()
-        {
-            reply(o);
+        // The window goes with the session, or is hidden for the next.
+        if let Some(mut s) = self.session.take() {
+            if !self.once {
+                s.window.set_visible(false);
+            }
+            if let Some(reply) = s.reply.take() {
+                reply(o);
+            }
+            if !self.once {
+                self.spare = Some((s.window, s.surface));
+            }
         }
         if self.once {
             el.exit();
@@ -272,6 +329,17 @@ impl ApplicationHandler<Request> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if let Some(first) = self.first.take() {
             self.start(el, first);
+        }
+        // The warm one makes its window now, hidden, on the main monitor.
+        if !self.once && self.spare.is_none() && self.session.is_none() {
+            let m = el.primary_monitor().or_else(|| el.available_monitors().next());
+            let (at, size) = m.map_or(((0., 0.), (1024., 768.)), |m| {
+                let (p, s) = (m.position().to_logical::<f64>(m.scale_factor()), m.size().to_logical::<f64>(m.scale_factor()));
+                ((p.x, p.y), (s.width, s.height))
+            });
+            let from = Instant::now();
+            self.spare = make_window(el, at, size, false);
+            eprintln!("kadr-overlay timing: spare_window={}ms", from.elapsed().as_millis());
         }
     }
 

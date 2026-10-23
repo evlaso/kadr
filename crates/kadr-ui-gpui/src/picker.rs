@@ -70,15 +70,42 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     }
     let _picking = Picking;
     let mon = util::focused_monitor()?;
-    let grab_from = std::time::Instant::now();
-    let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
-    let grab_ms = grab_from.elapsed().as_millis();
     let windows = windows_on(&mon);
     // The last area, if it was on this monitor.
     let previous = previous_area()
         .filter(|(name, _)| *name == mon.name)
         .map(|(_, (x, y, w, h))| ((x - mon.x) as f32, (y - mon.y) as f32, w as f32, h as f32))
         .filter(|r| r.0 >= 0. && r.1 >= 0. && r.0 + r.2 <= mon.w as f32 + 0.5 && r.1 + r.3 <= mon.h as f32 + 0.5);
+    // On macOS, the overlay the tray keeps warm freezes the screen itself,
+    // its ScreenCaptureKit warmed up; kadr's own grab below when it isn't
+    // there or can't.
+    #[cfg(target_os = "macos")]
+    if std::env::var("KADR_PICKER").as_deref() != Ok("gpui") {
+        let accent = cx.update(|cx| crate::ui::to_rgba(cx.theme().colors().text_accent));
+        let screen = kadr_overlay::Screen { output: mon.name.clone(), logical: (mon.w as u32, mon.h as u32), scale: mon.scale, frozen: Arc::new(image::RgbaImage::new(1, 1)), windows: windows.clone(), previous, origin: (mon.x as f64, mon.y as f64) };
+        let options = kadr_overlay::Options { snap, color, accent, free: t("picker.free").to_owned(), t: |k| crate::i18n::t(k).to_owned(), pointer: None };
+        let lang = crate::settings::Settings::load().language.code().to_owned();
+        let dir = util::runtime_dir().join("kadr-overlay");
+        let (tx, rx) = oneshot::channel();
+        std::thread::spawn(move || {
+            let run = || {
+                let spec_from = std::time::Instant::now();
+                let spec = kadr_overlay::spec::write_request(&dir, &screen, &options, &lang).ok()?;
+                eprintln!("kadr overlay timing: spec={}ms warm=request", spec_from.elapsed().as_millis());
+                let line = warm_overlay(&spec)?;
+                let outcome = kadr_overlay::spec::parse_outcome(&line)?;
+                let frozen = kadr_overlay::spec::read_frozen(&kadr_overlay::spec::parse_frozen(&line)?)?;
+                Some((outcome, frozen))
+            };
+            let _ = tx.send(run());
+        });
+        if let Ok(Some((outcome, frozen))) = rx.await {
+            return picked(outcome, mon, Arc::new(frozen));
+        }
+    }
+    let grab_from = std::time::Instant::now();
+    let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
+    let grab_ms = grab_from.elapsed().as_millis();
     // On Wayland, the overlay's own window: drawn on the CPU, on a thread
     // of its own (SPEC 3.8). GPUI's picker below where it can't show itself,
     // or with KADR_PICKER=gpui.
@@ -125,7 +152,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                 eprintln!("kadr overlay timing: grab={grab_ms}ms spec={}ms", spec_from.elapsed().as_millis());
                 // The warm one the tray keeps (macOS), else a new process.
                 #[cfg(unix)]
-                if let Some(outcome) = warm_overlay(&spec) {
+                if let Some(outcome) = warm_overlay(&spec).and_then(|l| kadr_overlay::spec::parse_outcome(&l)) {
                     return Some(outcome);
                 }
                 let out = std::process::Command::new(&exe).arg(&spec).output().ok()?;
@@ -172,15 +199,16 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     to_picked(rect, window, mon, frozen)
 }
 
-/// The pick through the overlay the tray keeps warm, if it's there.
+/// The pick through the overlay the tray keeps warm, if it's there: its
+/// line back.
 #[cfg(all(unix, not(target_os = "linux")))]
-fn warm_overlay(spec: &std::path::Path) -> Option<Option<kadr_overlay::Outcome>> {
+fn warm_overlay(spec: &std::path::Path) -> Option<String> {
     use std::io::{BufRead, BufReader, Write};
     let mut stream = std::os::unix::net::UnixStream::connect(kadr_tray::overlay_socket()).ok()?;
     writeln!(stream, "{}", spec.display()).ok()?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line).ok()?;
-    kadr_overlay::spec::parse_outcome(&line)
+    Some(line)
 }
 
 /// The kadr-overlay program beside kadr's own.

@@ -397,7 +397,8 @@ mod desktop {
     pub fn run() {
         let Some(_instance) = become_tray() else { return };
         #[cfg(target_os = "macos")]
-        if kadr_core::settings::Settings::load().keep_warm {
+        // KADR_KEEP_WARM=0 turns it off for this run (desktop-e2e's cold step).
+        if kadr_core::settings::Settings::load().keep_warm && std::env::var_os("KADR_KEEP_WARM").is_none_or(|v| v != "0") {
             super::keep_overlay_warm();
         }
         #[cfg(target_os = "macos")]

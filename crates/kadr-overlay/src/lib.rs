@@ -11,6 +11,8 @@ use std::sync::Arc;
 mod desktop;
 pub mod draw;
 pub mod model;
+#[cfg(target_os = "macos")]
+mod sck;
 pub mod spec;
 #[cfg(target_os = "linux")]
 mod wayland;

@@ -1,7 +1,9 @@
 //! What the app hands the `kadr-overlay` program (macOS and Windows, where
 //! the overlay is a process of its own) and what it hands back: a JSON file
 //! naming the monitor and a raw file of its frozen pixels, then one JSON
-//! line on the program's output.
+//! line on the program's output. The warm overlay (`--serve`) can freeze the
+//! screen itself: then the spec has no frozen file (`write_request`) and the
+//! line back says where the overlay put the one it took.
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -17,11 +19,43 @@ use crate::{Options, Screen};
 pub fn write(dir: &Path, screen: &Screen, options: &Options, lang: &str) -> std::io::Result<std::path::PathBuf> {
     std::fs::create_dir_all(dir)?;
     let frozen = dir.join("frozen.rgba");
-    let (w, h) = screen.frozen.dimensions();
-    let mut f = std::io::BufWriter::new(std::fs::File::create(&frozen)?);
+    write_frozen(&frozen, &screen.frozen)?;
+    write_spec(dir, screen, options, lang, Some(&frozen))
+}
+
+/// Writes a pick for the warm overlay to freeze the screen itself (no
+/// frozen.rgba; `screen.frozen` is ignored); gives back the spec's path.
+pub fn write_request(dir: &Path, screen: &Screen, options: &Options, lang: &str) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    write_spec(dir, screen, options, lang, None)
+}
+
+/// A frozen screen as a raw file: "W H\n", then its RGBA.
+pub fn write_frozen(path: &Path, image: &image::RgbaImage) -> std::io::Result<()> {
+    let (w, h) = image.dimensions();
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
     writeln!(f, "{w} {h}")?;
-    f.write_all(screen.frozen.as_raw())?;
-    f.flush()?;
+    f.write_all(image.as_raw())?;
+    f.flush()
+}
+
+/// What `write_frozen` wrote.
+pub fn read_frozen(path: &Path) -> Option<image::RgbaImage> {
+    let mut file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    let mut header = Vec::new();
+    let mut byte = [0u8];
+    while file.read_exact(&mut byte).is_ok() && byte[0] != b'\n' {
+        header.push(byte[0]);
+    }
+    let header = String::from_utf8(header).ok()?;
+    let mut dims = header.split_whitespace().filter_map(|n| n.parse::<u32>().ok());
+    let (w, h) = (dims.next()?, dims.next()?);
+    let mut pixels = vec![0; (w * h * 4) as usize];
+    file.read_exact(&mut pixels).ok()?;
+    image::RgbaImage::from_raw(w, h, pixels)
+}
+
+fn write_spec(dir: &Path, screen: &Screen, options: &Options, lang: &str, frozen: Option<&Path>) -> std::io::Result<std::path::PathBuf> {
     let rect = |r: &Rect| json!([r.0, r.1, r.2, r.3]);
     let a = options.accent;
     let spec = json!({
@@ -30,6 +64,7 @@ pub fn write(dir: &Path, screen: &Screen, options: &Options, lang: &str) -> std:
         "scale": screen.scale,
         "origin": [screen.origin.0, screen.origin.1],
         "frozen": frozen,
+        "capture": frozen.is_none(),
         "windows": screen.windows.iter().map(rect).collect::<Vec<_>>(),
         "previous": screen.previous.as_ref().map(rect),
         "snap": options.snap,
@@ -45,25 +80,22 @@ pub fn write(dir: &Path, screen: &Screen, options: &Options, lang: &str) -> std:
 /// Reads what `write` wrote: the screen, the options (with kadr-core's
 /// words, in the language it names) and that language's code.
 pub fn read(path: &Path) -> Option<(Screen, Options, String)> {
+    read_request(path).map(|(s, o, l, _)| (s, o, l))
+}
+
+/// `read`, and whether the overlay is to freeze the screen itself
+/// (`write_request`; the screen's `frozen` is then a placeholder).
+pub fn read_request(path: &Path) -> Option<(Screen, Options, String, bool)> {
     let v: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     let f = |v: &Value| v.as_f64().unwrap_or(0.);
     let rect = |r: &Value| (f(&r[0]) as f32, f(&r[1]) as f32, f(&r[2]) as f32, f(&r[3]) as f32);
-    let mut file = std::io::BufReader::new(std::fs::File::open(v["frozen"].as_str()?).ok()?);
-    let mut header = Vec::new();
-    let mut byte = [0u8];
-    while file.read_exact(&mut byte).is_ok() && byte[0] != b'\n' {
-        header.push(byte[0]);
-    }
-    let header = String::from_utf8(header).ok()?;
-    let mut dims = header.split_whitespace().filter_map(|n| n.parse::<u32>().ok());
-    let (w, h) = (dims.next()?, dims.next()?);
-    let mut pixels = vec![0; (w * h * 4) as usize];
-    file.read_exact(&mut pixels).ok()?;
+    let capture = v["capture"].as_bool().unwrap_or(false);
+    let frozen = if capture { image::RgbaImage::new(1, 1) } else { read_frozen(Path::new(v["frozen"].as_str()?))? };
     let screen = Screen {
         output: v["output"].as_str().unwrap_or_default().to_owned(),
         logical: (f(&v["logical"][0]) as u32, f(&v["logical"][1]) as u32),
         scale: f(&v["scale"]).max(0.1),
-        frozen: Arc::new(image::RgbaImage::from_raw(w, h, pixels)?),
+        frozen: Arc::new(frozen),
         windows: v["windows"].as_array().map(|a| a.iter().map(rect).collect()).unwrap_or_default(),
         previous: v["previous"].as_array().map(|_| rect(&v["previous"])),
         origin: (f(&v["origin"][0]), f(&v["origin"][1])),
@@ -77,17 +109,25 @@ pub fn read(path: &Path) -> Option<(Screen, Options, String)> {
         t: |k| kadr_core::i18n::t(k).to_owned(),
         pointer: None,
     };
-    Some((screen, options, v["lang"].as_str().unwrap_or("en").to_owned()))
+    Some((screen, options, v["lang"].as_str().unwrap_or("en").to_owned(), capture))
 }
 
 /// The outcome as the program's one line of output.
 pub fn outcome_line(outcome: Option<Outcome>) -> String {
-    match outcome {
+    outcome_line_with(outcome, None)
+}
+
+/// `outcome_line`, with where the screen the overlay froze itself is.
+pub fn outcome_line_with(outcome: Option<Outcome>, frozen: Option<&Path>) -> String {
+    let mut v = match outcome {
         Some(Outcome::Done(Some((r, window)))) => json!({ "done": [r.0, r.1, r.2, r.3], "window": window }),
         Some(Outcome::Color((x, y))) => json!({ "color": [x, y] }),
         _ => json!({ "cancel": true }),
+    };
+    if let Some(f) = frozen {
+        v["frozen"] = json!(f);
     }
-    .to_string()
+    v.to_string()
 }
 
 /// The program's line back as an outcome; None when it said nothing
@@ -102,6 +142,12 @@ pub fn parse_outcome(line: &str) -> Option<Option<Outcome>> {
         return Some(Some(Outcome::Color((f(&c[0]), f(&c[1])))));
     }
     v.get("cancel").map(|_| None)
+}
+
+/// Where the line says the overlay put the screen it froze itself.
+pub fn parse_frozen(line: &str) -> Option<std::path::PathBuf> {
+    let v: Value = serde_json::from_str(line.trim()).ok()?;
+    v["frozen"].as_str().map(std::path::PathBuf::from)
 }
 
 #[cfg(test)]
@@ -119,9 +165,15 @@ mod tests {
         assert_eq!((s.output.as_str(), s.logical, s.origin, s.windows.len(), lang.as_str()), ("DP-1", (2, 1), (10., 20.), 1, "ru"));
         assert_eq!(s.frozen.get_pixel(3, 1).0, [1, 2, 3, 255]);
         assert!(o.snap && !o.color);
-        let _ = std::fs::remove_dir_all(&dir);
         for outcome in [Some(Outcome::Done(Some(((1., 2., 3., 4.), true)))), Some(Outcome::Color((5., 6.))), None] {
             assert_eq!(parse_outcome(&outcome_line(outcome)), Some(outcome));
         }
+        // A request for the warm overlay: no frozen file; its own one back.
+        let path = write_request(&dir, &screen, &options, "en").unwrap();
+        assert!(read_request(&path).unwrap().3);
+        let line = outcome_line_with(None, Some(Path::new("/tmp/f.rgba")));
+        assert_eq!(parse_frozen(&line).as_deref(), Some(Path::new("/tmp/f.rgba")));
+        assert_eq!(parse_outcome(&line), Some(None));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

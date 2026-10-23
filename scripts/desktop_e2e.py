@@ -272,7 +272,7 @@ def overlay(t, warm=False):
     shown by `kadr shot region`, a box dragged with the real pointer, the
     screenshot saved at that size. `warm`: through the overlay kept running
     (`kadr-overlay --serve`, as the tray does on macOS)."""
-    label = " (warm)" if warm else ""
+    label = {False: "", True: " (warm)", "again": " (warm, again)"}[warm]
     # Where kadr saves (its OMARCHY_SCREENSHOT_DIR); this pick's is the new one.
     shots = t.out / "shots"
     shots.mkdir(exist_ok=True)
@@ -283,7 +283,7 @@ def overlay(t, warm=False):
     if not t.note("the overlay shows" + label, found, ms=round((time.monotonic() - t0) * 1000), window=found and [found["x"], found["y"], found["w"], found["h"]]):
         return
     time.sleep(0.5)
-    t.shot("overlay-warm" if warm else "overlay")
+    t.shot("overlay" + label.replace(" (", "-").replace(", ", "-").rstrip(")"))
     sx, sy, sw, sh = screen()
     cx, cy = sx + sw / 2, sy + sh / 2
     run(POINTER, "drag", cx - 200, cy - 120, cx + 200, cy + 120)
@@ -324,6 +324,10 @@ def main():
     # print "мир").
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     shell = "gpui"
+    if platform.system() == "Darwin":
+        # The tray kadr starts keeps no overlay warm here (keep_warm off for
+        # the run): the first pick is the cold path, measured on its own.
+        os.environ["KADR_KEEP_WARM"] = "0"
     if LINUX:
         # The runners' screen, 1024x768, on the nested session's output.
         run("hyprctl", "eval", 'hl.monitor({ output = "WAYLAND-1", mode = "1024x768@60", position = "0x0", scale = 1 })')
@@ -338,11 +342,12 @@ def main():
         t.note("Ctrl+S saves a changed file", wait_for(lambda: work.read_bytes() != before, timeout=10))
         t.shot("saved")
         if shell == "gpui" and not LINUX:
-            # On macOS kadr starts the tray, which keeps the overlay warm
-            # (keep_warm): this first pick may go through it already.
+            # The cold path: a kadr-overlay process for the pick.
             overlay(t)
             if platform.system() == "Darwin":
-                # Again, through an overlay of the test's own on that socket.
+                # Again, through an overlay of the test's own on the tray's
+                # socket, kept running as keep_warm does: it freezes the
+                # screen itself, from the first pick on.
                 import tempfile
                 socket = Path(tempfile.gettempdir()) / "kadr-overlay.sock"
                 with open(t.out / "overlay-serve.log", "ab") as log:
@@ -352,6 +357,8 @@ def main():
                 # Only this run's lines count.
                 t.log.write_text("")
                 overlay(t, warm=True)
+                t.log.write_text("")
+                overlay(t, warm="again")
                 serve.kill()
     if proc is not None and proc.poll() is None:
         proc.kill()
