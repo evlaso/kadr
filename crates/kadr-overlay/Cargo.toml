@@ -1,0 +1,9 @@
+[package]
+name = "kadr-overlay"
+version = "0.2.0"
+edition = "2024"
+license.workspace = true
+description = "Picking an area of the screen: the model now, its own windows (layer-shell, winit) next"
+publish = false
+
+[dependencies]

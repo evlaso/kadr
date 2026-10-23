@@ -3285,6 +3285,7 @@ dependencies = [
  "image",
  "kadr-core",
  "kadr-media",
+ "kadr-overlay",
  "kadr-platform",
  "kadr-raster",
  "kadr-tray",
@@ -3321,6 +3322,10 @@ dependencies = [
  "serde_json",
  "tiny-skia",
 ]
+
+[[package]]
+name = "kadr-overlay"
+version = "0.2.0"
 
 [[package]]
 name = "kadr-platform"

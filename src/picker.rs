@@ -24,8 +24,6 @@ use crate::ui::{fill, outline, prelude::*, quad};
 use crate::util::{self, Mon};
 use crate::i18n::t;
 
-/// Rectangle in the monitor's logical coordinates: x, y, w, h.
-pub(crate) type Rect = (f32, f32, f32, f32);
 
 /// What was picked.
 pub struct Picked {
@@ -99,33 +97,12 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                 let focus = cx.focus_handle();
                 window.focus(&focus, cx);
                 let picture = Arc::new(RenderImage::new([image::Frame::new(bgra(&shown))]));
-                Picker {
-                    picture,
-                    lens: None,
-                    frozen: shown,
-                    scale,
-                    screen,
-                    origin,
-                    shift: false,
-                    watching: false,
-                    windows,
-                    snap,
-                    windows_only: false,
-                    color,
-                    adjust: false,
-                    previous,
-                    aspect: 0,
-                    typing: None,
-                    cursor: None,
-                    drag: None,
-                    before: None,
-                    selection: None,
-                    moving: false,
-                    last: None,
-                    done: Some(tx),
-                    pending: None,
-                    focus,
-                }
+                let mut m = Model::new(screen, scale);
+                m.windows = windows;
+                m.snap = snap;
+                m.color = color;
+                m.previous = previous;
+                Picker { m, picture, lens: None, frozen: shown, origin, watching: false, done: Some(tx), focus }
             })
         })
     });
@@ -209,96 +186,29 @@ fn windows_on(mon: &Mon) -> Vec<Rect> {
     found.into_iter().map(|(_, r)| r).collect()
 }
 
-/// Aspect ratios the selection can keep (A cycles them): width over height.
-const ASPECTS: [(&str, Option<f32>); 5] = [("picker.free", None), ("1:1", Some(1.)), ("4:3", Some(4. / 3.)), ("16:9", Some(16. / 9.)), ("9:16", Some(9. / 16.))];
+pub(crate) use kadr_overlay::model::{BOTTOM, LEFT, RIGHT, Rect, TOP, handles};
+use kadr_overlay::model::{ASPECTS, Cursor, Drag, Model, Outcome};
 
-/// The selection's edges a handle moves.
-pub(crate) const LEFT: u8 = 1;
-pub(crate) const RIGHT: u8 = 2;
-pub(crate) const TOP: u8 = 4;
-pub(crate) const BOTTOM: u8 = 8;
-
-/// How near a handle the pointer has to be to grab it.
-const HANDLE_REACH: f32 = 10.;
-
-#[derive(Clone, Copy)]
-enum Drag {
-    /// Drawing a new selection from this corner.
-    New((f32, f32)),
-    /// Moving the selection; the pointer's last position.
-    Move((f32, f32)),
-    /// Dragging a handle: the edges it moves, the selection and the pointer
-    /// when it was grabbed.
-    Resize { edges: u8, from: Rect, start: (f32, f32) },
-}
-
+/// The GPUI side of picking: the frozen picture, the magnifier and the
+/// window it's drawn in; the selection and what the pointer and keys do to
+/// it are `kadr_overlay::model`.
 struct Picker {
+    m: Model,
     picture: Arc<RenderImage>,
     /// The magnifier's picture: whole screen pixels as squares with a grid,
     /// for the pointer position it was made at.
     lens: Option<((u32, u32), Arc<RenderImage>)>,
     frozen: Arc<image::RgbaImage>,
-    scale: f32,
-    /// The monitor's logical size.
-    screen: (f32, f32),
     /// The monitor's place in the layout.
     origin: (f32, f32),
-    /// Shift was held at the last pointer event.
-    shift: bool,
     /// Keeping the pointer on this monitor while dragging.
     watching: bool,
-    windows: Vec<Rect>,
-    snap: bool,
-    /// Space toggled: a click takes the window under it, nothing is drawn.
-    windows_only: bool,
-    /// A click on nothing copies the colour under it.
-    color: bool,
-    /// The selection stays when the mouse is let go.
-    adjust: bool,
-    /// The last area picked on this monitor (P brings it back).
-    previous: Option<Rect>,
-    /// Index into `ASPECTS`.
-    aspect: usize,
-    /// A size being typed in physical pixels: width, height, and whether the
-    /// height is being typed.
-    typing: Option<(String, String, bool)>,
-    cursor: Option<(f32, f32)>,
-    drag: Option<Drag>,
-    /// The selection before a new one was begun, back if it was only a click.
-    before: Option<Rect>,
-    selection: Option<Rect>,
-    /// Space held while drawing moves the selection instead.
-    moving: bool,
-    last: Option<(f32, f32)>,
     done: Option<oneshot::Sender<Option<(Rect, bool)>>>,
-    /// What a press picked, taken once the button is up: closing while it's
-    /// held hands the rest of the click to the window below (a terminal
-    /// then selects text and puts it on the clipboard over the shot).
-    pending: Option<Option<(Rect, bool)>>,
     focus: FocusHandle,
 }
 
 fn local(p: Point<Pixels>) -> (f32, f32) {
     (f32::from(p.x), f32::from(p.y))
-}
-
-fn inside(r: Rect, (x, y): (f32, f32)) -> bool {
-    x >= r.0 && x < r.0 + r.2 && y >= r.1 && y < r.1 + r.3
-}
-
-/// The eight handles: which edges each moves and where it sits.
-pub(crate) fn handles(r: Rect) -> [(u8, (f32, f32)); 8] {
-    let (x0, y0, x1, y1, mx, my) = (r.0, r.1, r.0 + r.2, r.1 + r.3, r.0 + r.2 / 2., r.1 + r.3 / 2.);
-    [
-        (LEFT | TOP, (x0, y0)),
-        (TOP, (mx, y0)),
-        (RIGHT | TOP, (x1, y0)),
-        (RIGHT, (x1, my)),
-        (RIGHT | BOTTOM, (x1, y1)),
-        (BOTTOM, (mx, y1)),
-        (LEFT | BOTTOM, (x0, y1)),
-        (LEFT, (x0, my)),
-    ]
 }
 
 pub(crate) fn resize_cursor(edges: u8) -> CursorStyle {
@@ -318,170 +228,21 @@ impl Picker {
         window.remove_window();
     }
 
-    fn hovered_window(&self) -> Option<Rect> {
-        let p = self.cursor?;
-        self.windows.iter().copied().find(|r| inside(*r, p))
-    }
-
-    fn ratio(&self) -> Option<f32> {
-        ASPECTS[self.aspect].1
-    }
-
-    /// The selection can be changed with its handles.
-    fn editable(&self) -> bool {
-        self.adjust && self.selection.is_some() && !matches!(self.drag, Some(Drag::New(_)))
-    }
-
-    fn handle_at(&self, p: (f32, f32)) -> Option<u8> {
-        let sel = self.selection?;
-        handles(sel).into_iter().find(|(_, (hx, hy))| (p.0 - hx).abs() <= HANDLE_REACH && (p.1 - hy).abs() <= HANDLE_REACH).map(|(e, _)| e)
-    }
-
-    /// Kept on the screen, at least a pixel big.
-    fn clamp(&self, (x, y, w, h): Rect) -> Rect {
-        let (sw, sh) = self.screen;
-        let (w, h) = (w.clamp(1., sw), h.clamp(1., sh));
-        (x.clamp(0., sw - w), y.clamp(0., sh - h), w, h)
-    }
-
-    /// The selection with its height (or width, if that would run off the
-    /// screen) fitted to the aspect ratio.
-    fn fit_ratio(&self, (x, y, w, mut h): Rect) -> Rect {
-        let Some(r) = self.ratio() else { return (x, y, w, h) };
-        let mut w = w;
-        h = w / r;
-        if y + h > self.screen.1 {
-            h = self.screen.1 - y;
-            w = h * r;
-        }
-        self.clamp((x, y, w, h))
-    }
-
-    fn resized(&self, from: Rect, edges: u8, (dx, dy): (f32, f32)) -> Rect {
-        let (sw, sh) = self.screen;
-        let (mut x0, mut y0, mut x1, mut y1) = (from.0, from.1, from.0 + from.2, from.1 + from.3);
-        if edges & LEFT != 0 {
-            x0 = (x0 + dx).clamp(0., sw);
-        }
-        if edges & RIGHT != 0 {
-            x1 = (x1 + dx).clamp(0., sw);
-        }
-        if edges & TOP != 0 {
-            y0 = (y0 + dy).clamp(0., sh);
-        }
-        if edges & BOTTOM != 0 {
-            y1 = (y1 + dy).clamp(0., sh);
-        }
-        let (mut x0, mut x1, mut y0, mut y1) = (x0.min(x1), x0.max(x1), y0.min(y1), y0.max(y1));
-        if let Some(r) = self.ratio() {
-            if edges & (LEFT | RIGHT) != 0 {
-                let h = (x1 - x0) / r;
-                if edges & TOP != 0 { y0 = y1 - h } else { y1 = y0 + h }
-            } else {
-                let w = (y1 - y0) * r;
-                if edges & LEFT != 0 { x0 = x1 - w } else { x1 = x0 + w }
+    fn outcome(&mut self, outcome: Option<Outcome>, window: &mut Window) {
+        match outcome {
+            Some(Outcome::Done(picked)) => {
+                let (rect, window_picked) = picked.map_or((None, false), |(r, w)| (Some(r), w));
+                self.finish(rect, window_picked, window);
             }
-        }
-        self.clamp((x0, y0, x1 - x0, y1 - y0))
-    }
-
-    fn mouse_down(&mut self, e: &MouseDownEvent) {
-        let p = local(e.position);
-        // Still dragging: the button was let go past the monitor's edge,
-        // where the release went to another surface. This press ends it,
-        // as that release would have.
-        if let Some(drag) = self.drag.take() {
-            match self.selection {
-                Some(sel) if matches!(drag, Drag::New(_)) && sel.2 >= 4. && sel.3 >= 4. => {
-                    if self.adjust {
-                        self.before = None;
-                    } else {
-                        self.pending = Some(Some((sel, false)));
-                    }
+            Some(Outcome::Color(at)) => {
+                if let Some(hex) = self.color_at(at) {
+                    crate::platform::copy_text(&hex);
+                    crate::platform::notify(t("picker.color_copied"), &hex);
                 }
-                _ if matches!(drag, Drag::New(_)) && self.before.is_some() => self.selection = self.before.take(),
-                _ => {}
+                self.finish(None, false, window);
             }
-            return;
-        }
-        self.last = Some(p);
-        if self.adjust
-            && let Some(sel) = self.selection
-        {
-            if e.click_count == 2 && inside(sel, p) {
-                self.pending = Some(Some((sel, false)));
-                return;
-            }
-            if let Some(edges) = self.handle_at(p) {
-                self.drag = Some(Drag::Resize { edges, from: sel, start: p });
-                return;
-            }
-            if inside(sel, p) {
-                self.drag = Some(Drag::Move(p));
-                return;
-            }
-        }
-        if self.windows_only {
-            if let Some(win) = self.hovered_window() {
-                self.pending = Some(Some((win, true)));
-            }
-            return;
-        }
-        self.typing = None;
-        self.before = self.selection.take().filter(|_| self.adjust);
-        self.drag = Some(Drag::New(p));
-    }
-
-    fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
-        let p = local(e.position);
-        self.shift = e.modifiers.shift;
-        // Not only while the button reads as pressed: GPUI forgets it when the
-        // pointer leaves the monitor, and the drag goes on once it's back.
-        if self.drag.is_some() {
-            self.drag_to(p);
-        } else {
-            self.last = Some(p);
-        }
-        self.cursor = Some(p);
-        cx.notify();
-    }
-
-    fn drag_to(&mut self, p: (f32, f32)) {
-        // The pointer stops short of the right and bottom edges; within a
-        // pixel of them counts as on them.
-        let (sw, sh) = self.screen;
-        let p = (if p.0 >= sw - 1. { sw } else { p.0.max(0.) }, if p.1 >= sh - 1. { sh } else { p.1.max(0.) });
-        match self.drag {
-            Some(Drag::New(start)) if self.moving => {
-                // Space: drag the whole selection along.
-                if let (Some(last), Some(sel)) = (self.last, self.selection.as_mut()) {
-                    let (dx, dy) = (p.0 - last.0, p.1 - last.1);
-                    sel.0 += dx;
-                    sel.1 += dy;
-                    self.drag = Some(Drag::New((start.0 + dx, start.1 + dy)));
-                }
-            }
-            Some(Drag::New(start)) => {
-                let (mut dx, mut dy) = (p.0 - start.0, p.1 - start.1);
-                if let Some(r) = self.ratio() {
-                    dy = dx.abs() / r * if dy < 0. { -1. } else { 1. };
-                } else if self.shift {
-                    let m = dx.abs().max(dy.abs());
-                    (dx, dy) = (m * dx.signum(), m * dy.signum());
-                }
-                let (x0, y0) = (start.0.min(start.0 + dx), start.1.min(start.1 + dy));
-                self.selection = Some((x0, y0, dx.abs(), dy.abs()));
-            }
-            Some(Drag::Move(last)) => {
-                if let Some(sel) = self.selection {
-                    self.selection = Some(self.clamp((sel.0 + p.0 - last.0, sel.1 + p.1 - last.1, sel.2, sel.3)));
-                }
-                self.drag = Some(Drag::Move(p));
-            }
-            Some(Drag::Resize { edges, from, start }) => self.selection = Some(self.resized(from, edges, (p.0 - start.0, p.1 - start.1))),
             None => {}
         }
-        self.last = Some(p);
     }
 
     /// While dragging, keep the pointer on this monitor: the picker only
@@ -489,17 +250,17 @@ impl Picker {
     /// stop short, and a button let go on another monitor would never come.
     /// Pushed past an edge, the selection takes it in whole.
     fn watch_pointer(&mut self, cx: &mut Context<Self>) {
-        if self.drag.is_none() || self.watching {
+        if self.m.drag.is_none() || self.watching {
             return;
         }
         self.watching = true;
-        let ((ox, oy), (sw, sh)) = (self.origin, self.screen);
+        let ((ox, oy), (sw, sh)) = (self.origin, self.m.screen);
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(8)).await;
                 let pos = crate::platform::cursor_pos();
                 let going = this.update(cx, |picker, cx| {
-                    if picker.drag.is_none() {
+                    if picker.m.drag.is_none() {
                         picker.watching = false;
                         return false;
                     }
@@ -508,8 +269,8 @@ impl Picker {
                         if lx < 0. || ly < 0. || lx >= sw || ly >= sh {
                             let (cx0, cy0) = (lx.clamp(0., sw - 1.), ly.clamp(0., sh - 1.));
                             crate::platform::move_cursor((ox + cx0) as f64, (oy + cy0) as f64);
-                            picker.drag_to((lx.clamp(0., sw), ly.clamp(0., sh)));
-                            picker.cursor = Some((cx0, cy0));
+                            picker.m.drag_to((lx.clamp(0., sw), ly.clamp(0., sh)));
+                            picker.m.cursor = Some((cx0, cy0));
                             cx.notify();
                         }
                     }
@@ -523,147 +284,15 @@ impl Picker {
         .detach();
     }
 
-    fn mouse_up(&mut self, e: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if e.button != MouseButton::Left {
-            return;
-        }
-        if let Some(picked) = self.pending.take() {
-            let (rect, window_picked) = picked.map_or((None, false), |(r, w)| (Some(r), w));
-            return self.finish(rect, window_picked, window);
-        }
-        let Some(drag) = self.drag.take() else { return };
-        if !matches!(drag, Drag::New(_)) {
-            return cx.notify();
-        }
-        match self.selection {
-            Some(sel) if sel.2 >= 4. && sel.3 >= 4. => {
-                if self.adjust {
-                    self.before = None;
-                } else {
-                    self.finish(Some(sel), false, window);
-                }
-            }
-            // Only a click beside an adjusted selection: it stays.
-            _ if self.before.is_some() => self.selection = self.before.take(),
-            // A click: the window under it, else the colour or the whole monitor.
-            _ => match self.hovered_window().filter(|_| self.snap) {
-                Some(win) => self.finish(Some(win), true, window),
-                None if self.color => {
-                    if let Some(hex) = self.color_at(local(e.position)) {
-                        crate::platform::copy_text(&hex);
-                        crate::platform::notify(t("picker.color_copied"), &hex);
-                    }
-                    self.finish(None, false, window);
-                }
-                None => {
-                    let (sw, sh) = self.screen;
-                    self.finish(Some((0., 0., sw, sh)), false, window);
-                }
-            },
-        }
-        cx.notify();
-    }
-
-    fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window) {
-        let key = e.keystroke.key.as_str();
-        let (shift, alt) = (e.keystroke.modifiers.shift, e.keystroke.modifiers.alt);
-
-        // A size being typed: digits, then x (or Tab) and the height.
-        if let Some((w, h, on_h)) = self.typing.as_mut() {
-            let field = if *on_h { h } else { w };
-            match key {
-                "escape" => self.typing = None,
-                "enter" => self.apply_typed(),
-                "x" | "tab" | "space" => *on_h = true,
-                "backspace" if field.is_empty() => *on_h = false,
-                "backspace" => {
-                    field.pop();
-                }
-                k if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) && field.len() < 5 => field.push_str(k),
-                _ => {}
-            }
-            return;
-        }
-
-        match key {
-            "escape" => self.finish(None, false, window),
-            "enter" => {
-                let sel = self.selection.or(self.previous);
-                if sel.is_some() {
-                    self.finish(sel, false, window);
-                }
-            }
-            // Held while drawing: moves the selection. Pressed otherwise:
-            // windows only, or back to drawing an area.
-            "space" if matches!(self.drag, Some(Drag::New(_))) => self.moving = true,
-            "space" if !e.is_held && self.drag.is_none() && !self.editable() => self.windows_only = !self.windows_only,
-            "p" => {
-                if let Some(prev) = self.previous {
-                    self.selection = Some(self.clamp(prev));
-                    self.adjust = true;
-                }
-            }
-            "a" => {
-                self.aspect = (self.aspect + 1) % ASPECTS.len();
-                if let Some(sel) = self.selection {
-                    self.selection = Some(self.fit_ratio(sel));
-                    self.adjust = true;
-                }
-            }
-            "left" | "right" | "up" | "down" => {
-                let Some((x, y, w, h)) = self.selection else { return };
-                self.adjust = true;
-                let step = if shift { 10. } else { 1. };
-                let (dx, dy) = match key {
-                    "left" => (-step, 0.),
-                    "right" => (step, 0.),
-                    "up" => (0., -step),
-                    _ => (0., step),
-                };
-                let next = if alt {
-                    // Alt: the right and bottom edges grow and shrink.
-                    let (w, h) = ((w + dx).max(1.), (h + dy).max(1.));
-                    match self.ratio() {
-                        Some(r) if dx != 0. => (x, y, w, w / r),
-                        Some(r) => (x, y, h * r, h),
-                        None => (x, y, w, h),
-                    }
-                } else {
-                    (x + dx, y + dy, w, h)
-                };
-                self.selection = Some(self.clamp(next));
-            }
-            k if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) && self.selection.is_some() => {
-                self.adjust = true;
-                self.typing = Some((k.to_owned(), String::new(), false));
-            }
-            _ => {}
-        }
-    }
-
-    /// The typed size, in physical pixels, from the selection's corner. A
-    /// missing height follows the aspect ratio, or stays.
-    fn apply_typed(&mut self) {
-        let (Some((w, h, _)), Some(sel)) = (self.typing.take(), self.selection) else { return };
-        let s = self.scale;
-        let w = w.parse::<f32>().ok().filter(|v| *v > 0.).map(|v| v / s).unwrap_or(sel.2);
-        let h = match (h.parse::<f32>().ok().filter(|v| *v > 0.), self.ratio()) {
-            (Some(v), _) => v / s,
-            (None, Some(r)) => w / r,
-            (None, None) => sel.3,
-        };
-        self.selection = Some(self.clamp((sel.0, sel.1, w, h)));
-    }
-
     /// One screen pixel's side in the magnifier, in physical pixels: whole,
     /// so every pixel there is an equal square.
     fn cell_px(&self) -> u32 {
-        (CELL * self.scale).round().max(2.) as u32
+        (CELL * self.m.scale).round().max(2.) as u32
     }
 
     /// The magnifier's side in logical pixels: a whole number of cells.
     fn loupe(&self) -> f32 {
-        (CELLS * self.cell_px()) as f32 / self.scale
+        (CELLS * self.cell_px()) as f32 / self.m.scale
     }
 
     /// The magnifier around the pixel (ix, iy), which sits whole in the
@@ -692,22 +321,18 @@ impl Picker {
 
     /// The colour under the pointer, as "#RRGGBB".
     fn color_at(&self, (x, y): (f32, f32)) -> Option<String> {
-        let (px_x, px_y) = ((x * self.scale) as u32, (y * self.scale) as u32);
+        let (px_x, px_y) = ((x * self.m.scale) as u32, (y * self.m.scale) as u32);
         let p = self.frozen.get_pixel_checked(px_x, px_y)?.0;
         Some(format!("#{:02X}{:02X}{:02X}", p[0], p[1], p[2]))
     }
 
     fn cursor_style(&self) -> CursorStyle {
-        match (self.drag, self.cursor) {
-            (Some(Drag::Resize { edges, .. }), _) => resize_cursor(edges),
-            (Some(Drag::Move(_)), _) => CursorStyle::ClosedHand,
-            (None, _) if self.windows_only => CursorStyle::PointingHand,
-            (None, Some(p)) if self.editable() => match self.handle_at(p) {
-                Some(edges) => resize_cursor(edges),
-                None if self.selection.is_some_and(|s| inside(s, p)) => CursorStyle::OpenHand,
-                None => CursorStyle::Crosshair,
-            },
-            _ => CursorStyle::Crosshair,
+        match self.m.cursor_shape() {
+            Cursor::Resize(edges) => resize_cursor(edges),
+            Cursor::ClosedHand => CursorStyle::ClosedHand,
+            Cursor::OpenHand => CursorStyle::OpenHand,
+            Cursor::PointingHand => CursorStyle::PointingHand,
+            Cursor::Crosshair => CursorStyle::Crosshair,
         }
     }
 }
@@ -724,17 +349,17 @@ fn plate() -> gpui::Div {
 
 impl Render for Picker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (sw, sh) = self.screen;
+        let (sw, sh) = self.m.screen;
         let accent = cx.theme().colors().text_accent;
         let picture = self.picture.clone();
-        let selection = self.selection;
-        let editable = self.editable();
-        let hovered = if selection.is_none() && (self.snap || self.windows_only) && self.drag.is_none() { self.hovered_window() } else { None };
+        let selection = self.m.selection;
+        let editable = self.m.editable();
+        let hovered = if selection.is_none() && (self.m.snap || self.m.windows_only) && self.m.drag.is_none() { self.m.hovered_window() } else { None };
         let lit = selection.or(hovered);
         // Guides and the magnifier while aiming, not while adjusting.
-        let aiming = (!editable && !self.windows_only) || matches!(self.drag, Some(Drag::Resize { .. }));
-        let cursor = self.cursor;
-        let guides = cursor.filter(|_| self.drag.is_none() && !editable && !self.windows_only);
+        let aiming = (!editable && !self.m.windows_only) || matches!(self.m.drag, Some(Drag::Resize { .. }));
+        let cursor = self.m.cursor;
+        let guides = cursor.filter(|_| self.m.drag.is_none() && !editable && !self.m.windows_only);
 
         // The frozen screen, dimmed outside what would be taken, with guides.
         let scene = canvas(
@@ -773,11 +398,11 @@ impl Render for Picker {
         // The selection's size in real pixels under its bottom-right corner,
         // with the aspect ratio; a typed size shows as it's typed.
         let label = selection.map(|(x, y, w, h)| {
-            let size_text = match &self.typing {
+            let size_text = match &self.m.typing {
                 Some((tw, th, on_h)) => format!("{}{} × {}{}", tw, if *on_h { "" } else { "|" }, th, if *on_h { "|" } else { "" }),
-                None => format!("{} × {}", (w * self.scale).round(), (h * self.scale).round()),
+                None => format!("{} × {}", (w * self.m.scale).round(), (h * self.m.scale).round()),
             };
-            let (aspect_key, ratio) = ASPECTS[self.aspect];
+            let (aspect_key, ratio) = ASPECTS[self.m.aspect];
             let aspect = if ratio.is_some() { aspect_key } else { t(aspect_key) };
             let width = 240.;
             let (lx, ly) = ((x + w - width).max(4.), if y + h + 34. < sh { y + h + 8. } else { (y - 30.).max(4.) });
@@ -800,10 +425,7 @@ impl Render for Picker {
                             // A click cycles the ratio, like A.
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
-                                this.aspect = (this.aspect + 1) % ASPECTS.len();
-                                if let Some(sel) = this.selection {
-                                    this.selection = Some(this.fit_ratio(sel));
-                                }
+                                this.m.key("a", false, false, false);
                                 cx.notify();
                             })),
                     )
@@ -812,7 +434,7 @@ impl Render for Picker {
 
         // The magnifier follows the pointer, flipping away from the edges.
         // Made again only when the pointer reaches another pixel.
-        if let Some(at) = cursor.map(|(x, y)| ((x * self.scale).max(0.) as u32, (y * self.scale).max(0.) as u32))
+        if let Some(at) = cursor.map(|(x, y)| ((x * self.m.scale).max(0.) as u32, (y * self.m.scale).max(0.) as u32))
             && self.lens.as_ref().is_none_or(|l| l.0 != at)
         {
             let lens = self.lens_at(at);
@@ -820,7 +442,7 @@ impl Render for Picker {
                 let _ = window.drop_image(old);
             }
         }
-        let (scale, size_l, cell) = (self.scale, self.loupe(), self.cell_px() as f32 / self.scale);
+        let (scale, size_l, cell) = (self.m.scale, self.loupe(), self.cell_px() as f32 / self.m.scale);
         // The white frame sits outside the lens, a whole number of physical
         // pixels wide, and the lens lands on whole pixels: nothing is cut.
         let edge = (2. * scale).round() / scale;
@@ -851,23 +473,23 @@ impl Render for Picker {
                 .items_center()
                 .gap_1()
                 .child(div().size(px(outer)).p(px(edge)).rounded(px(12. + edge)).bg(gpui::white()).shadow(kit::shadow()).child(lens))
-                .child(plate().font_family(kit::MONO_FONT).text_xs().child(format!("{}, {}  {}", (x * self.scale).round(), (y * self.scale).round(), self.color_at((x, y)).unwrap_or_default())))
+                .child(plate().font_family(kit::MONO_FONT).text_xs().child(format!("{}, {}  {}", (x * self.m.scale).round(), (y * self.m.scale).round(), self.color_at((x, y)).unwrap_or_default())))
         });
 
         // What the keys do right now, at the bottom of the screen.
         let mut keys: Vec<(&str, &str)> = Vec::new();
-        if self.typing.is_some() {
+        if self.m.typing.is_some() {
             keys.extend([("Enter", t("picker.set_size")), ("X", t("picker.height")), ("Esc", t("common.cancel"))]);
         } else if editable {
             keys.extend([("Enter", t("picker.take")), (t("picker.arrows"), t("picker.move")), (t("picker.alt_arrows"), t("picker.resize")), ("A", t("picker.aspect")), ("0–9", t("picker.size")), ("Esc", t("common.cancel"))]);
-        } else if self.windows_only {
+        } else if self.m.windows_only {
             keys.extend([(t("picker.click"), t("picker.take_window")), (t("picker.space"), t("picker.area")), ("Esc", t("common.cancel"))]);
-        } else if self.drag.is_none() {
+        } else if self.m.drag.is_none() {
             keys.push((t("picker.space"), t("common.window")));
-            if self.previous.is_some() {
+            if self.m.previous.is_some() {
                 keys.extend([("P", t("picker.previous_area")), ("Enter", t("picker.take_previous"))]);
             }
-            keys.extend([("A", ASPECTS[self.aspect].1.map(|_| ASPECTS[self.aspect].0).unwrap_or(t("picker.aspect"))), ("Esc", t("common.cancel"))]);
+            keys.extend([("A", ASPECTS[self.m.aspect].1.map(|_| ASPECTS[self.m.aspect].0).unwrap_or(t("picker.aspect"))), ("Esc", t("common.cancel"))]);
         }
         let hints = (!keys.is_empty()).then(|| {
             div().absolute().bottom(px(28. * kit::SCALE)).left_0().right_0().flex().justify_center().child(
@@ -883,23 +505,30 @@ impl Render for Picker {
             .cursor(self.cursor_style())
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                this.key_down(e, window);
+                let k = &e.keystroke;
+                let outcome = this.m.key(&k.key, k.modifiers.shift, k.modifiers.alt, e.is_held);
+                this.outcome(outcome, window);
                 cx.notify();
             }))
-            .on_key_up(cx.listener(|this, e: &KeyUpEvent, _, _| {
-                if e.keystroke.key == "space" {
-                    this.moving = false;
-                }
-            }))
+            .on_key_up(cx.listener(|this, e: &KeyUpEvent, _, _| this.m.key_up(&e.keystroke.key)))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                this.mouse_down(e);
+                this.m.press(local(e.position), e.click_count);
                 this.watch_pointer(cx);
                 cx.notify();
             }))
             // On release, for the same reason as `pending`.
             .on_mouse_up(MouseButton::Right, cx.listener(|this, _, window, _| this.finish(None, false, window)))
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| this.mouse_move(e, cx)))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, e: &MouseUpEvent, window, cx| this.mouse_up(e, window, cx)))
+            // Not only while the button reads as pressed: GPUI forgets it when the
+            // pointer leaves the monitor, and the drag goes on once it's back.
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                this.m.motion(local(e.position), e.modifiers.shift);
+                cx.notify();
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _: &MouseUpEvent, window, cx| {
+                let outcome = this.m.release();
+                this.outcome(outcome, window);
+                cx.notify();
+            }))
             .child(scene)
             .children(hints)
             .children(label)
