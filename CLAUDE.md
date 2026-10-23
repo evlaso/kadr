@@ -2,7 +2,7 @@
 
 CleanShot X–style screenshots and screen recording in Rust on GPUI CE (the community fork of Zed's GPUI). The main target is Linux: Omarchy (Arch, Hyprland, Wayland). macOS and Windows build in CI (on a `v*` tag or a manual run; Linux on every push) and share one implementation of most system pieces through cross-platform crates (`kadr-platform/src/desktop.rs`: arboard, notify-rust, trash, xcap; `tray.rs`: tray-icon, global-hotkey); recording and window picking there are still stubs. Nobody has run them on a real machine yet.
 
-Where it's heading: `docs/SPEC.ru.md` (a workspace with the UI as a replaceable layer, tests, budgets, a measured experiment on leaving GPUI). Phases 0 and 1 are done: the base numbers in `docs/perf.md`, golden tests of the rasteriser, dev hooks; core, raster, ui (the editor's state), platform and media as crates under the GPUI app. E2e and the bench run in a nested Hyprland. View-models so far: editor, settings, cards. Not done yet from the spec: phase 2 (the spike), then the tray as its own crate.
+Where it's heading: `docs/SPEC.ru.md` (a workspace with the UI as a replaceable layer, tests, budgets, a measured experiment on leaving GPUI). Phases 0 and 1 are done: the base numbers in `docs/perf.md`, golden tests of the rasteriser, dev hooks; core, raster, ui (the editor's state), platform and media as crates under the GPUI app. E2e and the bench run in a nested Hyprland. View-models so far: editor, settings, cards. Phase 2's spikes are on branches `spike/iced` and `spike/tauri`, measured by `scripts/spike.py <gpui|iced|tauri>`; results and the open decision in `docs/perf.md`. Next from the spec: the tray as its own crate.
 
 The user talks in Russian. Code, comments and commit messages are in English.
 

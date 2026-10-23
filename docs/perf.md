@@ -165,6 +165,46 @@ to it, not copies.
   rebuilt by an incremental profile), then `cargo build --release` and
   `cargo build --profile fast`.
 
-## Spike results
+## Spike results (phase 2)
 
-Not run yet (phase 2).
+2026-10-23. Each shell implements the settings, a card and the editor with
+three tools (arrow, box, text) over the same view-models (`kadr-ui`) and
+rasteriser (`kadr-raster`): GPUI CE (the app), iced 0.14.0 (branch
+`spike/iced`, `crates/kadr-ui-iced`), Tauri 2.12.5 with the system's
+WebKitGTK (branch `spike/tauri`, `crates/kadr-ui-tauri`). All measured by
+`scripts/spike.py <shell>` in the nested Hyprland, the same way, median of 3;
+memory and CPU over the whole process tree (Tauri's page draws in WebKit's
+own processes).
+
+| Metric | GPUI CE | iced | Tauri |
+|---|---|---|---|
+| Edit → window with a 4K picture | 304 ms | **179 ms** (−41 %) | 671 ms (+121 %) |
+| Editor RSS with a 4K picture | 263 MB | 301 MB (+14 %) | 564 MB (+114 %, 3 processes) |
+| Idle CPU, editor open | 0.1 % | 0.1 % | 0.0 % |
+| Binary (dist) | 25.0 MB | **17.6 MB** | 7.6 MB, plus the system's WebKitGTK |
+| Incremental `--release` build | 0.7 s | 0.4 s | 0.6 s |
+| Arrow, box and text with a real pointer and keyboard, saved | yes | yes | yes |
+| Settings search, a card that goes in time | yes | yes | yes |
+
+Not compared: hotkey → overlay (the spec gives the overlay its own crate,
+`kadr-overlay`, shared by every shell; not built yet), and the tray's idle
+RSS (the tray has no UI framework, so it's the same for all).
+
+The decision rule (SPEC §9.4), as far as it can be checked here:
+
+1. No Linux metric more than 15 % worse than GPUI: **iced passes** (memory
+   +14 %, everything else better or equal); **Tauri fails** (opening +121 %,
+   memory +114 %).
+2. The spike running on macOS or Windows without changes to the framework's
+   platform layer: **not checked** — no Mac or Windows machine here, and the
+   CI's macOS and Windows jobs don't start (the account's billing).
+3. The UI tests passing unchanged: the spikes have no dev hooks; the same
+   pointer-and-keyboard check (`scripts/spike.py`, `kadr-pointer`, `wtype`)
+   ran unchanged against all three and passed, which shows the view-models
+   are apart from the frameworks, but it isn't the §6.3 hook suite.
+4. The editor with a 4K picture not lagging while dragging: a person's call.
+
+So: Tauri is out on the numbers. iced is a candidate that hasn't failed
+anything measurable, but rules 2 and 4 need the user (a Mac or Windows run,
+and a hand on the editor) before a migration is decided. Until then kadr
+stays on GPUI CE and both spike branches are kept.
