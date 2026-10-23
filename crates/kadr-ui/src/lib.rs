@@ -3,6 +3,7 @@
 //! it and turn input into these calls, so the behaviour is tested without a
 //! window and another framework could draw the same thing.
 
+pub mod cards;
 pub mod editor;
 pub mod history;
 pub mod settings;

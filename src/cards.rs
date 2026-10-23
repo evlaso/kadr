@@ -5,7 +5,6 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::kit::{Anchor, KeyboardInteractivity};
@@ -21,6 +20,7 @@ use crate::settings::{Settings, Side};
 use crate::storage::Capture;
 use crate::{editor, job, ocr, pin, studio_editor, track, trim, util};
 use crate::i18n::t;
+use kadr_ui::cards::CardsVm;
 
 const CARD_WIDTH: f32 = 180. * kit::SCALE;
 /// The height of the text buttons in the middle of a hovered card; their
@@ -51,11 +51,6 @@ const PAD: f32 = 56.;
 const EDGE: f32 = 24.;
 
 /// When an untouched card goes away; "never" is a long way off.
-fn dismiss_at(settings: &Settings) -> Instant {
-    let secs = if settings.card_seconds == 0 { 365 * 24 * 3600 } else { settings.card_seconds as u64 };
-    Instant::now() + Duration::from_secs(secs)
-}
-
 #[derive(Default)]
 struct CardsWindow(Option<WindowHandle<CardStack>>);
 
@@ -69,9 +64,8 @@ struct Thumb {
     blurred: Arc<Image>,
 }
 
-struct Card {
-    id: usize,
-    path: PathBuf,
+/// What a card shows, beside what `kadr_ui::cards` keeps of it.
+struct CardView {
     image: Option<Thumb>,
     /// A text card (recognized text) instead of a file: the text, or None
     /// when nothing was found.
@@ -85,25 +79,19 @@ struct Card {
     height: f32,
     /// Clip duration in seconds for recordings.
     video: Option<f64>,
-    deadline: Instant,
-    hovered: bool,
 }
+
+type Card = kadr_ui::cards::Card<CardView>;
 
 /// How long a card takes to slide in from the screen edge.
 const SLIDE: Duration = Duration::from_millis(280);
 
 pub struct CardStack {
-    cards: Vec<Card>,
+    /// The cards, their time, hover and swipes: `kadr_ui`'s.
+    vm: CardsVm<CardView>,
     settings: Settings,
     hidden: bool,
     region: InputRegion,
-    /// Whether the pointer is over this layer. GPUI keeps the last pointer
-    /// position after it leaves, so hover on its own would stick.
-    inside: bool,
-    /// A card being swiped toward the screen edge: its id, where the press
-    /// was, and how far it has moved. Swiped far enough, it goes away;
-    /// dragged the other way, it's a file drag as before.
-    swipe: Option<(usize, f32, f32)>,
 }
 
 /// How far a card has to be swiped to go away.
@@ -125,7 +113,7 @@ pub fn show(path: PathBuf, cx: &mut App) {
         };
         match loaded {
             Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(Card { id: 0, path, image: Some(image), text: None, link: None, job: None, height, video, deadline: Instant::now(), hovered: false }, cx));
+                let _ = cx.update(|cx| add(path, CardView { image: Some(image), text: None, link: None, job: None, height, video }, cx));
             }
             None => util::notify(t("card.couldnt_open_file"), &path.display().to_string()),
         }
@@ -184,7 +172,7 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
     let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) else { return false };
     handle
         .update(cx, |stack, _, cx| {
-            let was = !stack.hidden && !stack.cards.is_empty();
+            let was = !stack.hidden && !stack.vm.cards.is_empty();
             stack.hidden = hidden;
             cx.notify();
             was
@@ -194,25 +182,24 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
 
 /// A card with recognized text (copied already), or with "nothing found".
 pub fn show_text(text: Option<String>, link: Option<String>, cx: &mut App) {
-    add(Card { id: 0, path: PathBuf::new(), image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
+    add(PathBuf::new(), CardView { image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None }, cx);
 }
 
 /// A card for a job on `source` (an export, a trim, a GIF): the video's
 /// first frame, blurred, with the job's progress. Returns its id for
 /// `complete`.
 pub fn show_job(job: Rc<job::Job>, title: &'static str, source: PathBuf, cx: &mut App) -> usize {
-    let id = NEXT_CARD.fetch_add(1, Ordering::Relaxed);
-    add(Card { id, path: source.clone(), image: None, text: None, link: None, job: Some((job, title)), height: THUMB_MAX, video: None, deadline: Instant::now(), hovered: false }, cx);
+    let id = add(source.clone(), CardView { image: None, text: None, link: None, job: Some((job, title)), height: THUMB_MAX, video: None }, cx);
     cx.spawn(async move |cx| {
         if let Some((image, _, _)) = video_preview(&source, cx).await {
-            let _ = cx.update(|cx| with_card(id, cx, |card| card.image = Some(image)));
+            let _ = cx.update(|cx| with_card(id, cx, |card| card.view.image = Some(image)));
         }
         // Keep the progress moving while the job runs.
         loop {
             cx.background_executor().timer(Duration::from_millis(200)).await;
             let running = cx.update(|cx| {
                 let mut running = false;
-                with_card(id, cx, |card| running = card.job.is_some());
+                with_card(id, cx, |card| running = card.view.job.is_some());
                 running
             });
             if !running {
@@ -241,15 +228,15 @@ pub fn complete(id: usize, result: Option<PathBuf>, cx: &mut App) {
             cx.background_executor().spawn(async move { card_thumbnail(&std::fs::read(&file).ok()?) }).await.map(|(image, height, _)| (image, height, None))
         };
         let _ = cx.update(|cx| {
-            let settings = Settings::load();
+            with_stack(cx, |stack| {
+                stack.vm.complete(id, out.clone(), Instant::now());
+            });
             with_card(id, cx, |card| {
-                card.path = out.clone();
-                card.job = None;
-                card.deadline = dismiss_at(&settings);
+                card.view.job = None;
                 if let Some((image, height, video)) = loaded {
-                    card.image = Some(image);
-                    card.height = height;
-                    card.video = video;
+                    card.view.image = Some(image);
+                    card.view.height = height;
+                    card.view.video = video;
                 }
             });
         });
@@ -257,54 +244,44 @@ pub fn complete(id: usize, result: Option<PathBuf>, cx: &mut App) {
     .detach();
 }
 
-/// Change a card in place and redraw the stack.
-fn with_card(id: usize, cx: &mut App, change: impl FnOnce(&mut Card)) {
+/// Change the stack on screen, if there is one, and redraw it.
+fn with_stack(cx: &mut App, change: impl FnOnce(&mut CardStack)) {
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let _ = handle.update(cx, |stack, _, cx| {
-            if let Some(card) = stack.cards.iter_mut().find(|c| c.id == id) {
-                change(card);
-            }
+            change(stack);
             cx.notify();
         });
     }
 }
 
-/// Card ids, unique for the run.
-static NEXT_CARD: AtomicUsize = AtomicUsize::new(1);
+/// Change a card in place and redraw the stack.
+fn with_card(id: usize, cx: &mut App, change: impl FnOnce(&mut Card)) {
+    with_stack(cx, |stack| {
+        if let Some(card) = stack.vm.get_mut(id) {
+            change(card);
+        }
+    });
+}
 
-fn add(card: Card, cx: &mut App) {
-    let settings = Settings::load();
-    // A job's card stays until the job is done.
-    let deadline = if card.job.is_some() { Instant::now() + Duration::from_secs(365 * 24 * 3600) } else { dismiss_at(&settings) };
-    let mut card = Card { deadline, ..card };
-    if card.id == 0 {
-        card.id = NEXT_CARD.fetch_add(1, Ordering::Relaxed);
-    }
-    let mut slot = Some(card);
-
+/// Show a card for `path` (empty for a text card); its id.
+fn add(path: PathBuf, view: CardView, cx: &mut App) -> usize {
+    let working = view.job.is_some();
+    let mut slot = Some((path, view));
     if let Some(handle) = cx.try_global::<CardsWindow>().and_then(|w| w.0) {
         let pushed = handle.update(cx, |stack, _, cx| {
-            let card = slot.take().expect("card");
-            // The same file's card already showing (back from the editor, or
-            // saved over): it takes the new picture in its place.
-            if !card.path.as_os_str().is_empty()
-                && let Some(shown) = stack.cards.iter_mut().find(|c| c.path == card.path)
-            {
-                *shown = Card { id: shown.id, ..card };
-                return cx.notify();
-            }
-            stack.cards.push(card);
-            if stack.cards.len() > stack.settings.max_cards {
-                stack.cards.remove(0);
-            }
+            let (path, view) = slot.take().expect("card");
             cx.notify();
+            stack.vm.add(path, working, view, Instant::now())
         });
-        if pushed.is_ok() {
-            return;
+        if let Ok(id) = pushed {
+            return id;
         }
     }
     // No stack on screen (or it just closed): open a fresh one.
-    let Some(card) = slot else { return };
+    let Some((path, view)) = slot else { return 0 };
+    let settings = Settings::load();
+    let mut vm = CardsVm::new(&settings);
+    let id = vm.add(path, working, view, Instant::now());
     let spec = LayerSpec {
         namespace: "kadr",
         anchor: Anchor::BOTTOM | if settings.card_side == Side::Right { Anchor::RIGHT } else { Anchor::LEFT },
@@ -317,10 +294,11 @@ fn add(card: Card, cx: &mut App) {
     let handle = kit::open_layer(cx, spec, |window, cx| {
         cx.new(|cx| {
             CardStack::start_ticking(window, cx);
-            CardStack { cards: vec![card], settings, hidden: false, region: InputRegion::default(), inside: false, swipe: None }
+            CardStack { vm, settings, hidden: false, region: InputRegion::default() }
         })
     });
     cx.set_global(CardsWindow(handle));
+    id
 }
 
 impl CardStack {
@@ -331,13 +309,11 @@ impl CardStack {
                 cx.background_executor().timer(Duration::from_millis(250)).await;
                 let alive = this.update_in(cx, |stack, window, cx| {
                     let now = Instant::now();
-                    let before = stack.cards.len();
-                    let inside = window.is_window_hovered();
-                    stack.cards.retain(|c| (c.hovered && inside) || now < c.deadline);
-                    if stack.cards.len() != before {
+                    stack.vm.pointer(window.is_window_hovered(), now);
+                    if stack.vm.tick(now) {
                         cx.notify();
                     }
-                    if stack.cards.is_empty() {
+                    if stack.vm.cards.is_empty() {
                         window.remove_window();
                         false
                     } else {
@@ -353,53 +329,45 @@ impl CardStack {
     }
 
     fn remove(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.cards.retain(|c| c.id != id);
-        if self.cards.is_empty() {
+        self.vm.remove(id);
+        if self.vm.cards.is_empty() {
             window.remove_window();
         }
         cx.notify();
     }
 
     fn swipe_offset(&self, id: usize) -> f32 {
-        self.swipe.filter(|s| s.0 == id).map_or(0., |s| s.2)
+        self.vm.offset(id)
     }
 
     /// Follow the pointer toward the screen edge, never away from it.
     fn swipe_move(&mut self, x: f32, cx: &mut Context<Self>) {
-        let side = self.settings.card_side;
-        if let Some((_, start, offset)) = &mut self.swipe {
-            let dx = x - *start;
-            *offset = if side == Side::Right { dx.max(0.) } else { dx.min(0.) };
+        if self.vm.swipe_move(x) {
             cx.notify();
         }
     }
 
+    /// Swiped far enough, the card goes; dragged the other way, it's a file
+    /// drag as before.
     fn swipe_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((id, _, offset)) = self.swipe.take() {
-            if offset.abs() > SWIPE_AWAY {
-                self.remove(id, window, cx);
-            }
-            cx.notify();
+        if self.vm.swipe_end(SWIPE_AWAY).is_some() && self.vm.cards.is_empty() {
+            window.remove_window();
         }
+        cx.notify();
     }
 
     fn set_hover(&mut self, id: usize, hovered: bool) {
-        if let Some(card) = self.cards.iter_mut().find(|c| c.id == id) {
-            card.hovered = hovered;
-            if !hovered {
-                card.deadline = dismiss_at(&self.settings);
-            }
-        }
+        self.vm.hover(id, hovered, Instant::now());
     }
 
     /// CleanShot's Quick Access look in Zed's components: just the picture;
     /// hovering shows the main actions in the middle and the rest in the
     /// corners. Drag it out as a file; double-click to edit.
     fn render_card(&self, card: &Card, inside: bool, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(text) = &card.text {
+        if let Some(text) = &card.view.text {
             return self.render_text_card(card, text.as_deref(), inside, cx);
         }
-        if let Some((job, title)) = &card.job {
+        if let Some((job, title)) = &card.view.job {
             return self.render_job_card(card, job.clone(), title, cx);
         }
         let shown = card.hovered && inside;
@@ -407,7 +375,7 @@ impl CardStack {
         let away = (CARD_WIDTH + EDGE + PAD) * if self.settings.card_side == Side::Right { 1. } else { -1. };
         let id = card.id;
         let path = card.path.clone();
-        let video = card.video.is_some();
+        let video = card.view.video.is_some();
         let gif = is_gif(&path);
         let has_track = video && track::path_for(&path).exists();
 
@@ -505,7 +473,7 @@ impl CardStack {
             .rounded(px(RADIUS))
             .opacity(if shown { 1. } else { 0. })
             // The picture blurs and dims behind the buttons.
-            .when_some(card.image.as_ref().filter(|_| shown), |d, image| d.child(img(image.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
+            .when_some(card.view.image.as_ref().filter(|_| shown), |d, image| d.child(img(image.blurred.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
             .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x00000052)))
             .flex()
             .items_center()
@@ -533,7 +501,7 @@ impl CardStack {
             );
 
         // The length in the corner, like in the history.
-        let badge = card.video.map(|secs| {
+        let badge = card.view.video.map(|secs| {
             div()
                 .absolute()
                 .top(px(INSET))
@@ -558,7 +526,7 @@ impl CardStack {
         // below, and a terminal there selects text onto the clipboard.
         let press = cx.listener(move |this, e: &MouseDownEvent, _, _| {
             if e.click_count != 2 {
-                this.swipe = Some((id, f32::from(e.position.x), 0.));
+                this.vm.swipe_start(id, f32::from(e.position.x));
             }
         });
         let double_click = {
@@ -576,13 +544,13 @@ impl CardStack {
             .relative()
             .flex_none()
             .w(px(CARD_WIDTH))
-            .h(px(card.height))
+            .h(px(card.view.height))
             .rounded(px(RADIUS))
             .shadow(kit::shadow())
             .bg(cx.theme().colors().elevated_surface_background)
             // GPUI clips children to a rectangle, so the image rounds its own
             // corners; it is pre-cropped to the card so those are the visible ones.
-            .children(card.image.as_ref().map(|image| img(image.sharp.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
+            .children(card.view.image.as_ref().map(|image| img(image.sharp.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
             .children(badge)
             .child(hover)
             .child(edge())
@@ -616,11 +584,11 @@ impl CardStack {
             .relative()
             .flex_none()
             .w(px(CARD_WIDTH))
-            .h(px(card.height))
+            .h(px(card.view.height))
             .rounded(px(RADIUS))
             .shadow(kit::shadow())
             .bg(colors.elevated_surface_background)
-            .children(card.image.as_ref().map(|image| img(image.blurred.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
+            .children(card.view.image.as_ref().map(|image| img(image.blurred.clone()).size_full().object_fit(ObjectFit::Fill).rounded(px(RADIUS))))
             .child(div().absolute().inset_0().rounded(px(RADIUS)).bg(rgba(0x00000066)))
             .child(
                 v_flex()
@@ -682,7 +650,7 @@ impl CardStack {
                 .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
         };
         let copy = text.map(|t| t.to_owned());
-        let link = card.link.clone();
+        let link = card.view.link.clone();
         let hover = div()
             .absolute()
             .inset_0()
@@ -742,7 +710,7 @@ impl CardStack {
             .relative()
             .flex_none()
             .w(px(CARD_WIDTH))
-            .h(px(card.height))
+            .h(px(card.view.height))
             .rounded(px(RADIUS))
             .shadow(kit::shadow())
             .bg(surface)
@@ -766,10 +734,23 @@ impl CardStack {
             .child(edge())
             .child(self.region.mark())
             .on_hover(cx.listener(move |this, hovered: &bool, _, _| this.set_hover(id, *hovered)))
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, _| this.swipe = Some((id, f32::from(e.position.x), 0.))));
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, _| this.vm.swipe_start(id, f32::from(e.position.x))));
         let swiped = self.swipe_offset(id);
         let card_el = card_el.opacity(1. - (swiped.abs() / CARD_WIDTH).min(1.) * 0.8);
         card_el.with_animation(("appear", id), Animation::new(SLIDE).with_easing(ease_out_quint()), move |el, d| el.left(px(away * (1. - d)))).into_any_element()
+    }
+}
+
+impl CardStack {
+    /// For `kadr dev state`.
+    pub(crate) fn dev_state(&self) -> serde_json::Value {
+        let cards: Vec<_> = self
+            .vm
+            .cards
+            .iter()
+            .map(|c| serde_json::json!({ "id": c.id, "path": c.path.display().to_string(), "working": c.working, "hovered": c.hovered, "text": c.view.text }))
+            .collect();
+        serde_json::json!({ "cards": cards, "hidden": self.hidden })
     }
 }
 
@@ -780,13 +761,11 @@ impl Render for CardStack {
             window.set_input_region(Some(&[]));
             return kit::root(cx);
         }
+        // GPUI keeps the last pointer position after it leaves, so hover on
+        // its own would stick.
         let inside = window.is_window_hovered();
-        if self.inside && !inside {
-            let settings = self.settings.clone();
-            self.cards.iter_mut().filter(|c| c.hovered).for_each(|c| c.deadline = dismiss_at(&settings));
-        }
-        self.inside = inside;
-        let cards: Vec<_> = self.cards.iter().map(|c| self.render_card(c, inside, cx)).collect();
+        self.vm.pointer(inside, Instant::now());
+        let cards: Vec<_> = self.vm.cards.iter().map(|c| self.render_card(c, inside, cx)).collect();
         kit::root(cx)
             .flex()
             .flex_col()

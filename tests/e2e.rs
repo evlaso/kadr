@@ -179,6 +179,12 @@ fn an_area_screenshot_is_what_was_on_screen() {
     let shot = image::open(&saved).expect("the screenshot").to_rgba8();
     let share = alike(&shot, &before);
     assert!(share > 0.99, "the screenshot differs from the screen: {:.1}% alike", share * 100.);
+
+    // And its card shows in the corner.
+    let card = s.window("kadr");
+    let state = s.dev(&["state", &card["id"].to_string()]);
+    let paths: Vec<&str> = state["view"]["cards"].as_array().into_iter().flatten().filter_map(|c| c["path"].as_str()).collect();
+    assert_eq!(paths, [saved.to_str().unwrap()], "the card is the screenshot's");
 }
 
 /// Scenario 2: draw an arrow in the editor and save; the file is what the
@@ -246,6 +252,16 @@ fn the_studio_exports_a_recording() {
     assert!((duration - 3.).abs() < 0.2, "lasts {duration} s");
     let (w, h) = (v["streams"][0]["width"].as_u64().unwrap_or(0), v["streams"][0]["height"].as_u64().unwrap_or(0));
     assert!(w >= 1280 && h >= 720 && w % 2 == 0 && h % 2 == 0, "{w}×{h}");
+
+    // The export's card became the result's.
+    let card = s.window("kadr");
+    let done = wait(Duration::from_secs(5), || {
+        let state = s.try_dev(&["state", &card["id"].to_string()])?;
+        let c = state["view"]["cards"].as_array()?.first()?.clone();
+        (c["working"] == false).then_some(c)
+    })
+    .expect("the job's card never finished");
+    assert_eq!(done["path"], out.to_str().unwrap());
 }
 
 /// Scenario 4: the theme switch in the settings changes the window from dark
