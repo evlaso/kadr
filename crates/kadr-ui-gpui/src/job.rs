@@ -1,5 +1,5 @@
-//! Long ffmpeg jobs (studio render, trimming, GIF export) with a Zed-style
-//! progress toast at the bottom of the screen that can cancel them.
+//! Long ffmpeg jobs (studio render, trimming, GIF export) with a progress
+//! card at the bottom of the screen that can cancel them.
 
 use std::rc::Rc;
 use std::time::Duration;

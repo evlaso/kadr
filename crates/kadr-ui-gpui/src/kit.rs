@@ -15,20 +15,19 @@ use crate::ui::{ActiveTheme, KeyBinding, LabelSize};
 use crate::util::Mon;
 use crate::i18n::t;
 
-/// Base size of kadr's components (rems). Zed uses 16px; kadr's overlays are
-/// read at a glance over other windows, so everything is a notch larger.
+/// Base size of kadr's components (rems). Over the usual 16px: kadr's
+/// overlays are read at a glance over other windows, so a notch larger.
 pub const REM: f32 = 19.;
 /// Scale for kadr's own fixed pixel sizes, to match `REM`.
 pub const SCALE: f32 = REM / 16.;
 
-/// Zed's UI font, bundled so kadr looks the same without Zed installed.
 /// The system's own UI font: San Francisco, Segoe UI, or the desktop's sans
 /// on Linux.
 pub(crate) const UI_FONT: &str = ".SystemUIFont";
 /// Text drawn onto screenshots: bundled, so it looks the same everywhere
 /// and matches the editor's own rasteriser.
 pub(crate) const ANNOTATION_FONT: &str = "IBM Plex Sans";
-/// Zed's monospace font, for timers and numbers.
+/// The bundled monospace font, for timers and numbers.
 pub const MONO_FONT: &str = "Lilex";
 
 macro_rules! assets {
@@ -156,12 +155,12 @@ pub fn shadow() -> Vec<BoxShadow> {
     ]
 }
 
-/// A key hint drawn the way Zed shows shortcuts, e.g. `keys("enter")`.
+/// A key hint, written the system's way, e.g. `keys("enter")`.
 pub fn keys(source: &str) -> KeyBinding {
     KeyBinding::new(source)
 }
 
-/// Root of every overlay: Zed's UI font and text color.
+/// Root of every overlay: the UI font and text color.
 pub fn root(cx: &App) -> Div {
     div().size_full().font_family(UI_FONT).text_size(LabelSize::Default.rems()).text_color(cx.theme().colors().text)
 }

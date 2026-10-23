@@ -1,10 +1,9 @@
-//! kadr's own components in Zed's look: buttons, icons, labels, a switch, a
-//! tooltip, key hints and a progress bar, styled from the Omarchy theme.
-//! They depend on GPUI alone, so kadr can follow GPUI (or a fork of it)
-//! without Zed's editor crates, and every detail can be tuned for kadr.
+//! kadr's own components: buttons, icons, labels, a switch, a tooltip, key
+//! hints and a progress bar, in kadr's palette. They depend on GPUI alone,
+//! so kadr can follow GPUI (or a fork of it) and tune every detail.
 //!
-//! Sizes are in rems built from Zed's pixel values, so they grow with the
-//! window's rem size (`kit::REM`) the same way Zed's components did.
+//! Sizes are in rems built from pixel values at a 16px base, so they grow
+//! with the window's rem size (`kit::REM`).
 
 use gpui::{
     AnyElement, AnyView, App, Background, BorderStyle, Bounds, BoxShadow, ClickEvent, Div, PaintQuad, Pixels, ElementId, Global, Hsla, IntoElement,
@@ -25,7 +24,7 @@ pub mod prelude {
     };
 }
 
-/// A Zed pixel size as rems at Zed's 16px base.
+/// A pixel size as rems at a 16px base.
 pub fn rems_from_px(px: f32) -> Rems {
     rems(px / 16.)
 }
@@ -220,7 +219,7 @@ impl<E: Styled> StyledExt for E {}
 
 // ---------------------------------------------------------------- icons
 
-/// Icons from Zed's set, bundled under `icons/<name>.svg` (`kit::Assets`).
+/// The UI's icons (Lucide), bundled under `icons/<name>.svg` (`kit::Assets`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconName {
     ArrowUpRight,
@@ -441,7 +440,6 @@ impl RenderOnce for Divider {
 
 // ---------------------------------------------------------------- key hints
 
-/// A shortcut as Zed shows it on Linux: "Ctrl-S", "Escape".
 /// Opens a dropdown's choices as the system's own menu where it has one
 /// (macOS, Windows; SPEC 3.10) at `at`, and calls `pick` with the chosen
 /// one. False where it has none (Linux): the caller draws its list.

@@ -727,7 +727,7 @@ impl Render for History {
         } else {
             h_flex().relative().gap_0p5().children(filters).child(self.filter_fit.track(0, 0)).into_any_element()
         };
-        // Big and bold, like Raycast's search.
+        // Big and bold: typing is the main way through the history.
         let search = h_flex()
             .flex_1()
             .gap_3()
