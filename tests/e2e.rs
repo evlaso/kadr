@@ -218,6 +218,53 @@ fn an_area_screenshot_is_what_was_on_screen() {
     assert_eq!(paths, [saved.to_str().unwrap()], "the card is the screenshot's");
 }
 
+/// A clicked window is taken by itself: a picture pinned over it (a layer
+/// above every window) isn't in the shot, and kadr's shadow is around it.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_window_is_taken_by_itself() {
+    let s = Session::start();
+    let picture = fixture(&s, "window.png");
+    s.spawn(&["edit", picture.to_str().unwrap()]);
+    s.window("kadr-editor");
+    std::thread::sleep(Duration::from_millis(500));
+    let out = s.cmd("hyprctl").args(["-j", "clients"]).output().expect("hyprctl");
+    let clients: Value = serde_json::from_slice(&out.stdout).expect("clients");
+    let editor = clients.as_array().into_iter().flatten().find(|c| c["class"] == "kadr-editor").expect("the editor's window");
+    let n = |v: &Value| v.as_i64().unwrap_or(0);
+    let (x, y, w, h) = (n(&editor["at"][0]), n(&editor["at"][1]), n(&editor["size"][0]), n(&editor["size"][1]));
+    // Magenta over the middle of the screen, where the editor is too.
+    let cover = s.dir.join("cover.png");
+    RgbaImage::from_pixel(300, 200, image::Rgba([255, 0, 255, 255])).save(&cover).expect("cover");
+    s.spawn(&["pin", cover.to_str().unwrap()]);
+    s.window("kadr-pin");
+    std::thread::sleep(Duration::from_millis(300));
+    let magenta = |img: &RgbaImage| img.pixels().filter(|p| p[0] > 240 && p[1] < 20 && p[2] > 240).count();
+    let on_screen = magenta(&s.grab(Some((x as u32, y as u32, w as u32, h as u32))));
+    assert!(on_screen > 10_000, "the cover isn't over the window ({on_screen} magenta pixels there)");
+
+    s.spawn(&["shot", "windows"]);
+    let layer = || {
+        let out = s.cmd("hyprctl").args(["-j", "layers"]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).contains("\"kadr-picker\"").then_some(())
+    };
+    wait(Duration::from_secs(3), layer).expect("no picker on screen");
+    std::thread::sleep(Duration::from_millis(200));
+    let (cx, cy) = ((x + w / 2).to_string(), (y + h / 2).to_string());
+    s.pointer(&["move", &cx, &cy]);
+    std::thread::sleep(Duration::from_millis(100));
+    s.pointer(&["click", &cx, &cy]);
+    let shots = s.var("OMARCHY_SCREENSHOT_DIR");
+    let saved = wait(Duration::from_secs(5), || newest(&shots).filter(|p| p.extension().is_some_and(|e| e == "png"))).expect("no screenshot saved");
+    std::thread::sleep(Duration::from_millis(200));
+    let shot = image::open(&saved).expect("the screenshot").to_rgba8();
+    // The window and kadr's shadow margin, 68 pixels each side at 1x.
+    let (sw, sh) = shot.dimensions();
+    assert!((sw as i64 - (w + 136)).abs() <= 4 && (sh as i64 - (h + 136)).abs() <= 4, "{sw}x{sh} for a {w}x{h} window");
+    let left = magenta(&shot);
+    assert!(left < 100, "what covers the window is in the shot ({left} magenta pixels)");
+}
+
 /// Scenario 2: draw an arrow in the editor and save; the file is what the
 /// rasteriser makes of the drawing kept with it (the golden tests' layer).
 #[test]
