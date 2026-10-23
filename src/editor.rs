@@ -2857,7 +2857,12 @@ impl Editor {
         let menu = open.then(|| self.menu_popup(items, up, false, cx));
         self.menu_anchor(which, cx)
             .child(
-                ButtonLike::new(SharedString::from(format!("crop-dropdown-{}", which as u8)))
+                ButtonLike::new(match which {
+                    CropMenu::Aspect => "dropdown-aspect",
+                    CropMenu::Scale => "dropdown-scale",
+                    CropMenu::Zoom => "dropdown-zoom",
+                    CropMenu::Tools | CropMenu::Actions | CropMenu::Fill => "dropdown",
+                })
                     .style(if open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                     .size(ButtonSize::Large)
                     .toggle_state(open)
@@ -5010,6 +5015,8 @@ impl Editor {
             "shapes": self.vm.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
             "crop": self.vm.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
             "cropping": self.cropping.is_some(),
+            // The picture's size on screen over its real size.
+            "zoom": self.disp.0 / self.real.0,
             // The text being typed: its content, the caret and selection
             // (bytes), the input method's marked part.
             "typing": self.editing.map(|_| serde_json::json!({

@@ -214,7 +214,28 @@ def gpui(t, work):
     t.note("a box is drawn", shapes and shapes[0]["kind"] == "rect", shapes=len(shapes or []))
     t.shot("drawn")
     typing(t, screen, b, ww, wh)
+    menu(t, screen)
     return proc
+
+
+def menu(t, screen):
+    """A dropdown opens the system's menu (macOS, Windows): the zoom's,
+    clicked for real, 25% picked with the keyboard as in any system menu
+    (Down onto Fit, Down onto 25%, Enter). Linux draws its own."""
+    if LINUX:
+        return
+    zoom = dev("find", "dropdown-zoom")
+    if not t.note("the zoom dropdown is found", zoom):
+        return
+    z = zoom["bounds"]
+    run(POINTER, "click", *screen(z[0] + z[2] / 2, z[1] + z[3] / 2))
+    time.sleep(0.8)
+    t.shot("menu")
+    for k in ["down", "down", "enter"]:
+        key(k)
+        time.sleep(0.2)
+    picked = wait_for(lambda: abs(((dev("state") or {}).get("view", {}).get("zoom") or 0) - 0.25) < 0.01, timeout=5)
+    t.note("the system's menu picks", picked, zoom=(dev("state") or {}).get("view", {}).get("zoom"))
 
 
 def typing(t, screen, tool, ww, wh):

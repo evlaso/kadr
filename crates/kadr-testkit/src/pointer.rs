@@ -176,6 +176,8 @@ mod device {
                 "delete" => Key::Delete,
                 "left" => Key::LeftArrow,
                 "right" => Key::RightArrow,
+                "up" => Key::UpArrow,
+                "down" => Key::DownArrow,
                 "home" => Key::Home,
                 "end" => Key::End,
                 other => Key::Unicode(other.chars().next().unwrap_or(' ')),
