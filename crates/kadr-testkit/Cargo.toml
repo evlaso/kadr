@@ -2,13 +2,28 @@
 name = "kadr-testkit"
 version = "0.2.0"
 edition = "2024"
-description = "Tools for the e2e tests: a virtual pointer for a Wayland session"
+description = "Tools for the e2e tests: a pointer and keyboard, and screenshots, on every system"
 publish = false
 
 [[bin]]
 name = "kadr-pointer"
 path = "src/pointer.rs"
 
+# Screenshots and window positions where there's no grim and hyprctl.
+[[bin]]
+name = "kadr-shot"
+path = "src/shot.rs"
+
 [dependencies]
+serde_json.workspace = true
+image.workspace = true
+
+# Linux: wlr-virtual-pointer, on the nested Hyprland.
+[target.'cfg(target_os = "linux")'.dependencies]
 wayland-client = "0.31.15"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+
+# macOS and Windows: the system's own input and capture.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+enigo = { version = "0.6.1", default-features = false }
+xcap = "0.9.8"

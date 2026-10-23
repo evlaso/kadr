@@ -1,0 +1,67 @@
+name: desktop-e2e
+
+# The pointer e2e test on the real macOS and Windows desktops: kadr's editor
+# (and, on branch spike/iced, the iced spike's) opened, a box drawn with a
+# real pointer, Ctrl+S, the file checked; screenshots of each step are kept
+# as artifacts. By hand only (Actions → desktop-e2e → Run workflow, on main
+# or spike/iced): macOS and Windows minutes cost more on a private repository.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build kadr and the test tools
+        run: |
+          cargo build --release --locked -p kadr -p kadr-testkit
+          if [ -d crates/kadr-ui-iced ]; then cargo build --release --locked -p kadr-ui-iced; fi
+
+      # Synthetic input and screen capture need the user's consent on macOS.
+      # The runner has no one to give it: try granting it to the shell and the
+      # test's binaries in TCC's database; screenshots show whether it took.
+      - name: Allow input and capture (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          for db in "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "/Library/Application Support/com.apple.TCC/TCC.db"; do
+            for client in /bin/bash /usr/bin/python3 "$PWD/target/release/kadr-pointer" "$PWD/target/release/kadr-shot" "$PWD/target/release/kadr" "$PWD/target/release/kadr-iced"; do
+              for service in kTCCServiceAccessibility kTCCServicePostEvent kTCCServiceScreenCapture; do
+                sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$client', 1, 2, 4, 1, 0, 'UNUSED', 0, $(date +%s));" || true
+              done
+            done
+          done
+
+      - name: Pointer e2e, kadr (GPUI)
+        id: gpui
+        continue-on-error: true
+        run: $(command -v python3 || command -v python) scripts/desktop_e2e.py gpui
+
+      - name: Pointer e2e, iced spike
+        id: iced
+        if: hashFiles('crates/kadr-ui-iced/Cargo.toml') != ''
+        continue-on-error: true
+        run: $(command -v python3 || command -v python) scripts/desktop_e2e.py iced
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-e2e-${{ matrix.os }}
+          path: target/desktop-e2e/
+
+      - name: Result
+        run: |
+          echo "gpui: ${{ steps.gpui.outcome }}, iced: ${{ steps.iced.outcome || 'not on this branch' }}"
+          test "${{ steps.gpui.outcome }}" = success
+          test "${{ steps.iced.outcome || 'success' }}" = success

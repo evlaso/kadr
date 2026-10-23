@@ -1037,6 +1037,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-graphics"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "064badf302c3194842cf2c5d61f56cc88e54a759313879cdf03abdd27d0c3b97"
+dependencies = [
+ "bitflags",
+ "core-foundation",
+ "core-graphics-types",
+ "foreign-types",
+ "libc",
+]
+
+[[package]]
 name = "core-graphics-types"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1067,7 +1080,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a593227b66cbd4007b2a050dfdd9e1d1318311409c8d600dc82ba1b15ca9c130"
 dependencies = [
  "core-foundation",
- "core-graphics",
+ "core-graphics 0.24.0",
  "foreign-types",
  "libc",
 ]
@@ -1464,6 +1477,25 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
+
+[[package]]
+name = "enigo"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71c6c56e50f7acae2906a0dcbb34529ca647e40421119ad5d12e7f8ba6e50010"
+dependencies = [
+ "core-foundation",
+ "core-graphics 0.25.0",
+ "foreign-types-shared",
+ "libc",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "windows 0.61.3",
+ "xkbcommon 0.9.0",
+ "xkeysym",
+]
 
 [[package]]
 name = "enumflags2"
@@ -2355,7 +2387,7 @@ dependencies = [
  "anyhow",
  "block",
  "core-foundation",
- "core-graphics",
+ "core-graphics 0.24.0",
  "core-video",
  "derive_more",
  "etagere",
@@ -2435,7 +2467,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "x11-clipboard",
  "x11rb",
- "xkbcommon",
+ "xkbcommon 0.8.0",
  "zed-xim",
 ]
 
@@ -2452,7 +2484,7 @@ dependencies = [
  "block2 0.6.2",
  "core-foundation",
  "core-foundation-sys",
- "core-graphics",
+ "core-graphics 0.24.0",
  "core-text",
  "ctor",
  "dispatch2",
@@ -3321,8 +3353,12 @@ dependencies = [
 name = "kadr-testkit"
 version = "0.2.0"
 dependencies = [
+ "enigo",
+ "image",
+ "serde_json",
  "wayland-client",
  "wayland-protocols-wlr",
+ "xcap",
 ]
 
 [[package]]
@@ -7583,6 +7619,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "xkbcommon"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7a974f48060a14e95705c01f24ad9c3345022f4d97441b8a36beb7ed5c4a02d"
+dependencies = [
+ "libc",
+ "memmap2",
+ "xkeysym",
+]
+
+[[package]]
 name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7761,7 +7808,7 @@ dependencies = [
  "bitflags",
  "byteorder",
  "core-foundation",
- "core-graphics",
+ "core-graphics 0.24.0",
  "core-text",
  "dirs 5.0.1",
  "dwrote",
