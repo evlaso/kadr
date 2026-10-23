@@ -250,7 +250,9 @@ def type_text(s):
     if LINUX:
         run("wtype", s)
     else:
-        run(POINTER, "type", s)
+        # In hex: the runner's shell may hand non-ASCII arguments over in
+        # its ANSI code page.
+        run(POINTER, "type-hex", s.encode().hex())
 
 
 def iced(t, work):

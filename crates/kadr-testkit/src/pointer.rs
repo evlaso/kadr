@@ -9,6 +9,9 @@
 //!   kadr-pointer drag X1 Y1 X2 Y2 [steps]
 //!   kadr-pointer key ctrl+s        (macOS, Windows)
 //!   kadr-pointer type TEXT         (macOS, Windows)
+//!   kadr-pointer type-hex HEX      the same, the text as UTF-8 in hex: a
+//!                                  Windows shell may pass non-ASCII
+//!                                  arguments in its ANSI code page
 //!
 //! Coordinates are the screen's: the first output's pixels on Linux, the
 //! system's own coordinates (points on macOS) elsewhere.
@@ -219,12 +222,20 @@ fn main() {
         }
         Some("key") => p.key(args.get(1).map(String::as_str).unwrap_or_else(|| usage())),
         Some("type") => p.text(&args[1..].join(" ")),
+        Some("type-hex") => {
+            let hex = args.get(1).map(String::as_str).unwrap_or("");
+            let bytes: Option<Vec<u8>> = (0..hex.len()).step_by(2).map(|i| hex.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok())).collect();
+            match bytes.and_then(|b| String::from_utf8(b).ok()) {
+                Some(text) => p.text(&text),
+                None => fail("type-hex: not UTF-8 in hex"),
+            }
+        }
         _ => usage(),
     }
 }
 
 fn usage() -> ! {
-    fail("usage: kadr-pointer move X Y | click X Y | drag X1 Y1 X2 Y2 [steps] | key COMBO | type TEXT")
+    fail("usage: kadr-pointer move X Y | click X Y | drag X1 Y1 X2 Y2 [steps] | key COMBO | type TEXT | type-hex HEX")
 }
 
 fn fail(why: &str) -> ! {

@@ -7,3 +7,13 @@ description = "Picking an area of the screen: the model now, its own windows (la
 publish = false
 
 [dependencies]
+kadr-core = { path = "../kadr-core" }
+kadr-raster = { path = "../kadr-raster" }
+image.workspace = true
+tiny-skia.workspace = true
+
+# The overlay's own window on Wayland: a layer-shell surface drawn on the CPU.
+[target.'cfg(target_os = "linux")'.dependencies]
+smithay-client-toolkit = "0.21.1"
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
