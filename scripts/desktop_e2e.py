@@ -372,18 +372,25 @@ def png_size(path):
     return [int.from_bytes(head[:4], "big"), int.from_bytes(head[4:], "big")]
 
 
+def editor_window(t):
+    """A window of kadr's to take: the editor, opened again if saving
+    closed it."""
+    find = lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None)
+    if find() is None:
+        env = dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(t.out / "shots"), OMARCHY_SCREENRECORD_DIR=str(t.out / "videos"))
+        t.start(BIN / f"kadr{EXE}", "edit", t.out / "shot.png", env=env)
+        wait_for(find, timeout=20)
+        time.sleep(1)
+    return find()
+
+
 def window_shot(t):
     """A click on the editor's window in the overlay (`kadr shot smart`,
     windows to snap to from the system): the window taken by itself, with
     kadr's shadow around it."""
     shots = t.out / "shots"
     before = set(shots.glob("*.png"))
-    # A window of kadr's to take: the editor again (saving closed it).
-    env = dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(shots), OMARCHY_SCREENRECORD_DIR=str(t.out / "videos"))
-    t.start(BIN / f"kadr{EXE}", "edit", t.out / "shot.png", env=env)
-    win = wait_for(lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None), timeout=20)
-    time.sleep(1)
-    win = next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), win)
+    win = editor_window(t)
     if not t.note("the editor's window is there to take", win):
         return
     (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
@@ -491,6 +498,37 @@ def pointer_in_shots(t):
     t.note("the pointer is in the shot", near > 30 and far == 0, changed_near_pointer=near, changed_far_away=far)
 
 
+def window_capture_probe(t):
+    """Does taking a window by itself need the owner's main thread? kadr's
+    own window and another app's (Finder, Explorer), each taken on a
+    background thread with kadr's main thread free and then blocked
+    (`kadr dev grab-window ID [block]`)."""
+    other_app = "Finder" if platform.system() == "Darwin" else "explorer"
+    editor_window(t)
+    if platform.system() == "Darwin":
+        run("open", Path.home(), check=False)
+    else:
+        run("explorer.exe", Path.home(), check=False)
+    listed = lambda: json.loads(run(SHOT, "windows").stdout)
+    other = wait_for(lambda: next((w for w in listed() if other_app.lower() in (w["app"] or "").lower() and w["w"] > 100), None), timeout=10)
+    own = next((w for w in listed() if w["title"] == "kadr" and w["w"] > 300), None)
+    if not t.note("windows to probe", own and other, own=own and own["id"], other=other and other["app"]):
+        return
+    results = {}
+    for name, w in (("own", own), ("other", other)):
+        for block in (False, True):
+            answer = dev("grab-window", w["id"], *(["block"] if block else []))
+            results[f"{name}{'-blocked' if block else ''}"] = answer and {k: answer.get(k) for k in ("came", "ms", "size")}
+    # The other app's window goes, so it doesn't cover the editor later.
+    if platform.system() == "Darwin":
+        run("osascript", "-e", 'tell application "Finder" to close every window', check=False)
+    else:
+        run("powershell", "-NoProfile", "-Command", "(New-Object -ComObject Shell.Application).Windows() | ForEach-Object { $_.Quit() }", check=False)
+    # Kept for the record whatever it shows: a deadlock is own-blocked not
+    # coming while the others do.
+    t.note("window capture probe", all(r and r["came"] for k, r in results.items() if k != "own-blocked"), **results)
+
+
 def all_screens(t):
     """`kadr shot all`: every screen in one picture, as big as the desktop."""
     shots = t.out / "shots"
@@ -552,6 +590,10 @@ def main():
                 t.log.write_text("")
                 overlay(t, warm="again")
                 serve.kill()
+            # Before the window shot, which hung on macOS: the probe's
+            # numbers say whether capturing kadr's own window needs its
+            # main thread.
+            window_capture_probe(t)
             window_shot(t)
             all_screens(t)
             pointer_in_shots(t)

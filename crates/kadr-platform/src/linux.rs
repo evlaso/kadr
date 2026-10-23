@@ -301,6 +301,12 @@ pub fn windows_on(mon: &Mon) -> Vec<(u64, (f32, f32, f32, f32))> {
     found.into_iter().map(|(_, id, r)| (id, r)).collect()
 }
 
+/// The window at a point of `mon` (its logical pixels): the first listed
+/// there (floating ones are on top).
+pub fn window_at(mon: &Mon, (x, y): (f32, f32)) -> Option<u64> {
+    windows_on(mon).into_iter().find(|(_, (wx, wy, w, h))| (*wx..wx + w).contains(&x) && (*wy..wy + h).contains(&y)).map(|(id, _)| id)
+}
+
 /// A window by itself, whatever covers it (Hyprland's address as its id),
 /// through the compositor's toplevel capture; None where there's none, and
 /// the app cuts the window from the screen.

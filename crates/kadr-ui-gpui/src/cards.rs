@@ -64,6 +64,13 @@ struct Thumb {
     blurred: Arc<Image>,
 }
 
+/// A card that says something: its title, its text, and its link's label.
+struct Notice {
+    title: String,
+    body: String,
+    link_label: &'static str,
+}
+
 /// What a card shows, beside what `kadr_ui::cards` keeps of it.
 struct CardView {
     image: Option<Thumb>,
@@ -72,9 +79,9 @@ struct CardView {
     text: Option<Option<String>>,
     /// A link in that text (or a QR code), to open from the card.
     link: Option<String>,
-    /// A newer release's version: the card says so, its link is the
-    /// release's page.
-    update: Option<String>,
+    /// A notice instead of recognized text: a newer release (its link the
+    /// release's page) or something that went wrong.
+    notice: Option<Notice>,
     /// A job still working on this video: its progress and title. The card
     /// shows the video blurred until the job hands over its result.
     job: Option<(Rc<job::Job>, &'static str)>,
@@ -116,7 +123,7 @@ pub fn show(path: PathBuf, cx: &mut App) {
         };
         match loaded {
             Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(path, CardView { image: Some(image), text: None, link: None, job: None, height, video, update: None }, cx));
+                let _ = cx.update(|cx| add(path, CardView { image: Some(image), text: None, link: None, job: None, height, video, notice: None }, cx));
             }
             None => util::notify(t("card.couldnt_open_file"), &path.display().to_string()),
         }
@@ -185,19 +192,27 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
 
 /// A card with recognized text (copied already), or with "nothing found".
 pub fn show_text(text: Option<String>, link: Option<String>, cx: &mut App) {
-    add(PathBuf::new(), CardView { image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None, update: None }, cx);
+    add(PathBuf::new(), CardView { image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None, notice: None }, cx);
 }
 
 /// A newer release is out (the tray's check): a card with its page.
 pub fn show_update(version: String, page: String, cx: &mut App) {
-    add(PathBuf::new(), CardView { image: None, text: Some(Some(String::new())), link: Some(page), job: None, height: THUMB_MAX, video: None, update: Some(version) }, cx);
+    let notice = Notice { title: tr!("update.available", version), body: t("update.whats_new_on_release_page").into(), link_label: t("update.release_page") };
+    add(PathBuf::new(), CardView { image: None, text: Some(Some(String::new())), link: Some(page), job: None, height: THUMB_MAX, video: None, notice: Some(notice) }, cx);
+}
+
+/// Something went wrong where nothing else would say so (a capture that
+/// timed out): a card with what and why.
+pub fn show_error(title: &str, body: &str, cx: &mut App) {
+    let notice = Notice { title: title.into(), body: body.into(), link_label: "" };
+    add(PathBuf::new(), CardView { image: None, text: Some(Some(String::new())), link: None, job: None, height: THUMB_MAX, video: None, notice: Some(notice) }, cx);
 }
 
 /// A card for a job on `source` (an export, a trim, a GIF): the video's
 /// first frame, blurred, with the job's progress. Returns its id for
 /// `complete`.
 pub fn show_job(job: Rc<job::Job>, title: &'static str, source: PathBuf, cx: &mut App) -> usize {
-    let id = add(source.clone(), CardView { image: None, text: None, link: None, job: Some((job, title)), height: THUMB_MAX, video: None, update: None }, cx);
+    let id = add(source.clone(), CardView { image: None, text: None, link: None, job: Some((job, title)), height: THUMB_MAX, video: None, notice: None }, cx);
     cx.spawn(async move |cx| {
         if let Some((image, _, _)) = video_preview(&source, cx).await {
             let _ = cx.update(|cx| with_card(id, cx, |card| card.view.image = Some(image)));
@@ -640,14 +655,14 @@ impl CardStack {
         let id = card.id;
         let colors = cx.theme().colors();
         let surface = colors.elevated_surface_background;
-        let update = card.view.update.as_deref();
+        let notice = card.view.notice.as_ref();
         let (title, body): (String, String) = match text {
-            _ if update.is_some() => (tr!("update.available", update.unwrap_or_default()), t("update.whats_new_on_release_page").into()),
+            _ if let Some(n) = notice => (n.title.clone(), n.body.clone()),
             Some(text) => (t("ocr.text_copied").into(), text.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join("\n")),
             None if !ocr::has_russian() => (t("ocr.no_text_found").into(), t("ocr.for_russian_text_install_tesseract").into()),
             None => (t("ocr.no_text_found").into(), t("ocr.try_selecting_larger_area").into()),
         };
-        let chars = text.filter(|_| update.is_none()).map(|t| t.chars().count());
+        let chars = text.filter(|_| notice.is_none()).map(|t| t.chars().count());
         let ink = hsla(0., 0., 0.12, 1.);
         let pill = |el: Stateful<Div>| {
             el.flex()
@@ -659,8 +674,8 @@ impl CardStack {
                 .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
                 .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
         };
-        let copy = text.filter(|_| update.is_none()).map(|t| t.to_owned());
-        let link_label = if update.is_some() { t("update.release_page") } else { t("ocr.open_link") };
+        let copy = text.filter(|_| notice.is_none()).map(|t| t.to_owned());
+        let link_label = notice.map_or(t("ocr.open_link"), |n| n.link_label);
         let link = card.view.link.clone();
         let hover = div()
             .absolute()
@@ -759,7 +774,7 @@ impl CardStack {
             .vm
             .cards
             .iter()
-            .map(|c| serde_json::json!({ "id": c.id, "path": c.path.display().to_string(), "working": c.working, "hovered": c.hovered, "text": c.view.text }))
+            .map(|c| serde_json::json!({ "id": c.id, "path": c.path.display().to_string(), "working": c.working, "hovered": c.hovered, "text": c.view.text, "notice": c.view.notice.as_ref().map(|n| &n.title) }))
             .collect();
         serde_json::json!({ "cards": cards, "hidden": self.hidden })
     }

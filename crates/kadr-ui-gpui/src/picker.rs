@@ -34,14 +34,26 @@ pub struct Picked {
     pub whole: bool,
     /// A window was clicked: the area is that window's.
     pub window: bool,
-    /// That window's id, to take it by itself (`platform::grab_window`).
-    pub window_id: Option<u64>,
     /// The monitor as it was frozen, in physical pixels.
     pub frozen: Arc<image::RgbaImage>,
 }
 
 impl Picked {
     /// The picked area cut from the frozen screen, in physical pixels.
+    /// The clicked window by itself where the system gives it, found under
+    /// the area's middle (on Windows the system's window there, past kadr's
+    /// overlay); None for an area, or to cut it from the frozen screen.
+    /// Blocking: off the UI thread.
+    pub fn window_alone(&self) -> Option<image::RgbaImage> {
+        if !self.window {
+            return None;
+        }
+        let middle = ((self.area.0 - self.mon.x) as f32 + self.area.2 as f32 / 2., (self.area.1 - self.mon.y) as f32 + self.area.3 as f32 / 2.);
+        let id = crate::platform::window_at(&self.mon, middle);
+        eprintln!("kadr: picked a window at {:?}, id {id:?}", self.area);
+        id.and_then(crate::platform::grab_window)
+    }
+
     pub fn crop(&self) -> image::RgbaImage {
         // Edges rounded on their own, as the compositor draws windows: rounding
         // the size instead can take in a pixel of the border next to it.
@@ -72,7 +84,8 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     }
     let _picking = Picking;
     let mon = util::focused_monitor()?;
-    let windows: Vec<Rect> = crate::platform::windows_on(&mon).into_iter().map(|(_, r)| r).collect();
+    let listed = mon.clone();
+    let windows: Vec<Rect> = util::off_main(cx, LIST, move || crate::platform::windows_on(&listed)).await.unwrap_or_default().into_iter().map(|(_, r)| r).collect();
     // The last area, if it was on this monitor.
     let previous = previous_area()
         .filter(|(name, _)| *name == mon.name)
@@ -102,12 +115,17 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
             };
             let _ = tx.send(run());
         });
-        if let Ok(Some((outcome, frozen))) = rx.await {
+        if let Some(Ok(Some((outcome, frozen)))) = within(PICKING_TIME, rx, cx).await {
             return picked(outcome, mon, Arc::new(frozen));
         }
     }
     let grab_from = std::time::Instant::now();
-    let frozen = Arc::new(grab(&mon)?);
+    let grabbed = mon.clone();
+    let Some(frozen) = util::off_main(cx, GRAB, move || grab(&grabbed)).await else {
+        util::capture_timed_out("the screen grab", cx);
+        return None;
+    };
+    let frozen = Arc::new(frozen?);
     let grab_ms = grab_from.elapsed().as_millis();
     // On Wayland, the overlay's own window: drawn on the CPU, on a thread
     // of its own (SPEC 3.8). GPUI's picker below where it can't show itself,
@@ -130,7 +148,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
         std::thread::spawn(move || {
             let _ = tx.send(kadr_overlay::pick(&screen, &options));
         });
-        match rx.await {
+        match within(PICKING_TIME, rx, cx).await.unwrap_or(Ok(Err(()))) {
             Ok(Ok(outcome)) => return picked(outcome, mon, frozen),
             _ => {}
         }
@@ -165,7 +183,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
             let _ = tx.send(run());
         });
         // Nothing readable back: it couldn't show itself; GPUI's picker below.
-        if let Ok(Some(outcome)) = rx.await {
+        if let Some(Ok(Some(outcome))) = within(PICKING_TIME, rx, cx).await {
             return picked(outcome, mon, frozen);
         }
     }
@@ -198,7 +216,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
             })
         })
     });
-    let (rect, window) = rx.await.ok().flatten()?;
+    let (rect, window) = within(PICKING_TIME, rx, cx).await?.ok().flatten()?;
     to_picked(rect, window, mon, frozen)
 }
 
@@ -246,15 +264,7 @@ fn to_picked(rect: Rect, window: bool, mon: Mon, frozen: Arc<image::RgbaImage>) 
     if !whole {
         remember(&mon.name, area);
     }
-    // The clicked window's id: the one whose frame the area is.
-    let window_id = window
-        .then(|| crate::platform::windows_on(&mon).into_iter().find(|(_, r)| (r.0 - rect.0).abs() < 1. && (r.1 - rect.1).abs() < 1. && (r.2 - rect.2).abs() < 1. && (r.3 - rect.3).abs() < 1.))
-        .flatten()
-        .map(|(id, _)| id);
-    if window {
-        eprintln!("kadr: picked a window at {area:?}, id {window_id:?}");
-    }
-    Some(Picked { area, whole, window, window_id, mon, frozen })
+    Some(Picked { area, whole, window, mon, frozen })
 }
 
 fn previous_file() -> std::path::PathBuf {
@@ -276,18 +286,39 @@ pub fn remember(monitor: &str, (x, y, w, h): (i32, i32, i32, i32)) {
 
 /// The last area again without picking, cut from a fresh grab of its
 /// monitor. None (with a notice) when there isn't one yet.
-pub fn previous() -> Option<Picked> {
+pub async fn previous(cx: &mut AsyncApp) -> Option<Picked> {
     let Some((name, area)) = previous_area() else {
         util::notify("kadr", t("picker.no_previous_area"));
         return None;
     };
     let mons = util::monitors();
     let mon = mons.iter().find(|m| m.name == name).or_else(|| mons.iter().find(|m| m.contains(area.0 + area.2 / 2, area.1 + area.3 / 2)))?.clone();
-    let frozen = Arc::new(grab(&mon)?);
-    Some(Picked { area, whole: false, window: false, window_id: None, mon, frozen })
+    let frozen = Arc::new(grab_off_main(&mon, cx).await?);
+    Some(Picked { area, whole: false, window: false, mon, frozen })
 }
 
 static PICKING: AtomicBool = AtomicBool::new(false);
+
+/// How long a screen grab and the window list may take.
+const GRAB: std::time::Duration = std::time::Duration::from_secs(5);
+const LIST: std::time::Duration = std::time::Duration::from_secs(3);
+/// How long a person may take picking before the overlay counts as stuck.
+const PICKING_TIME: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The overlay's answer, or None (and a card saying so) when it didn't come
+/// in time.
+async fn within<T>(limit: std::time::Duration, rx: oneshot::Receiver<T>, cx: &mut AsyncApp) -> Option<Result<T, oneshot::Canceled>> {
+    use futures::FutureExt;
+    let timer = cx.background_executor().timer(limit);
+    let got = futures::select! {
+        got = rx.fuse() => Some(got),
+        _ = timer.fuse() => None,
+    };
+    if got.is_none() {
+        util::capture_timed_out("the overlay", cx);
+    }
+    got
+}
 
 /// Clears `PICKING` however `pick` ends.
 struct Picking;
@@ -657,10 +688,26 @@ impl Render for Picker {
     }
 }
 
+/// `grab` on a thread of its own, within `GRAB` (a card when it took longer).
+pub async fn grab_off_main(mon: &Mon, cx: &mut AsyncApp) -> Option<image::RgbaImage> {
+    let mon = mon.clone();
+    match util::off_main(cx, GRAB, move || grab(&mon)).await {
+        Some(image) => image,
+        None => {
+            util::capture_timed_out("the screen grab", cx);
+            None
+        }
+    }
+}
+
 /// The monitor frozen, with the pointer in it when the settings want it
 /// (`shot_cursor`): the compositor draws it on Linux; elsewhere the
 /// system's own cursor picture goes where the pointer is.
 pub fn grab(mon: &Mon) -> Option<image::RgbaImage> {
+    // KADR_DEV_STALL=grab: a grab that never answers, for the e2e test.
+    if crate::dev::on() && std::env::var("KADR_DEV_STALL").as_deref() == Ok("grab") {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
     if !crate::settings::Settings::load().shot_cursor {
         return crate::platform::grab_monitor(mon);
     }
@@ -691,8 +738,8 @@ fn stamp_pointer(image: &mut image::RgbaImage, mon: &Mon) {
 }
 
 /// The whole monitor under the pointer, frozen, without picking (a fullscreen shot).
-pub async fn whole_monitor() -> Option<Picked> {
+pub async fn whole_monitor(cx: &mut AsyncApp) -> Option<Picked> {
     let mon = util::focused_monitor()?;
-    let frozen = Arc::new(grab(&mon)?);
-    Some(Picked { area: (mon.x, mon.y, mon.w, mon.h), whole: true, window: false, window_id: None, mon, frozen })
+    let frozen = Arc::new(grab_off_main(&mon, cx).await?);
+    Some(Picked { area: (mon.x, mon.y, mon.w, mon.h), whole: true, window: false, mon, frozen })
 }

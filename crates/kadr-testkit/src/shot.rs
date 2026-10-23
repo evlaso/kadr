@@ -1,7 +1,7 @@
 //! `kadr-shot`: what's on screen, for the e2e tests on macOS and Windows
 //! (Linux has grim and hyprctl):
 //!
-//!   kadr-shot windows              the windows: pid, title, x, y, w, h (JSON)
+//!   kadr-shot windows              the windows: id, pid, title, app, x, y, w, h (JSON)
 //!   kadr-shot screen OUT.png       the first monitor
 //!   kadr-shot window PID OUT.png   a process's first window
 //!   kadr-shot pixel X Y            the first monitor's colour at a point (#rrggbb)
@@ -17,6 +17,7 @@ fn main() {
                 .iter()
                 .filter_map(|w| {
                     Some(serde_json::json!({
+                        "id": w.id().ok()?,
                         "pid": w.pid().ok()?,
                         "title": w.title().unwrap_or_default(),
                         "app": w.app_name().unwrap_or_default(),

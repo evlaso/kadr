@@ -15,6 +15,10 @@
 //! - `state [window]`: what the window's view holds (the editor's drawing,
 //!   tool and undo depth; the settings' tab).
 //! - `shot <path> [window]`: the window's pixels as a PNG.
+//! - `grab-window <id> [block]`: the system's window `id` (kadr-shot's)
+//!   taken by itself on another thread, as a window shot is, within 8 s;
+//!   with `block` the main thread waits for it meanwhile, as a stuck one
+//!   would: whether it came, its size and how long it took.
 //! - `mem`: the process's memory, and every live allocation of a megabyte
 //!   or more with where it was made (`Counting`, kadr's allocator): how many
 //!   copies of a picture are held, and by whom. The frames need line tables:
@@ -294,6 +298,27 @@ pub fn handle(args: Vec<String>, reply: Stream, cx: &mut App) {
     }
     if command == "windows" {
         return answer(reply, Ok(windows(cx)));
+    }
+    if command == "grab-window" {
+        let Some(id) = words.first().and_then(|w| w.parse::<u64>().ok()) else {
+            return answer(reply, Err("dev grab-window <id> [block]".into()));
+        };
+        let block = words.iter().any(|w| w == "block");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let started = std::time::Instant::now();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::platform::grab_window(id).map(|i| i.dimensions()));
+        });
+        let wait = move || {
+            let got = rx.recv_timeout(std::time::Duration::from_secs(8));
+            let ms = started.elapsed().as_millis() as u64;
+            Ok(json!({ "block": block, "came": got.is_ok(), "size": got.ok().flatten().map(|(w, h)| [w, h]), "ms": ms }))
+        };
+        if block {
+            return answer(reply, wait());
+        }
+        std::thread::spawn(move || answer(reply, wait()));
+        return;
     }
     if command == "mem" {
         let blocks = big_blocks();

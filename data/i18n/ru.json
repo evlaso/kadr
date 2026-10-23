@@ -17,6 +17,8 @@
  "camera.shape": "Форма",
  "camera.smaller": "Меньше",
  "camera.square": "Квадрат",
+ "capture.didnt_finish": "Снимок не получился",
+ "capture.system_took_too_long": "Система слишком долго не отдавала картинку. Ничего не сохранено.",
  "capture_bar.area": "Область",
  "capture_bar.keys_enter_esc_close": "1–8, ← → и Enter · Esc — закрыть",
  "capture_bar.previous": "Прошлая",

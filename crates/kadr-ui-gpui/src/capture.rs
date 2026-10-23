@@ -36,13 +36,16 @@ pub fn deliver(path: PathBuf, _settings: &Settings, cx: &mut App) {
     cards::after_capture(path, crate::storage::Capture::Screenshot, cx);
 }
 
+/// How long taking the picture and writing it may take.
+const SAVING: Duration = Duration::from_secs(15);
+
 /// Freeze the screen, pick (or take the whole monitor), save the picked part.
 async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<PathBuf> {
     if mode == "all" {
         return all_screens(settings, cx).await;
     }
     let picked = match mode {
-        "fullscreen" => picker::whole_monitor().await?,
+        "fullscreen" => picker::whole_monitor(cx).await?,
         // The self-timer: counting down over the screen, then all of it.
         "timer" => {
             let mons = util::monitors();
@@ -50,10 +53,10 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
             if !crate::record::countdown(&crate::record::Target::Monitor(name), settings.timer_seconds, &mons, cx).await {
                 return None;
             }
-            picker::whole_monitor().await?
+            picker::whole_monitor(cx).await?
         }
         // The last area again, as it is now.
-        "previous" => picker::previous()?,
+        "previous" => picker::previous(cx).await?,
         // Free selection; the others also snap to windows.
         "region" => picker::pick(false, true, cx).await?,
         _ => picker::pick(true, true, cx).await?,
@@ -68,23 +71,27 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     let shadow = (picked.window && window_shadow()).then(|| (crate::platform::window_rounding(), picked.mon.scale));
     let (scale, logical) = (picked.mon.scale, settings.logical_size);
     // Encoding a big PNG takes a moment; keep the UI free.
-    let saved = cx
-        .background_executor()
-        .spawn(async move {
-            // A clicked window by itself where the system gives it (macOS,
-            // Windows), else cut from the frozen screen.
-            let alone = picked.window_id.and_then(crate::platform::grab_window);
-            if picked.window {
-                eprintln!("kadr: window shot {}", if alone.is_some() { "by itself" } else { "cut from the screen" });
-            }
-            let image = alone.unwrap_or_else(|| picked.crop());
-            let image = match shadow {
-                Some((rounding, scale)) => with_shadow(&image, rounding, scale),
-                None => image,
-            };
-            save_png(image, scale, logical, &target)
-        })
-        .await;
+    // On a thread of its own, within a limit: taking a window by itself
+    // asks the system, which may not answer.
+    let saved = util::off_main(cx, SAVING, move || {
+        // A clicked window by itself where the system gives it, else cut
+        // from the frozen screen.
+        let alone = picked.window_alone();
+        if picked.window {
+            eprintln!("kadr: window shot {}", if alone.is_some() { "by itself" } else { "cut from the screen" });
+        }
+        let image = alone.unwrap_or_else(|| picked.crop());
+        let image = match shadow {
+            Some((rounding, scale)) => with_shadow(&image, rounding, scale),
+            None => image,
+        };
+        save_png(image, scale, logical, &target)
+    })
+    .await;
+    let Some(saved) = saved else {
+        util::capture_timed_out("the window shot", cx);
+        return None;
+    };
     eprintln!("kadr: shot {mode} saved: {}", saved.is_ok());
     match saved {
         Ok(()) => Some(path),
@@ -101,14 +108,16 @@ async fn all_screens(settings: &Settings, cx: &mut AsyncApp) -> Option<PathBuf> 
     let _ = std::fs::create_dir_all(&dir);
     let path = crate::storage::capture_path(&dir, crate::storage::Capture::Screenshot, "png");
     let (target, logical) = (path.clone(), settings.logical_size);
-    let saved = cx
-        .background_executor()
-        .spawn(async move {
-            let shots: Vec<(Mon, image::RgbaImage)> = util::monitors().into_iter().filter_map(|m| Some((m.clone(), picker::grab(&m)?))).collect();
-            let (image, scale) = side_by_side(&shots).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
-            save_png(image, scale, logical, &target).map_err(std::io::Error::other)
-        })
-        .await;
+    let saved = util::off_main(cx, SAVING, move || {
+        let shots: Vec<(Mon, image::RgbaImage)> = util::monitors().into_iter().filter_map(|m| Some((m.clone(), picker::grab(&m)?))).collect();
+        let (image, scale) = side_by_side(&shots).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
+        save_png(image, scale, logical, &target).map_err(std::io::Error::other)
+    })
+    .await;
+    let Some(saved) = saved else {
+        util::capture_timed_out("every screen", cx);
+        return None;
+    };
     match saved {
         Ok(()) => Some(path),
         Err(e) => {

@@ -1,5 +1,4 @@
-//! Windows: what isn't shared with macOS (desktop.rs). Screenshots work;
-//! recording isn't ported yet.
+//! Windows: what isn't shared with macOS (desktop.rs).
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -123,6 +122,89 @@ impl Drop for CursorShapes {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// The windows on screen, topmost first (the order EnumWindows walks the
+/// z-order in): visible, not minimized or cloaked, not kadr's overlay or
+/// its untitled cards; each with its handle and its frame (the DWM's,
+/// without the invisible resize border) in physical pixels.
+pub(crate) fn top_windows() -> Vec<(u64, (i32, i32, i32, i32))> {
+    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetAncestor, GA_ROOT};
+    let mut found: Vec<HWND> = Vec::new();
+    unsafe extern "system" fn each(hwnd: HWND, list: LPARAM) -> windows::core::BOOL {
+        // SAFETY: `list` is the Vec handed to EnumWindows below.
+        unsafe { (*(list.0 as *mut Vec<HWND>)).push(hwnd) };
+        true.into()
+    }
+    // SAFETY: the callback only pushes into `found`, alive for the call.
+    let _ = unsafe { EnumWindows(Some(each), LPARAM(&mut found as *mut _ as isize)) };
+    found
+        .into_iter()
+        // SAFETY: plain queries on handles EnumWindows just gave.
+        .filter(|&h| unsafe { GetAncestor(h, GA_ROOT) } == h && takeable(h))
+        .filter_map(|h| {
+            let r: RECT = frame(h)?;
+            (r.right - r.left >= 40 && r.bottom - r.top >= 40).then_some((h.0 as usize as u64, (r.left, r.top, r.right - r.left, r.bottom - r.top)))
+        })
+        .collect()
+}
+
+/// The window under a point (physical pixels): the topmost root window
+/// there, through WindowFromPoint and GetAncestor(GA_ROOT), past kadr's
+/// own overlay and untitled cards, which it looks under.
+pub(crate) fn window_under(x: i32, y: i32) -> Option<u64> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GW_HWNDNEXT, GetAncestor, GetWindow, WindowFromPoint};
+    // SAFETY: plain window queries.
+    unsafe {
+        let mut h = GetAncestor(WindowFromPoint(POINT { x, y }), GA_ROOT);
+        // kadr's own: the next ones down the z-order until one has the point.
+        for _ in 0..256 {
+            if h.is_invalid() {
+                return None;
+            }
+            let inside = frame(h).is_some_and(|r| (r.left..r.right).contains(&x) && (r.top..r.bottom).contains(&y));
+            if inside && takeable(h) {
+                return Some(h.0 as usize as u64);
+            }
+            h = GetWindow(h, GW_HWNDNEXT).unwrap_or_default();
+        }
+        None
+    }
+}
+
+/// A window to snap to and take: shown, not minimized or cloaked (on another
+/// desktop), and not one of kadr's own that aren't windows to a person
+/// (the overlay, titled kadr-picker, and kadr's untitled cards).
+fn takeable(h: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible};
+    // SAFETY: plain queries on a window handle, into buffers of ours.
+    unsafe {
+        if !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+            return false;
+        }
+        let mut cloaked = 0u32;
+        if DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut _, 4).is_ok() && cloaked != 0 {
+            return false;
+        }
+        let mut text = [0u16; 64];
+        let n = GetWindowTextW(h, &mut text).max(0) as usize;
+        let title = String::from_utf16_lossy(&text[..n]);
+        let mut pid = 0;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        title != "kadr-picker" && !(title.is_empty() && pid == std::process::id())
+    }
+}
+
+/// A window's frame as the DWM draws it, in physical pixels.
+fn frame(h: windows::Win32::Foundation::HWND) -> Option<windows::Win32::Foundation::RECT> {
+    use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+    let mut r = windows::Win32::Foundation::RECT::default();
+    // SAFETY: a RECT-sized buffer for the attribute that fills one.
+    unsafe { DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut _ as *mut _, std::mem::size_of_val(&r) as u32) }.ok()?;
+    Some(r)
 }
 
 /// The shape the pointer has now, as a `cursors` name.

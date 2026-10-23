@@ -51,7 +51,7 @@ objc2-screen-capture-kit = { version = "0.3.2", default-features = false, featur
 # Window shots through Windows.Graphics.Capture rather than the GDI.
 xcap = { version = "0.9.8", features = ["wgc"] }
 windows = { version = "0.62", features = [
-    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging",
     # Recording (record/wgc.rs): Windows.Graphics.Capture, Direct3D 11,
     # Media Foundation's sink writer and WASAPI.
     "Foundation", "Graphics_Capture", "Graphics_DirectX", "Graphics_DirectX_Direct3D11",

@@ -17,6 +17,8 @@
  "camera.shape": "Shape",
  "camera.smaller": "Smaller",
  "camera.square": "Square",
+ "capture.didnt_finish": "The capture didn't finish",
+ "capture.system_took_too_long": "The system took too long to give the picture. Nothing was saved.",
  "capture_bar.area": "Area",
  "capture_bar.keys_enter_esc_close": "1–8, ← → and Enter · Esc to close",
  "capture_bar.previous": "Previous",

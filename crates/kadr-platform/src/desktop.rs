@@ -135,11 +135,27 @@ pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
 /// title too (its overlay and cards aside): each with its id (for
 /// `grab_window`) and its frame in the monitor's logical pixels.
 pub fn windows_on(mon: &Mon) -> Vec<(u64, (f32, f32, f32, f32))> {
+    // Windows: in the z-order, from the system itself.
+    #[cfg(windows)]
+    {
+        let s = mon.scale;
+        let (ox, oy) = ((mon.x as f64 * s).round(), (mon.y as f64 * s).round());
+        return super::imp::top_windows()
+            .into_iter()
+            .map(|(id, (x, y, w, h))| (id, (((x as f64 - ox) / s) as f32, ((y as f64 - oy) / s) as f32, (w as f64 / s) as f32, (h as f64 / s) as f32)))
+            .filter(|(_, (x, y, w, h))| *x < mon.w as f32 && *y < mon.h as f32 && x + w > 0. && y + h > 0.)
+            .collect();
+    }
+    #[cfg(not(windows))]
+    macos_windows_on(mon)
+}
+
+/// `windows_on` on macOS: xcap's list (CoreGraphics', topmost first).
+#[cfg(not(windows))]
+fn macos_windows_on(mon: &Mon) -> Vec<(u64, (f32, f32, f32, f32))> {
     // The menu bar, the Dock and such are windows too on macOS.
     const SYSTEM: [&str; 6] = ["Window Server", "Dock", "Control Center", "Notification Center", "SystemUIServer", "Spotlight"];
     let own = std::process::id();
-    // Windows gives physical pixels, macOS points.
-    let s = if cfg!(windows) { mon.scale } else { 1. };
     let Ok(all) = xcap::Window::all() else { return Vec::new() };
     all.into_iter()
         .filter(|w| !w.is_minimized().unwrap_or(true))
@@ -149,12 +165,26 @@ pub fn windows_on(mon: &Mon) -> Vec<(u64, (f32, f32, f32, f32))> {
         })
         .filter(|w| !w.app_name().is_ok_and(|a| SYSTEM.contains(&a.as_str())))
         .filter_map(|w| {
-            let (x, y, width, height) = (w.x().ok()? as f64 / s - mon.x as f64, w.y().ok()? as f64 / s - mon.y as f64, w.width().ok()? as f64 / s, w.height().ok()? as f64 / s);
+            // In points, as the monitors are.
+            let (x, y, width, height) = (w.x().ok()? as f64 - mon.x as f64, w.y().ok()? as f64 - mon.y as f64, w.width().ok()? as f64, w.height().ok()? as f64);
             let on = x < mon.w as f64 && y < mon.h as f64 && x + width > 0. && y + height > 0.;
             let id = w.id().ok()? as u64;
             (on && width >= 40. && height >= 40.).then_some((id, (x as f32, y as f32, width as f32, height as f32)))
         })
         .collect()
+}
+
+/// The window at a point of `mon` (its logical pixels): on Windows the
+/// system's answer for that point (WindowFromPoint, past kadr's overlay);
+/// on macOS the topmost listed window there.
+pub fn window_at(mon: &Mon, (x, y): (f32, f32)) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        let s = mon.scale;
+        return super::imp::window_under(((mon.x as f64 + x as f64) * s).round() as i32, ((mon.y as f64 + y as f64) * s).round() as i32);
+    }
+    #[cfg(not(windows))]
+    windows_on(mon).into_iter().find(|(_, (wx, wy, w, h))| (*wx..wx + w).contains(&x) && (*wy..wy + h).contains(&y)).map(|(id, _)| id)
 }
 
 /// A window by itself, whatever covers it, in physical pixels: macOS draws

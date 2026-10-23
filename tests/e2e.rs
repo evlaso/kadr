@@ -265,6 +265,29 @@ fn a_window_is_taken_by_itself() {
     assert!(left < 100, "what covers the window is in the shot ({left} magenta pixels)");
 }
 
+/// A screen grab that never answers (`KADR_DEV_STALL=grab`) ends in a card
+/// saying the capture didn't finish, within the grab's limit, and kadr keeps
+/// answering meanwhile: nothing waits for the system on the UI thread.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_stuck_capture_gives_a_card_not_a_hang() {
+    let s = Session::start();
+    let t0 = Instant::now();
+    s.cmd(KADR).args(["shot", "fullscreen"]).env("KADR_DEV", "1").env("KADR_DEV_STALL", "grab").stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("kadr");
+    // Answering while the grab hangs.
+    let answered = wait(Duration::from_secs(3), || s.try_dev(&["windows"]));
+    assert!(answered.is_some(), "kadr didn't answer while the grab hung");
+    let card = wait(Duration::from_secs(10), || {
+        let card = s.try_dev(&["windows"])?.as_array()?.iter().find(|w| w["kind"] == "kadr").cloned()?;
+        let state = s.try_dev(&["state", &card["id"].to_string()])?;
+        state["view"]["cards"].as_array()?.iter().find_map(|c| c["notice"].as_str().map(str::to_owned))
+    })
+    .expect("no card about the capture");
+    assert_eq!(card, "The capture didn't finish");
+    let took = t0.elapsed();
+    assert!(took < Duration::from_secs(9), "the card took {took:?}");
+}
+
 /// Scenario 2: draw an arrow in the editor and save; the file is what the
 /// rasteriser makes of the drawing kept with it (the golden tests' layer).
 #[test]
