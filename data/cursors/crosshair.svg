@@ -1,4 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="0.9" stdDeviation="0.9" flood-color="#000" flood-opacity="0.38"/></filter></defs><g filter="url(#s)" fill="none" stroke-linecap="square">
-<path stroke="#fff" stroke-width="3.2" d="M16 6 L16 26 M6 16 L26 16"/>
-<path stroke="#000" stroke-width="1.2" d="M16 6 L16 26 M6 16 L26 16"/>
-</g></svg>

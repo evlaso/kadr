@@ -139,3 +139,32 @@ pub fn own_window_shot(title: &str, _kind: &str) -> Option<image::RgbaImage> {
     let window = mine.iter().find(|w| w.title().ok().as_deref() == Some(title)).or(mine.first())?;
     window.capture_image().ok()
 }
+
+/// The system's own cursors as pictures, for the studio and the editor's
+/// cursor stamps (macOS and Windows): each shape once at a large size, and
+/// its hotspot; drawn at any size by scaling from there.
+pub(crate) struct CursorPictures {
+    shapes: Vec<(&'static str, image::RgbaImage, (f64, f64))>,
+    /// How tall the arrow's visible part is in its picture, in pixels.
+    arrow: f32,
+}
+
+impl CursorPictures {
+    pub(crate) fn new(shapes: Vec<(&'static str, image::RgbaImage, (f64, f64))>) -> Option<CursorPictures> {
+        let (_, arrow, _) = shapes.iter().find(|(n, _, _)| *n == "arrow")?;
+        // Rows with anything in them: the arrow's own height, its margin aside.
+        let rows: Vec<u32> = (0..arrow.height()).filter(|&y| (0..arrow.width()).any(|x| arrow.get_pixel(x, y)[3] > 0)).collect();
+        let arrow = (rows.last()? - rows.first()? + 1) as f32;
+        Some(CursorPictures { shapes, arrow })
+    }
+
+    /// `shape` (the arrow where the system has none like it) with the
+    /// arrow `arrow_height` pixels tall: premultiplied RGBA, and its hotspot.
+    pub(crate) fn picture(&self, shape: &str, arrow_height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
+        let (_, image, (hx, hy)) = self.shapes.iter().find(|(n, _, _)| *n == shape).or_else(|| self.shapes.iter().find(|(n, _, _)| *n == "arrow"))?;
+        let k = arrow_height / self.arrow;
+        let (w, h) = (((image.width() as f32 * k).round() as u32).max(1), ((image.height() as f32 * k).round() as u32).max(1));
+        let picture = image::imageops::resize(image, w, h, image::imageops::FilterType::CatmullRom);
+        Some((picture, (hx * k as f64, hy * k as f64)))
+    }
+}

@@ -336,6 +336,9 @@ pub fn theme_cursor(shape: &str, arrow_height: f32) -> Option<(image::RgbaImage,
     THEME.get_or_init(cursor_theme::Theme::load).as_ref()?.picture(shape, arrow_height)
 }
 
+/// Nothing to take ahead: the theme is read where it's used.
+pub fn snapshot_cursors() {}
+
 impl Drop for CursorShapes {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);

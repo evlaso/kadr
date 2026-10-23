@@ -92,23 +92,132 @@ pub fn prefers_dark() -> Option<bool> {
     None
 }
 
-/// Which shape the pointer has while recording; not ported yet, so the
-/// studio draws the arrow throughout.
-pub struct CursorShapes;
+/// Which shape the pointer has while recording: the system's cursor
+/// (NSCursor's current system cursor), told by its hotspot and size,
+/// watched on a thread.
+pub struct CursorShapes {
+    current: std::sync::Arc<std::sync::Mutex<Option<(&'static str, std::time::Instant)>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl CursorShapes {
     pub fn start() -> Option<Self> {
-        None
+        cursors::snapshot();
+        let current = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (shared, stopped) = (current.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(shape) = cursors::shown() {
+                    *shared.lock().unwrap() = Some((shape, std::time::Instant::now()));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        Some(CursorShapes { current, stop })
     }
 
+    /// The last shape seen, as a `cursors` name, and how many seconds ago.
     pub fn current(&self) -> Option<(&'static str, f64)> {
-        None
+        self.current.lock().unwrap().map(|(shape, at)| (shape, at.elapsed().as_secs_f64()))
     }
 }
 
-/// The user's own cursor for a shape; not ported yet, so kadr's own are drawn.
-pub fn theme_cursor(_shape: &str, _arrow_height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
-    None
+impl Drop for CursorShapes {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The system's cursor for a shape, so the drawn one is the real one, only
+/// bigger: premultiplied RGBA with the arrow `arrow_height` pixels tall,
+/// and its hotspot.
+pub fn theme_cursor(shape: &str, arrow_height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
+    cursors::snapshot().as_ref()?.0.picture(shape, arrow_height)
+}
+
+/// Takes the system's cursors once, best on the main thread at start.
+pub fn snapshot_cursors() {
+    cursors::snapshot();
+}
+
+mod cursors {
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSCursor;
+    use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGContext, CGImageAlphaInfo};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    /// Each shape's hotspot and size in points: how a cursor on screen is
+    /// told apart.
+    type Known = Vec<(&'static str, (f64, f64), (f64, f64))>;
+
+    /// kadr's shape names and the system's cursors that draw them; macOS has
+    /// no wait cursor of its own, nor diagonal ones before macOS 15. (The
+    /// edge cursors' newer names need macOS 15.)
+    #[allow(deprecated)]
+    fn system() -> Vec<(&'static str, Retained<NSCursor>)> {
+        vec![
+            ("arrow", NSCursor::arrowCursor()),
+            ("pointer", NSCursor::pointingHandCursor()),
+            ("text", NSCursor::IBeamCursor()),
+            ("grab", NSCursor::openHandCursor()),
+            ("grabbing", NSCursor::closedHandCursor()),
+            ("crosshair", NSCursor::crosshairCursor()),
+            ("not-allowed", NSCursor::operationNotAllowedCursor()),
+            ("ew-resize", NSCursor::resizeLeftRightCursor()),
+            ("ns-resize", NSCursor::resizeUpDownCursor()),
+        ]
+    }
+
+    pub(super) fn snapshot() -> &'static Option<(crate::desktop::CursorPictures, Known)> {
+        static TAKEN: std::sync::OnceLock<Option<(crate::desktop::CursorPictures, Known)>> = std::sync::OnceLock::new();
+        TAKEN.get_or_init(|| {
+            let mut shapes = Vec::new();
+            let mut known = Vec::new();
+            for (name, cursor) in system() {
+                let size = cursor.image().size();
+                let hot = cursor.hotSpot();
+                known.push((name, (hot.x, hot.y), (size.width, size.height)));
+                if let Some((image, hot)) = picture(&cursor, 4.) {
+                    shapes.push((name, image, hot));
+                }
+            }
+            Some((crate::desktop::CursorPictures::new(shapes)?, known))
+        })
+    }
+
+    /// The cursor on screen now, by kadr's name for it. (Deprecated, but
+    /// the one call that sees other apps' cursors without a screen stream.)
+    #[allow(deprecated)]
+    pub(super) fn shown() -> Option<&'static str> {
+        let (_, known) = snapshot().as_ref()?;
+        let cursor = NSCursor::currentSystemCursor()?;
+        let (size, hot) = (cursor.image().size(), cursor.hotSpot());
+        let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+        known.iter().find(|(_, (hx, hy), (w, h))| near(hot.x, *hx) && near(hot.y, *hy) && near(size.width, *w) && near(size.height, *h)).map(|(n, _, _)| *n)
+    }
+
+    /// A cursor drawn `k` times its size in points, premultiplied RGBA, and
+    /// its hotspot there.
+    fn picture(cursor: &NSCursor, k: f64) -> Option<(image::RgbaImage, (f64, f64))> {
+        let image = cursor.image();
+        let size = image.size();
+        let (w, h) = ((size.width * k).ceil() as usize, (size.height * k).ceil() as usize);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let mut rect = NSRect::new(NSPoint::new(0., 0.), NSSize::new(w as f64, h as f64));
+        // SAFETY: a rect of our own; no context or hints.
+        let cg = unsafe { image.CGImageForProposedRect_context_hints(&mut rect, None, None) }?;
+        let space = CGColorSpace::new_device_rgb()?;
+        let mut data = vec![0u8; w * h * 4];
+        // SAFETY: `data` holds w × h four-byte pixels and outlives the context.
+        let ctx = unsafe { CGBitmapContextCreate(data.as_mut_ptr().cast(), w, h, 8, w * 4, Some(&space), CGImageAlphaInfo::PremultipliedLast.0) }?;
+        CGContext::draw_image(Some(&ctx), NSRect::new(NSPoint::new(0., 0.), NSSize::new(w as f64, h as f64)), Some(&cg));
+        drop(ctx);
+        let hot = cursor.hotSpot();
+        Some((image::RgbaImage::from_raw(w as u32, h as u32, data)?, (hot.x * k, hot.y * k)))
+    }
 }
 
 /// Windows' corner radius in logical pixels, for window shots.

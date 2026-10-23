@@ -89,23 +89,159 @@ pub fn prefers_dark() -> Option<bool> {
     None
 }
 
-/// Which shape the pointer has while recording; not ported yet, so the
-/// studio draws the arrow throughout.
-pub struct CursorShapes;
+/// Which shape the pointer has while recording: the system's cursor
+/// (GetCursorInfo), told by its handle, watched on a thread.
+pub struct CursorShapes {
+    current: std::sync::Arc<std::sync::Mutex<Option<(&'static str, std::time::Instant)>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl CursorShapes {
     pub fn start() -> Option<Self> {
-        None
+        let current = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (shared, stopped) = (current.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let known = cursors::handles();
+            while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(shape) = cursors::shown().and_then(|h| known.iter().find(|(_, k)| *k == h).map(|(n, _)| *n)) {
+                    *shared.lock().unwrap() = Some((shape, std::time::Instant::now()));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+        });
+        Some(CursorShapes { current, stop })
     }
 
+    /// The last shape seen, as a `cursors` name, and how many seconds ago.
     pub fn current(&self) -> Option<(&'static str, f64)> {
-        None
+        self.current.lock().unwrap().map(|(shape, at)| (shape, at.elapsed().as_secs_f64()))
     }
 }
 
-/// The user's own cursor for a shape; not ported yet, so kadr's own are drawn.
-pub fn theme_cursor(_shape: &str, _arrow_height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
-    None
+impl Drop for CursorShapes {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The system's cursor for a shape, so the drawn one is the real one, only
+/// bigger: premultiplied RGBA with the arrow `arrow_height` pixels tall,
+/// and its hotspot.
+pub fn theme_cursor(shape: &str, arrow_height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
+    static PICTURES: std::sync::OnceLock<Option<crate::desktop::CursorPictures>> = std::sync::OnceLock::new();
+    PICTURES.get_or_init(cursors::pictures).as_ref()?.picture(shape, arrow_height)
+}
+
+/// Nothing to take ahead: the system's cursors load on any thread here.
+pub fn snapshot_cursors() {}
+
+mod cursors {
+    use windows::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, SelectObject};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CURSORINFO, CURSOR_SHOWING, DI_NORMAL, DestroyCursor, DrawIconEx, GetCursorInfo, GetIconInfo, HCURSOR, HICON, ICONINFO, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM,
+        IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, IDC_WAIT, IMAGE_CURSOR, LR_DEFAULTCOLOR, LoadCursorW, LoadImageW,
+    };
+    use windows::core::PCWSTR;
+
+    /// kadr's shape names and the system cursors that draw them; Windows
+    /// has one hand for pointing and grabbing.
+    const SHAPES: [(&str, PCWSTR); 13] = [
+        ("arrow", IDC_ARROW),
+        ("pointer", IDC_HAND),
+        ("text", IDC_IBEAM),
+        ("grab", IDC_HAND),
+        ("grabbing", IDC_HAND),
+        ("crosshair", IDC_CROSS),
+        ("move", IDC_SIZEALL),
+        ("not-allowed", IDC_NO),
+        ("wait", IDC_WAIT),
+        ("ew-resize", IDC_SIZEWE),
+        ("ns-resize", IDC_SIZENS),
+        ("nwse-resize", IDC_SIZENWSE),
+        ("nesw-resize", IDC_SIZENESW),
+    ];
+
+    /// The system cursors' shared handles, by shape name (as numbers, to go
+    /// to the watching thread).
+    pub(super) fn handles() -> Vec<(&'static str, isize)> {
+        // SAFETY: loading the system's own shared cursors.
+        SHAPES.iter().filter_map(|&(name, id)| unsafe { LoadCursorW(None, id) }.ok().map(|h| (name, h.0 as isize))).collect()
+    }
+
+    /// The cursor on screen now, if it's showing.
+    pub(super) fn shown() -> Option<isize> {
+        let mut info = CURSORINFO { cbSize: std::mem::size_of::<CURSORINFO>() as u32, ..Default::default() };
+        // SAFETY: a CURSORINFO with its size set, as the call wants.
+        unsafe { GetCursorInfo(&mut info) }.ok()?;
+        (info.flags.0 & CURSOR_SHOWING.0 != 0).then_some(info.hCursor.0 as isize)
+    }
+
+    /// Every shape's picture at a large size.
+    pub(super) fn pictures() -> Option<crate::desktop::CursorPictures> {
+        let shapes = SHAPES.iter().filter_map(|&(name, id)| picture(id, 128).map(|(image, hot)| (name, image, hot))).collect();
+        crate::desktop::CursorPictures::new(shapes)
+    }
+
+    /// A system cursor drawn `side` pixels square, premultiplied RGBA, and
+    /// its hotspot. Drawn once on black and once on white: what differs is
+    /// how see-through each pixel is, which also brings out the cursors
+    /// that invert what's under them (the I-beam).
+    fn picture(id: PCWSTR, side: i32) -> Option<(image::RgbaImage, (f64, f64))> {
+        // SAFETY: GDI calls on objects made here and freed before returning.
+        unsafe {
+            let cursor = HCURSOR(LoadImageW(None, id, IMAGE_CURSOR, side, side, LR_DEFAULTCOLOR).ok()?.0);
+            let icon = HICON(cursor.0);
+            let mut info = ICONINFO::default();
+            let hot = if GetIconInfo(icon, &mut info).is_ok() {
+                if !info.hbmColor.is_invalid() {
+                    let _ = DeleteObject(info.hbmColor.into());
+                }
+                if !info.hbmMask.is_invalid() {
+                    let _ = DeleteObject(info.hbmMask.into());
+                }
+                (info.xHotspot as f64, info.yHotspot as f64)
+            } else {
+                (0., 0.)
+            };
+            let dc = CreateCompatibleDC(None);
+            let header = BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: side,
+                biHeight: -side,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            };
+            let bmi = BITMAPINFO { bmiHeader: header, ..Default::default() };
+            let mut bits = std::ptr::null_mut();
+            let bitmap = CreateDIBSection(Some(dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
+            let old = SelectObject(dc, bitmap.into());
+            let n = (side * side * 4) as usize;
+            let on = |background: u8| {
+                let pixels = std::slice::from_raw_parts_mut(bits as *mut u8, n);
+                pixels.fill(background);
+                let _ = DrawIconEx(dc, 0, 0, icon, side, side, 0, None, DI_NORMAL);
+                pixels.to_vec()
+            };
+            let (black, white) = (on(0), on(255));
+            SelectObject(dc, old);
+            let _ = DeleteObject(bitmap.into());
+            let _ = DeleteDC(dc);
+            let _ = DestroyCursor(cursor);
+            let mut rgba = Vec::with_capacity(n);
+            for (b, w) in black.chunks_exact(4).zip(white.chunks_exact(4)) {
+                // How much of the white came through, per channel, on average.
+                let through = ((w[0] as u32 + w[1] as u32 + w[2] as u32).saturating_sub(b[0] as u32 + b[1] as u32 + b[2] as u32)) / 3;
+                let alpha = 255u32.saturating_sub(through) as u8;
+                // Over black, what's left is the colour times its alpha:
+                // premultiplied already. B G R in, R G B out.
+                rgba.extend_from_slice(&[b[2].min(alpha), b[1].min(alpha), b[0].min(alpha), alpha]);
+            }
+            Some((image::RgbaImage::from_raw(side as u32, side as u32, rgba)?, hot))
+        }
+    }
 }
 
 /// Windows' corner radius in logical pixels, for window shots (Windows 11).

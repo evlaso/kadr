@@ -4697,11 +4697,25 @@ mod tests {
     /// A cursor lands with its tip where it was placed, inside its box.
     #[test]
     fn cursor_tip_on_the_point() {
+        /// A stand-in for the system's arrow: dark inside a light rim, its
+        /// tip (the hotspot) at the top left.
+        fn arrow(_: &str, height: f32) -> Option<(RgbaImage, (f64, f64))> {
+            let side = height.round() as u32;
+            let image = RgbaImage::from_fn(side, side, |x, y| {
+                let edge = y as f32 * 0.6;
+                match x as f32 {
+                    x if x <= edge - 1.5 => image::Rgba([20, 20, 20, 255]),
+                    x if x <= edge => image::Rgba([255, 255, 255, 255]),
+                    _ => image::Rgba([0, 0, 0, 0]),
+                }
+            });
+            Some((image, (0., 0.)))
+        }
+        kadr_raster::cursors::set_theme(arrow);
         let src = RgbaImage::from_pixel(200, 200, image::Rgba([255, 255, 255, 255]));
         let shape = Shape { kind: Kind::Cursor("arrow"), a: (80., 60.), b: (80., 60.), color: Rgba::hsl(0., 0., 0., 1.), size: 44., filled: false, text: TextStyle::Plain, bend: None };
         let out = rasterize(&src, std::slice::from_ref(&shape)).unwrap();
-        // The arrow (from the user's theme or kadr's own) is dark inside a
-        // light rim, its tip at the point: ink just below and right of it,
+        // The arrow is dark inside a light rim, its tip at the point: ink just below and right of it,
         // none clearly above or left.
         let dark = |x: u32, y: u32| out.get_pixel(x, y).0[0] < 100;
         assert!((81..92).any(|x| (62..76).any(|y| dark(x, y))), "no arrow just inside the tip");

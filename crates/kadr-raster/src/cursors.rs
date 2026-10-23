@@ -1,45 +1,24 @@
-//! The drawn cursor's shapes in a macOS-like look: one SVG per shape on a
-//! 32-unit canvas, named like CSS cursors (`kadr_core::document::CURSORS`).
-//! A recording logs which shape the pointer had, the studio draws it, and
-//! the editor stamps it. Where the app sets a theme (`set_theme`, the user's
-//! own cursors), its pictures are drawn instead.
+//! The cursor's shapes, named like CSS cursors (`kadr_core::document::CURSORS`):
+//! a recording logs which shape the pointer had, the studio draws it, and
+//! the editor stamps it. The pictures are the system's own (`set_theme`:
+//! the XCursor theme on Linux, NSCursor on macOS, the system cursors on
+//! Windows); where it has none, nothing is drawn.
 
 use std::sync::OnceLock;
 
 use image::RgbaImage;
-use kadr_core::document::{CURSORS, cursor};
-
-/// Picture and hotspot in canvas units, in `CURSORS`' order.
-const SHAPES: [(&str, (f32, f32)); 13] = [
-    (include_str!("../../../data/cursors/arrow.svg"), (5., 3.)),
-    (include_str!("../../../data/cursors/pointer.svg"), (12.9, 4.4)),
-    (include_str!("../../../data/cursors/text.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/grab.svg"), (15., 15.)),
-    (include_str!("../../../data/cursors/grabbing.svg"), (15., 17.)),
-    (include_str!("../../../data/cursors/crosshair.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/move.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/not-allowed.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/wait.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/ew-resize.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/ns-resize.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/nwse-resize.svg"), (16., 16.)),
-    (include_str!("../../../data/cursors/nesw-resize.svg"), (16., 16.)),
-];
-
-/// The arrow's height in canvas units: a shape drawn at `height` pixels has
-/// the arrow that tall, and the others in proportion.
-const ARROW_UNITS: f32 = 22.4;
+use kadr_core::document::cursor;
 
 /// The shapes the editor's cursor tool offers, in its toolbar's order.
 /// (No "move": macOS themes draw it as the closed hand.)
 pub const STAMPS: [&str; 8] = ["arrow", "pointer", "text", "grab", "grabbing", "crosshair", "not-allowed", "wait"];
 
-/// The user's cursor for a shape at an arrow height: its picture and hotspot.
+/// The system's cursor for a shape at an arrow height: its picture and hotspot.
 pub type Theme = fn(&str, f32) -> Option<(RgbaImage, (f64, f64))>;
 
 static THEME: OnceLock<Theme> = OnceLock::new();
 
-/// Draw the user's own cursors where `theme` has them. Set once, at start.
+/// Where the pictures come from. Set once, at start.
 pub fn set_theme(theme: Theme) {
     let _ = THEME.set(theme);
 }
@@ -84,36 +63,30 @@ pub fn draw(name: &str, height: f32, at: (f32, f32), pm: &mut tiny_skia::PixmapM
 }
 
 /// The shape as a picture with the arrow `height` pixels tall, and its
-/// hotspot in pixels: the theme's where there is one, else kadr's.
+/// hotspot in pixels: the system's, if it has one.
 pub fn render(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))> {
     let height = height.max(8.);
-    if let Some((image, hot)) = THEME.get().and_then(|theme| theme(cursor(name), height)) {
-        let size = tiny_skia::IntSize::from_wh(image.width(), image.height())?;
-        return Some((tiny_skia::Pixmap::from_vec(image.into_raw(), size)?, hot));
-    }
-    own(name, height)
-}
-
-/// kadr's own picture of the shape.
-fn own(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))> {
-    let i = CURSORS.iter().position(|&n| n == name).unwrap_or(0);
-    let (svg, (hx, hy)) = SHAPES[i];
-    let tree = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()).ok()?;
-    let k = height.max(8.) / ARROW_UNITS;
-    let side = (32. * k).ceil() as u32;
-    let mut pm = tiny_skia::Pixmap::new(side, side)?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(k, k), &mut pm.as_mut());
-    Some((pm, ((hx * k) as f64, (hy * k) as f64)))
+    let (image, hot) = THEME.get().and_then(|theme| theme(cursor(name), height))?;
+    let size = tiny_skia::IntSize::from_wh(image.width(), image.height())?;
+    Some((tiny_skia::Pixmap::from_vec(image.into_raw(), size)?, hot))
 }
 
 #[cfg(test)]
 mod tests {
+    /// A stand-in for the system: a box per shape, the arrow 20 tall at
+    /// the size asked for.
+    fn boxes(name: &str, height: f32) -> Option<(image::RgbaImage, (f64, f64))> {
+        let side = (height * if name == "arrow" { 1. } else { 1.5 }).round() as u32;
+        Some((image::RgbaImage::from_pixel(side, side, image::Rgba([0, 0, 0, 255])), (1., 2.)))
+    }
+
     #[test]
-    fn every_shape_draws() {
-        for name in kadr_core::document::CURSORS {
-            let (pm, _) = super::own(name, 40.).unwrap();
-            assert!(pm.pixels().iter().any(|p| p.alpha() == 255), "{name} is empty");
-        }
+    fn shapes_come_from_the_system_and_scale_with_the_arrow() {
+        super::set_theme(boxes);
+        let (pm, hot) = super::render("pointer", 40.).unwrap();
+        assert_eq!((pm.width(), hot), (60, (1., 2.)));
+        let ((hx, _), (w, _)) = super::geometry("pointer", 20.);
+        assert!((w - 30.).abs() < 0.5 && hx < 1.);
         assert_eq!(kadr_core::document::cursor("help"), "arrow");
     }
 }

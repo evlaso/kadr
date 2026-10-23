@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="0.9" stdDeviation="0.9" flood-color="#000" flood-opacity="0.38"/></filter></defs><g filter="url(#s)">
-<circle cx="16" cy="16" r="9.5" fill="#fff"/>
-<path d="M16 16 L16 7.2 A8.8 8.8 0 0 1 22.2 9.8 Z" fill="#ff3b30"/><path d="M16 16 L22.2 9.8 A8.8 8.8 0 0 1 24.8 16 Z" fill="#ff9500"/>
-<path d="M16 16 L24.8 16 A8.8 8.8 0 0 1 22.2 22.2 Z" fill="#ffcc00"/><path d="M16 16 L22.2 22.2 A8.8 8.8 0 0 1 16 24.8 Z" fill="#34c759"/>
-<path d="M16 16 L16 24.8 A8.8 8.8 0 0 1 9.8 22.2 Z" fill="#32ade6"/><path d="M16 16 L9.8 22.2 A8.8 8.8 0 0 1 7.2 16 Z" fill="#007aff"/>
-<path d="M16 16 L7.2 16 A8.8 8.8 0 0 1 9.8 9.8 Z" fill="#5856d6"/><path d="M16 16 L9.8 9.8 A8.8 8.8 0 0 1 16 7.2 Z" fill="#af52de"/>
-</g></svg>

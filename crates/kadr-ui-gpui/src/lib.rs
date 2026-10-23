@@ -55,7 +55,9 @@ pub fn prepare() {
     dev::log_to_stderr();
     platform::set_dirs();
     i18n::set(settings::Settings::load().language);
-    // The cursor stamps and the studio's pointer in the user's own theme.
+    // The cursor stamps and the studio's pointer: the system's own (on
+    // macOS taken here, on the main thread, as AppKit likes).
+    platform::snapshot_cursors();
     kadr_raster::cursors::set_theme(platform::theme_cursor);
 }
 
