@@ -62,6 +62,9 @@ struct Writer {
     /// Paused time so far, taken off every later sample.
     offset: Duration,
     ended: Option<Box<dyn FnOnce() + Send>>,
+    /// Samples written, and the first write that failed, for the log.
+    written: u64,
+    failed: Option<String>,
 }
 
 impl Writer {
@@ -74,7 +77,8 @@ impl Writer {
         Some((at.saturating_duration_since(start).saturating_sub(self.offset)).as_nanos() as i64 / 100)
     }
 
-    fn write(&self, stream: u32, bytes: &[u8], time: i64, duration: i64) {
+    fn write(&mut self, stream: u32, bytes: &[u8], time: i64, duration: i64) {
+        self.written += 1;
         // SAFETY: Media Foundation's buffers, filled before they're handed over.
         unsafe {
             let Ok(buffer) = MFCreateMemoryBuffer(bytes.len() as u32) else { return };
@@ -89,7 +93,9 @@ impl Writer {
             let _ = sample.AddBuffer(&buffer);
             let _ = sample.SetSampleTime(time);
             let _ = sample.SetSampleDuration(duration);
-            let _ = self.sink.WriteSample(stream, &sample);
+            if let Err(e) = self.sink.WriteSample(stream, &sample) {
+                self.failed.get_or_insert(format!("WriteSample: {e}"));
+            }
         }
     }
 }
@@ -111,10 +117,30 @@ impl Shared {
 
 pub struct Session {
     shared: Arc<Shared>,
+    capture: Arc<Capture>,
+}
+
+/// What's stopped when the recording ends: the capture and the threads.
+struct Capture {
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
     stop: Arc<AtomicBool>,
     audio: Mutex<Vec<std::thread::JoinHandle<()>>>,
+}
+
+/// SAFETY: as Session's.
+unsafe impl Send for Capture {}
+unsafe impl Sync for Capture {}
+
+impl Capture {
+    fn close(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = self.session.Close();
+        let _ = self.pool.Close();
+        for t in self.audio.lock().unwrap().drain(..) {
+            let _ = t.join();
+        }
+    }
 }
 
 /// SAFETY: the frame pool is free-threaded and the session's Close may come
@@ -164,6 +190,8 @@ impl Session {
                 paused: None,
                 offset: Duration::ZERO,
                 ended: Some(ended),
+                written: 0,
+                failed: None,
             })));
 
             let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, full).map_err(|e| log(&e))?;
@@ -211,7 +239,8 @@ impl Session {
                     out[y * row..(y + 1) * row].copy_from_slice(src);
                 }
                 context.Unmap(&staging, 0);
-                w.write(w.video, &out, time, frame_time);
+                let video = w.video;
+                w.write(video, &out, time, frame_time);
                 Ok(())
             }))
             .map_err(|e| log(&e))?;
@@ -227,10 +256,10 @@ impl Session {
                 audio.push(audio_thread(shared.clone(), stop.clone(), stream, false));
             }
             audio.push(repeater(shared.clone(), stop.clone(), last, bytes, frame_time));
-            let session = Session { shared, pool, session, stop, audio: Mutex::new(audio) };
+            let session = Session { shared, capture: Arc::new(Capture { pool, session, stop, audio: Mutex::new(audio) }) };
             if first_rx.recv_timeout(Duration::from_secs(5)).is_err() {
                 session.shared.0.lock().unwrap().ended = None;
-                session.close();
+                session.capture.close();
                 let _ = std::fs::remove_file(&spec.out);
                 return Err(log(&"Windows.Graphics.Capture sent no frames"));
             }
@@ -250,25 +279,19 @@ impl Session {
         }
     }
 
-    fn close(&self) {
-        self.stop.store(true, Ordering::SeqCst);
-        let _ = self.session.Close();
-        let _ = self.pool.Close();
-        for t in self.audio.lock().unwrap().drain(..) {
-            let _ = t.join();
-        }
-    }
-
+    /// Stops on a thread of its own (closing the capture waits for its
+    /// threads and the encoder), then writes the file out.
     pub fn stop(&self) {
-        self.close();
-        let shared = self.shared.clone();
+        let (shared, capture) = (self.shared.clone(), self.capture.clone());
         std::thread::spawn(move || {
+            capture.close();
             {
                 let mut w = shared.0.lock().unwrap();
                 w.finished = true;
                 if w.started.is_some() {
                     // SAFETY: the writer, under the lock, after the last sample.
-                    let _ = unsafe { w.sink.Finalize() };
+                    let done = unsafe { w.sink.Finalize() };
+                    eprintln!("kadr: recording: {} samples, first failure {:?}, finalize {:?}", w.written, w.failed, done.err());
                 }
             }
             shared.end();
@@ -283,13 +306,14 @@ fn repeater(shared: Arc<Shared>, stop: Arc<AtomicBool>, last: Arc<Mutex<Option<i
         let tick = Duration::from_nanos(frame_time as u64 * 100 / 2);
         while !stop.load(Ordering::SeqCst) {
             std::thread::sleep(tick);
-            let w = shared.0.lock().unwrap();
+            let mut w = shared.0.lock().unwrap();
             let Some(now) = w.time(Instant::now()) else { continue };
             let mut last = last.lock().unwrap();
             let Some(at) = *last else { continue };
             if now - at >= frame_time {
                 let at = at + frame_time;
-                w.write(w.video, &bytes.lock().unwrap(), at, frame_time);
+                let video = w.video;
+                w.write(video, &bytes.lock().unwrap(), at, frame_time);
                 *last = Some(at);
             }
         }
@@ -500,7 +524,7 @@ fn audio_thread(shared: Arc<Shared>, stop: Arc<AtomicBool>, stream: u32, loopbac
                         let _ = capture.ReleaseBuffer(frames);
                     }
                 }
-                let w = shared.0.lock().unwrap();
+                let mut w = shared.0.lock().unwrap();
                 let Some(now) = w.time(Instant::now()) else {
                     // Paused (or not started): what came in is left out.
                     continue;

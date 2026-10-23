@@ -361,6 +361,10 @@ def record(t):
     t.shot("recording")
     run(BIN / f"kadr{EXE}", "record", "stop", check=False)
     length = wait_for(lambda: mp4_duration(file), timeout=20)
+    # The recorder's own log beside the test's, whatever came of it.
+    caches = Path(os.environ.get("LOCALAPPDATA", "")) / "kadr/cache" if os.name == "nt" else Path.home() / "Library/Caches/kadr"
+    if (caches / "record.log").exists():
+        shutil.copy(caches / "record.log", t.out / "record.log")
     frames = length and mp4_frames(file)
     t.note("the recording is saved", length and 2 <= length <= 8, seconds=length and round(length, 2), size=file.stat().st_size if file.exists() else None)
     # A steady frame rate, like gpu-screen-recorder's on Linux, even with
