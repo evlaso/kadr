@@ -163,6 +163,25 @@ window.
 The rest held: tray 4.8 MB, editor with a 4K picture 243.6 MB, idle CPU
 0.1 %, edit → window 283.8 ms, incremental build 0.7 s.
 
+## The overlay on macOS and Windows
+
+2026-10-23, the desktop e2e on GitHub's runners (1024×768, no GPU), from
+kadr's and kadr-overlay's own timing lines. kadr grabs the screen and
+writes the spec; the overlay is a program of its own (winit wants the
+main thread), cold or kept warm by the tray (`keep_warm`, SPEC 3.6).
+
+| Step | macOS, cold | macOS, warm | Windows, cold |
+|---|---|---|---|
+| kadr: grab the screen | 118 ms (66 / 14 later) | — | 23 ms |
+| kadr: write the spec | 6 ms | 1 ms | 3 ms |
+| overlay: process start → window | 253 ms | — | 40 ms |
+| overlay: request → first frame | 268 ms from start | 103 ms first, **27 ms** after | 43 ms from start |
+
+On macOS a cold start spends ~245 ms starting AppKit and the event loop,
+so the tray keeps the overlay warm there by default; the first window in a
+warm process still costs ~100 ms, the next ones 27. Windows needs none.
+The screen grab is now the largest part on macOS.
+
 ## How each is measured
 
 - **Tray RSS**: a fresh `kadr tray` (on Linux the StatusNotifierItem through
