@@ -2,6 +2,7 @@
 name = "kadr-testkit"
 version = "0.2.0"
 edition = "2024"
+license.workspace = true
 description = "Tools for the e2e tests: a pointer and keyboard, and screenshots, on every system"
 publish = false
 

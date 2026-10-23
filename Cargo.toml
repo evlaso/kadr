@@ -2,6 +2,10 @@
 members = ["crates/*"]
 
 # Shared versions, so every crate builds against the same ones.
+# The same for every crate (vendor/gpui_linux keeps GPUI CE's own, Apache-2.0).
+[workspace.package]
+license = "MIT"
+
 [workspace.dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "pnm"] }
 serde_json = "1"
@@ -13,6 +17,7 @@ ab_glyph = "0.2.32"
 name = "kadr"
 version = "0.2.0"
 edition = "2024"
+license.workspace = true
 
 [features]
 # `kadr dev mem` lists live allocations with their stacks (KADR_DEV=1 too).

@@ -2,6 +2,7 @@
 name = "kadr-platform"
 version = "0.2.0"
 edition = "2024"
+license.workspace = true
 description = "Everything that differs between operating systems, without a UI framework"
 publish = false
 

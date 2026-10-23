@@ -2,6 +2,7 @@
 name = "kadr-tray"
 version = "0.2.0"
 edition = "2024"
+license.workspace = true
 description = "kadr's tray icon and global hotkeys: a small process without a UI framework"
 publish = false
 

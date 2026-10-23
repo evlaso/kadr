@@ -2,6 +2,7 @@
 name = "kadr-media"
 version = "0.2.0"
 edition = "2024"
+license.workspace = true
 description = "Recordings and the studio without a UI: the edit, the camera, the export's ffmpeg graph"
 publish = false
 

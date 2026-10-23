@@ -2,6 +2,8 @@
 
 Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI CE. Made for Linux on [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland). Dark and light themes are built in and follow the system by default. English and Russian.
 
+**Status:** works on Linux (Wayland, Hyprland); macOS and Windows build in CI but haven't been tried on a real machine, and recording and window picking aren't ported there yet. No release yet.
+
 [Читать по-русски](docs/README.ru.md)
 
 ## What it does
@@ -81,10 +83,14 @@ kadr install-desktop                               .kadr file type, icon and men
 ## Platforms
 
 - **Linux** (Wayland, Hyprland): everything works.
-- **macOS and Windows:** they build in CI; not yet tried on a real machine. Screenshots, the clipboard, notifications, the tray icon and global hotkeys are written (through cross-platform crates); recording, picking windows and the studio's click log aren't ported yet. Everything system-specific lives in `src/platform/`, so it can be ported one function at a time.
+- **macOS and Windows:** they build in CI; not yet tried on a real machine. Screenshots, the clipboard, notifications, the tray icon and global hotkeys are written (through cross-platform crates); recording, picking windows and the studio's click log aren't ported yet. Everything system-specific lives in `crates/kadr-platform`, so it can be ported one function at a time.
 
-Builds for all three systems are attached to every commit on `main` in [Actions](https://github.com/vlasmn/kadr/actions).
+Linux builds are attached to every commit on `main` in [Actions](https://github.com/vlasmn/kadr/actions); macOS and Windows ones to `v*` tags and manual runs.
 
 ## Development
 
 How the code is laid out, the conventions and the known pitfalls are in [CLAUDE.md](CLAUDE.md).
+
+## License
+
+[MIT](LICENSE). Bundled third-party pieces keep their own licenses: the Lucide icons (ISC, `data/icons/ui/LICENSE-lucide.txt`), the fonts (SIL OFL 1.1, `data/fonts`), and the patched GPUI CE Linux platform crate (Apache-2.0, `vendor/gpui_linux`).

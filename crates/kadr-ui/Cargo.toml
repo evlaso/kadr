@@ -2,6 +2,7 @@
 name = "kadr-ui"
 version = "0.2.0"
 edition = "2024"
+license.workspace = true
 description = "kadr's screens without a UI framework: their state, commands and undo"
 publish = false
 

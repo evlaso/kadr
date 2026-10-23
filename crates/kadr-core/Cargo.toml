@@ -2,6 +2,7 @@
 name = "kadr-core"
 version = "0.2.0"
 edition = "2024"
+license.workspace = true
 description = "kadr's data and logic: no OS, no UI"
 publish = false
 
