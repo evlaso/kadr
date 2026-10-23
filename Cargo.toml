@@ -29,6 +29,7 @@ gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = 
 gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", features = ["wayland"] }
 smallvec = { version = "1", features = ["union"] }
 log = "0.4"
+raw-window-handle = "0.6"
 palette = "0.7"
 async-process = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

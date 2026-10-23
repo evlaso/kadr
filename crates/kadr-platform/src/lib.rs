@@ -21,6 +21,7 @@ pub use imp::*;
 
 pub mod dialog;
 pub mod keymap;
+pub mod menu;
 pub mod style;
 
 #[cfg(not(target_os = "linux"))]

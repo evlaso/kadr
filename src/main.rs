@@ -29,6 +29,7 @@ mod trim;
 mod ui;
 mod job;
 mod kit;
+mod menubar;
 mod ocr;
 mod util;
 mod webcam;
@@ -327,6 +328,7 @@ fn main() {
     // kadr quits on its own once idle (below), not when the last overlay closes.
     application().with_assets(kit::Assets).with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
         kit::init(cx);
+        menubar::init(cx);
         record::init(cx);
         storage::auto();
         platform::ensure_desktop();

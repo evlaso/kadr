@@ -2257,9 +2257,22 @@ impl StudioEditor {
             .hover(move |d| d.bg(hover))
             .child(Label::new(label(self.project.aspect)).size(LabelSize::Small))
             .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.aspect_open = !this.aspect_open;
+            .on_click(cx.listener(|this, e: &gpui::ClickEvent, window, cx| {
                 this.export_open = false;
+                let order: Vec<usize> = ASPECT_ORDER.iter().flat_map(|g| g.iter().copied()).collect();
+                let items = ASPECT_ORDER
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(g, group)| group.iter().enumerate().map(move |(k, &i)| (g > 0 && k == 0, i)))
+                    .map(|(separated, i)| kadr_platform::menu::Item { separated, ..kadr_platform::menu::Item::new(t(ASPECTS[i].0), this.project.aspect == i) })
+                    .collect();
+                if crate::ui::native_menu(window, cx, e.position(), items, move |this: &mut StudioEditor, k, _, cx| {
+                    this.project.aspect = order[k];
+                    this.changed(cx);
+                }) {
+                    return;
+                }
+                this.aspect_open = !this.aspect_open;
                 cx.notify();
             }));
         let menu = self.aspect_open.then(|| {

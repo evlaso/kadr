@@ -2464,6 +2464,7 @@ impl Editor {
                 .map(|&t| (format!("{} ({})", t.label(), t.key().to_uppercase()), t == self.tool, Rc::new(move |this: &mut Editor, _: &mut Window, cx: &mut Context<Editor>| this.set_tool(t, cx)) as MenuPick))
                 .collect();
             let icons = hidden.iter().map(|t| Some(t.icon())).collect();
+            let native = items.clone();
             let menu = open.then(|| self.menu_list(items, icons, false, true, cx));
             self.menu_anchor(CropMenu::Tools, cx)
                 .child(
@@ -2479,7 +2480,10 @@ impl Editor {
                                 .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(if current.is_some() { Color::Custom(gpui::white()) } else { Color::Muted })),
                         )
                         .when(!open, |b| b.tip(Tooltip::text(t("editor.more_tools"))))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                            if Editor::native_menu(&native, e, window, cx) {
+                                return;
+                            }
                             this.crop_menu = if this.crop_menu == Some(CropMenu::Tools) { None } else { Some(CropMenu::Tools) };
                             cx.notify();
                         })),
@@ -2644,6 +2648,7 @@ impl Editor {
                 Some(Icon::from_path("icons/kadr/project.svg")),
                 Some(Icon::from_path("icons/copy.svg")),
             ];
+            let native = items.clone();
             let menu = open.then(|| self.menu_list(items, icons, true, true, cx));
             self.menu_anchor(CropMenu::Actions, cx)
                 .child(
@@ -2654,7 +2659,10 @@ impl Editor {
                         .toggle_state(open)
                         .child(Icon::from_path("icons/kadr/more.svg").size(IconSize::Medium))
                         .when(!open, |b| b.tip(Tooltip::text(t("editor.more_actions"))))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                            if Editor::native_menu(&native, e, window, cx) {
+                                return;
+                            }
                             this.crop_menu = if this.crop_menu == Some(CropMenu::Actions) { None } else { Some(CropMenu::Actions) };
                             cx.notify();
                         })),
@@ -2818,6 +2826,7 @@ impl Editor {
     /// it (or over it, in the footer).
     fn crop_dropdown(&self, which: CropMenu, label: String, tip: &'static str, items: Vec<MenuItem>, up: bool, cx: &mut Context<Self>) -> AnyElement {
         let open = self.crop_menu == Some(which);
+        let native = items.clone();
         let menu = open.then(|| self.menu_popup(items, up, false, cx));
         self.menu_anchor(which, cx)
             .child(
@@ -2827,13 +2836,27 @@ impl Editor {
                     .toggle_state(open)
                     .child(h_flex().gap_1().px_1().child(Label::new(label)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
                     .tip(Tooltip::text(tip))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                        if Editor::native_menu(&native, e, window, cx) {
+                            return;
+                        }
                         this.crop_menu = if this.crop_menu == Some(which) { None } else { Some(which) };
                         cx.notify();
                     })),
             )
             .children(menu)
             .into_any_element()
+    }
+
+    /// A dropdown's choices as the system's menu, where it has one.
+    fn native_menu(items: &[MenuItem], e: &gpui::ClickEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let picks: Vec<MenuPick> = items.iter().map(|(_, _, pick)| pick.clone()).collect();
+        let entries = items.iter().map(|(text, on, _)| kadr_platform::menu::Item::new(text.clone(), *on)).collect();
+        crate::ui::native_menu(window, cx, e.position(), entries, move |this, i, window, cx| {
+            if let Some(pick) = picks.get(i) {
+                pick(this, window, cx);
+            }
+        })
     }
 
     /// The crop's fill: a button with its dot, and swatches under it (see-

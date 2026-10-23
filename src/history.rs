@@ -709,7 +709,14 @@ impl Render for History {
                         .size(ButtonSize::Large)
                         .toggle_state(self.filter_open)
                         .child(h_flex().px_2().gap_1().child(Label::new(label)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, e: &ClickEvent, window, cx| {
+                            let items = Filter::ALL.iter().map(|&(f, label)| kadr_platform::menu::Item::new(t(label), f == this.filter)).collect();
+                            if crate::ui::native_menu(window, cx, e.position(), items, |this: &mut History, i, _, _| {
+                                this.filter = Filter::ALL[i].0;
+                                this.selected = 0;
+                            }) {
+                                return;
+                            }
                             this.filter_open = !this.filter_open;
                             cx.notify();
                         })),

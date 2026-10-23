@@ -24,6 +24,10 @@ notify-rust = "4.18.2"
 trash = "5.2.9"
 xcap = "0.9.8"
 
+# The system's pop-up menus (menu.rs); Linux has none outside GTK.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+muda = { version = "0.21.2", default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"

@@ -441,6 +441,17 @@ impl Panel {
         let panel = cx.weak_entity();
         let entries = self.mics.clone();
         let selected = self.opts.mic_device.clone();
+        // The system's own menu where it has one.
+        let items = entries.iter().map(|(name, desc)| kadr_platform::menu::Item::new(desc.clone(), *name == selected)).collect();
+        let names: Vec<String> = entries.iter().map(|(name, _)| name.clone()).collect();
+        if crate::ui::native_menu(window, cx, event.position, items, move |panel: &mut Panel, i, _, _| {
+            if let Some(name) = names.get(i) {
+                panel.opts.mic_device = name.clone();
+                panel.opts.mic = true;
+            }
+        }) {
+            return;
+        }
         // Exactly the rows, their gaps, the padding and the border: the popup
         // can't size itself to its content.
         let n = entries.len().max(1) as f32;

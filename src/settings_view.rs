@@ -46,6 +46,18 @@ pub struct SettingsView {
     focus: FocusHandle,
 }
 
+/// The settings at their About section.
+pub fn open_about(cx: &mut App) {
+    open(cx);
+    if let Some(window) = cx.windows().into_iter().find_map(|w| w.downcast::<SettingsView>()) {
+        let _ = window.update(cx, |view, _, cx| {
+            view.vm.tab = kadr_ui::settings::Tab::About;
+            view.vm.query.clear();
+            cx.notify();
+        });
+    }
+}
+
 pub fn open(cx: &mut App) {
     // Already open: bring it forward instead of a second one.
     if let Some(window) = cx.windows().into_iter().find_map(|w| w.downcast::<SettingsView>()) {
@@ -63,6 +75,15 @@ pub fn open(cx: &mut App) {
 }
 
 impl SettingsView {
+    fn set_language(&mut self, lang: crate::i18n::Lang, cx: &mut Context<Self>) {
+        self.languages_open = false;
+        self.vm.settings.language = lang;
+        self.vm.settings.save();
+        crate::i18n::set(lang);
+        cx.refresh_windows();
+        cx.notify();
+    }
+
     /// The language as a dropdown: there will be more than fit in a row.
     fn render_languages(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.vm.settings.language;
@@ -89,14 +110,7 @@ impl SettingsView {
                             .hover(|d| d.bg(cx.theme().colors().element_hover))
                             .child(Icon::new(IconName::Check).size(IconSize::Small).color(if lang == current { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
                             .child(Label::new(lang.name()))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.languages_open = false;
-                                this.vm.settings.language = lang;
-                                this.vm.settings.save();
-                                crate::i18n::set(lang);
-                                cx.refresh_windows();
-                                cx.notify();
-                            }))
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_language(lang, cx)))
                     }))
                     .child(crate::ui::track_bounds(&self.languages_menu)),
             )
@@ -114,7 +128,12 @@ impl SettingsView {
                     .style(ButtonStyle::Filled)
                     .toggle_state(self.languages_open)
                     .child(h_flex().gap_1p5().px_2().child(Label::new(current.name()).size(LabelSize::Small)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                        let langs = crate::i18n::Lang::ALL;
+                        let items = langs.iter().map(|&lang| kadr_platform::menu::Item::new(lang.name(), lang == current)).collect();
+                        if crate::ui::native_menu(window, cx, e.position(), items, move |this: &mut SettingsView, i, _, cx| this.set_language(langs[i], cx)) {
+                            return;
+                        }
                         this.languages_open = !this.languages_open;
                         cx.notify();
                     })),

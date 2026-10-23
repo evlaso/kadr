@@ -442,6 +442,30 @@ impl RenderOnce for Divider {
 // ---------------------------------------------------------------- key hints
 
 /// A shortcut as Zed shows it on Linux: "Ctrl-S", "Escape".
+/// Opens a dropdown's choices as the system's own menu where it has one
+/// (macOS, Windows; SPEC 3.10) at `at`, and calls `pick` with the chosen
+/// one. False where it has none (Linux): the caller draws its list.
+pub fn native_menu<V: 'static>(window: &mut Window, cx: &mut Context<V>, at: gpui::Point<Pixels>, entries: Vec<kadr_platform::menu::Item>, pick: impl FnOnce(&mut V, usize, &mut Window, &mut Context<V>) + 'static) -> bool {
+    use raw_window_handle::HasWindowHandle;
+    if !kadr_platform::menu::native() {
+        return false;
+    }
+    let Ok(handle) = window.window_handle() else { return false };
+    let raw = handle.as_raw();
+    let at = (f32::from(at.x), f32::from(at.y));
+    cx.spawn_in(window, async move |this, cx| {
+        // Outside any update: the system's menu runs its own event loop,
+        // which may hand GPUI events meanwhile.
+        let Some(i) = kadr_platform::menu::popup(raw, at, &entries) else { return };
+        let _ = this.update_in(cx, |view, window, cx| {
+            pick(view, i, window, cx);
+            cx.notify();
+        });
+    })
+    .detach();
+    true
+}
+
 /// A row of buttons like Cancel … Save, given with the confirming one last:
 /// where the system puts it last (macOS, GNOME) they stay so, Windows has
 /// it first.
