@@ -353,6 +353,15 @@ pub fn open_window<V: Render + 'static>(
     build: impl FnOnce(&mut Window, &mut App) -> gpui::Entity<V>,
 ) -> Option<WindowHandle<V>> {
     let display = mon.and_then(|m| crate::util::display_of(m, cx));
+    // Never bigger than the screen it opens on, less a margin, nor its
+    // minimum on a screen smaller than that: nothing hangs off a small one.
+    let (size, min) = match mon {
+        Some(m) => {
+            let (mw, mh) = (m.w as f32 - 80., m.h as f32 - 80.);
+            ((size.0.min(mw), size.1.min(mh)), (min.0.min(mw), min.1.min(mh)))
+        }
+        None => (size, min),
+    };
     let options = WindowOptions {
         titlebar: crate::platform::titlebar(),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(display, gpui::size(px(size.0), px(size.1)), cx))),

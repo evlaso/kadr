@@ -105,6 +105,11 @@ pub struct History {
     /// grid was the first tile last time.
     pitch: Option<f32>,
     first_child: usize,
+    /// A narrow window shows the filters as a dropdown, and fewer key hints.
+    filter_fit: crate::ui::Fit,
+    hint_fit: crate::ui::Fit,
+    filter_open: bool,
+    filter_menu: crate::ui::MenuBounds,
 }
 
 /// Files kadr and Omarchy save, newest first.
@@ -277,7 +282,7 @@ pub fn open(cx: &mut App) {
                 }
             })
             .detach();
-            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus, caret: true, hovered: None, pitch: None, first_child: 0 }
+            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus, caret: true, hovered: None, pitch: None, first_child: 0, filter_fit: Default::default(), hint_fit: Default::default(), filter_open: false, filter_menu: Default::default() }
         })
     });
 }
@@ -627,6 +632,11 @@ impl Render for History {
         self.item_width = ((room - 1. - GAP * (self.columns as f32 - 1.)) / self.columns as f32 - 10.).floor();
 
         let visible = self.visible();
+        let rem = kit::REM;
+        let viewport_w = f32::from(viewport.width);
+        // The filters as buttons while the search keeps a fair width beside
+        // them, else as a dropdown.
+        let dropdown = self.filter_fit.pick(viewport_w - 1.5 * rem - rem - 2. * rem - 14. * rem, 2) == 1;
         // Each filter with how many it shows, unless none.
         let filters: Vec<_> = Filter::ALL.iter().map(|&(filter, label)| {
             let count = self.matching(filter).len();
@@ -647,6 +657,69 @@ impl Render for History {
                     cx.notify();
                 }))
         }).collect();
+        let filters = if dropdown {
+            let label = Filter::ALL.iter().find(|(f, _)| *f == self.filter).map(|&(_, l)| t(l)).unwrap_or_default();
+            let hover = cx.theme().colors().element_hover;
+            let menu = self.filter_open.then(|| {
+                gpui::deferred(
+                    v_flex()
+                        .id("filter-menu")
+                        .occlude()
+                        .absolute()
+                        .top(px(38.))
+                        .right_0()
+                        .min_w(px(170.))
+                        .p_1()
+                        .elevation_3(cx)
+                        .children(Filter::ALL.iter().map(|&(filter, label)| {
+                            let count = self.matching(filter).len();
+                            h_flex()
+                                .id(SharedString::from(format!("filter-row-{label}")))
+                                .gap_1p5()
+                                .px_2()
+                                .h(px(28.))
+                                .rounded(px(6.))
+                                .cursor_pointer()
+                                .hover(move |d| d.bg(hover))
+                                .child(div().w(px(14.)).children((self.filter == filter).then(|| Icon::new(IconName::Check).size(IconSize::XSmall))))
+                                .child(Label::new(t(label)).size(LabelSize::Small))
+                                .child(div().flex_1())
+                                .when(count > 0, |row| row.child(Label::new(count.to_string()).size(LabelSize::Small).color(Color::Muted)))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.filter = filter;
+                                    this.selected = 0;
+                                    this.filter_open = false;
+                                    cx.notify();
+                                }))
+                        }))
+                        .child(crate::ui::track_bounds(&self.filter_menu)),
+                )
+            });
+            h_flex()
+                .relative()
+                .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                    if this.filter_open && !this.filter_menu.get().contains(&e.position) {
+                        this.filter_open = false;
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    ButtonLike::new("filter-dropdown")
+                        .style(if self.filter_open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                        .size(ButtonSize::Large)
+                        .toggle_state(self.filter_open)
+                        .child(h_flex().px_2().gap_1().child(Label::new(label)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.filter_open = !this.filter_open;
+                            cx.notify();
+                        })),
+                )
+                .children(menu)
+                .child(self.filter_fit.track(1, 0))
+                .into_any_element()
+        } else {
+            h_flex().relative().gap_0p5().children(filters).child(self.filter_fit.track(0, 0)).into_any_element()
+        };
         // Big and bold, like Raycast's search.
         let search = h_flex()
             .flex_1()
@@ -711,6 +784,11 @@ impl Render for History {
         // What it does, then the key, like everywhere else in kadr.
         let hint = |keys: &str, label: &'static str| h_flex().gap_1p5().child(Label::new(label).size(LabelSize::Small)).child(kit::keys(keys));
 
+        // Short of room the key hints go from the last; Open and Close stay.
+        let hints = [("e", t("history.editor_studio")), ("ctrl-c", t("common.copy")), ("delete", t("history.delete_selected")), ("p", t("history.pin")), ("tab", t("history.filter"))];
+        let hint_layout = self.hint_fit.pick(viewport_w - 2. * rem - 2.5 * rem, hints.len() + 1);
+        let shown = hints.len() - hint_layout;
+
         kit::root(cx)
             .bg(cx.theme().colors().panel_background)
             .flex()
@@ -729,7 +807,7 @@ impl Render for History {
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(search)
-                            .child(h_flex().gap_0p5().children(filters))
+                            .child(filters)
                             .child(
                                 IconButton::new("settings", IconName::Settings)
                                     .shape(IconButtonShape::Square)
@@ -749,15 +827,23 @@ impl Render for History {
                             .py_2()
                             .border_t_1()
                             .border_color(cx.theme().colors().border_variant)
-                            .child(hint("enter", t("common.open")))
-                            .child(hint("e", t("history.editor_studio")))
-                            .child(hint("ctrl-c", t("common.copy")))
-                            .child(hint("delete", t("history.delete_selected")))
-                            .child(hint("p", t("history.pin")))
-                            .child(hint("tab", t("history.filter")))
+                            .child(
+                                h_flex()
+                                    .relative()
+                                    .gap_5()
+                                    .child(hint("enter", t("common.open")))
+                                    .children(hints.into_iter().take(shown).map(|(keys, label)| hint(keys, label)))
+                                    .child(self.hint_fit.track(hint_layout, 0)),
+                            )
                             .child(div().flex_1())
-                            .when(self.picked.len() > 1, |bar| bar.child(Label::new(tr!("history.n_selected", self.picked.len())).size(LabelSize::Small).color(Color::Accent)))
-                            .child(hint("escape", t("common.close"))),
+                            .child(
+                                h_flex()
+                                    .relative()
+                                    .gap_5()
+                                    .when(self.picked.len() > 1, |bar| bar.child(Label::new(tr!("history.n_selected", self.picked.len())).size(LabelSize::Small).color(Color::Accent)))
+                                    .child(hint("escape", t("common.close")))
+                                    .child(self.hint_fit.track(hint_layout, 1)),
+                            ),
                     ),
             )
     }

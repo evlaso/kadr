@@ -48,6 +48,7 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 
 ## Conventions
 
+- Every window works down to its minimum size, and no window opens bigger than its screen (`kit::open_window` clamps both). Bars that can run out of room fold rather than overlap: what doesn't fit goes under a chevron or a "⋯" menu, labels and key hints go first. Pick the layout from what was drawn with `ui::Fit` (layouts from fullest to most compact, each part tracked) or `ui::track_width`; they redraw on the next frame, since a refresh while drawing is dropped. Check new bars at the minimum size, in Russian too (longer labels).
 - Nested corners are concentric: an inner element's radius is the outer radius less the inset (see `cards::CORNER`, `history::BUTTON`, `studio_editor::TILE_RADIUS`). Scrolling panes get `ui::scrollbar`.
 - Look and feel: a soft, clean Apple-like look, like a well-made Mac utility. No glass. Separate groups with space and tone, not lines. The main action uses the accent color.
 - Before changing the user's Hyprland config (`~/.config/hypr/*.lua`), back up the file (`.bak-<timestamp>`).

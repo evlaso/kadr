@@ -23,6 +23,9 @@ start() {
   dir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/ke-XXXX")
   chmod 700 "$dir"
   mkdir -p "$dir/home/config" "$dir/home/cache" "$dir/home/data" "$dir/home/shots" "$dir/home/videos"
+  # The user's folders too, or kadr finds their real recordings in ~/Videos
+  # (the history lists them).
+  printf 'XDG_VIDEOS_DIR="%s"\nXDG_PICTURES_DIR="%s"\n' "$dir/home/videos" "$dir/home/shots" >"$dir/home/config/user-dirs.dirs"
 
   # In the real session: the nested window floats at the output's size on a
   # special workspace, and keeps getting frames there.

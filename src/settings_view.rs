@@ -167,12 +167,13 @@ impl SettingsView {
 
     /// The section list on the left, like System Settings: the current one
     /// highlighted in the accent colour.
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&self, (width, height): (f32, f32), cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         let accent = colors.text_accent;
         let on_accent = crate::ui::on(accent);
+        // Narrower in a narrow window, where the section needs the room.
         v_flex()
-            .w(px(210. * kit::SCALE))
+            .w(px(if width < 820. { 170. } else { 210. } * kit::SCALE))
             .h_full()
             .flex_none()
             // Corners inside are the window's less this inset: concentric.
@@ -222,17 +223,20 @@ impl SettingsView {
                     }))
             }))
             .child(div().flex_1())
-            .child(
+            // A low window keeps its room for the sections.
+            .when(height >= 480., |d| d.child(
                 v_flex()
                     .px_2()
                     .pb_1()
                     .child(
                         h_flex()
+                            .items_start()
                             .gap_1p5()
-                            .child(Icon::new(IconName::Check).size(IconSize::XSmall).color(Color::Muted))
-                            .child(Label::new(t("settings.changes_saved_right_away")).size(LabelSize::Small).color(Color::Muted)),
+                            .child(div().flex_none().pt_0p5().child(Icon::new(IconName::Check).size(IconSize::XSmall).color(Color::Muted)))
+                            // Wraps when the sidebar is narrow.
+                            .child(div().flex_1().min_w_0().child(Label::new(t("settings.changes_saved_right_away")).size(LabelSize::Small).color(Color::Muted))),
                     )
-            )
+            ))
     }
 
     /// A section's rows, each with its text for the search.
@@ -470,20 +474,25 @@ fn heading(title: &str) -> (String, AnyElement) {
     (format!("{HEADING}{title}"), Label::new(title.to_owned()).size(LabelSize::Small).color(Color::Muted).into_any_element())
 }
 
-/// Title and description on the left, the control on the right.
+/// Title and description on the left, the control on the right; in a
+/// narrow window, where the text would be squeezed into a sliver, the
+/// control goes under it, still at the right.
 fn row(title: &str, description: &str, control: AnyElement) -> (String, AnyElement) {
     let el = h_flex()
         .w_full()
+        .flex_wrap()
         .justify_between()
-        .gap_6()
+        .gap_x_6()
+        .gap_y_2()
         .py_3()
         .child(
             v_flex()
-                .min_w_0()
+                .flex_1()
+                .min_w(gpui::rems(8.))
                 .child(div().whitespace_nowrap().child(Label::new(title.to_owned())))
                 .when(!description.is_empty(), |c| c.child(Label::new(description.to_owned()).size(LabelSize::Small).color(Color::Muted))),
         )
-        .child(div().flex_none().child(control))
+        .child(div().flex_none().ml_auto().child(control))
         .into_any_element();
     (format!("{title} {description}"), el)
 }
@@ -720,7 +729,7 @@ impl Drop for SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         kit::root(cx)
             .bg(cx.theme().colors().editor_background)
             .flex()
@@ -733,7 +742,7 @@ impl Render for SettingsView {
                     .child(
                         h_flex()
                             .size_full()
-                            .child(self.render_sidebar(cx))
+                            .child(self.render_sidebar((f32::from(window.viewport_size().width), f32::from(window.viewport_size().height)), cx))
                             .child(
                                 v_flex()
                                     .flex_1()
