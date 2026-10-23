@@ -13,7 +13,7 @@ declare -A allowed=(
   [kadr-ui]="kadr-core kadr-raster"
   [kadr-media]="kadr-core kadr-raster"
   [kadr-tray]="kadr-core kadr-platform"
-  [kadr-overlay]=""
+  [kadr-overlay]="kadr-core kadr-raster"
 )
 frameworks="gpui gpui-ce gpui_ce_platform iced tauri egui slint"
 
