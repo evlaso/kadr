@@ -17,3 +17,7 @@ hl.config({
   cursor = { no_hardware_cursors = true },
   debug = { disable_logs = false },
 })
+
+-- kadr's ordinary windows float in the middle, as data/hypr/kadr.lua has them
+-- in a real session, so their own size is what's tested.
+hl.window_rule({ match = { class = "^kadr-(editor|settings|studio|history)$" }, float = true, center = true })

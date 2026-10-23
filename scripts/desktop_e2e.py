@@ -135,6 +135,21 @@ class Test:
         return outcome
 
 
+def screen():
+    """The first monitor as (x, y, w, h)."""
+    if LINUX:
+        m = json.loads(run("hyprctl", "-j", "monitors").stdout)[0]
+        return (m["x"], m["y"], m["width"], m["height"])
+    m = json.loads(run(SHOT, "monitor").stdout)
+    return (m["x"], m["y"], m["w"], m["h"])
+
+
+def fits(t, x, y, w, h):
+    """The window is wholly on the screen."""
+    sx, sy, sw, sh = screen()
+    return t.note("the window fits the screen", sx <= x and sy <= y and x + w <= sx + sw and y + h <= sy + sh, window=[x, y, w, h], screen=[sx, sy, sw, sh])
+
+
 def pixel(x, y):
     """The screen's colour at a point, as (r, g, b)."""
     try:
@@ -177,6 +192,12 @@ def gpui(t, work):
         t.renderer["note"] = "Metal; GPUI reports no adapter on macOS"
     # Window and element bounds are logical; Windows' pointer is physical.
     (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
+    if LINUX:
+        # Wayland doesn't tell a window where it is; Hyprland does.
+        c = next((c for c in json.loads(run("hyprctl", "-j", "clients").stdout) if c["class"] == "kadr-editor"), None)
+        if c:
+            wx, wy = c["at"]
+    fits(t, wx * scale, wy * scale, ww * scale, wh * scale)
     tool = dev("find", "tool-r")
     if not t.note("the box tool is found", tool):
         return proc
@@ -224,7 +245,7 @@ def iced(t, work):
     # Again now that it's settled: the spike fits itself to a small screen.
     time.sleep(0.5)
     win = window() or win
-    t.note("the window is on screen", win["x"] >= 0 and win["y"] >= 0, bounds=[win["x"], win["y"], win["w"], win["h"]])
+    fits(t, win["x"], win["y"], win["w"], win["h"])
     click = (win["x"] + 105, win["y"] + 24)
     run(POINTER, "click", *click)
     # The chosen tool's button turns the accent blue: look inside its
@@ -239,6 +260,10 @@ def iced(t, work):
 
 def main():
     shell = sys.argv[1] if len(sys.argv) > 1 else "gpui"
+    if LINUX:
+        # The runners' screen, 1024x768, on the nested session's output.
+        run("hyprctl", "eval", 'hl.monitor({ output = "WAYLAND-1", mode = "1024x768@60", position = "0x0", scale = 1 })')
+        time.sleep(0.5)
     t = Test(shell)
     work = t.out / "shot.png"
     shutil.copy(ROOT / "tests/golden/cases/arrow/base.png", work)

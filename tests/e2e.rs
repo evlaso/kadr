@@ -90,11 +90,16 @@ impl Session {
         assert!(ok.success(), "kadr-pointer {args:?}");
     }
 
-    /// The middle of an element, by its id, in screen pixels.
+    /// The middle of an element, by its id, in screen pixels: its place in
+    /// the window plus where Hyprland put the (focused, floating) window,
+    /// which Wayland doesn't tell the window itself.
     fn middle(&self, id: &str) -> (String, String) {
         let b = self.dev(&["find", id])["bounds"].clone();
-        let at = |i: usize, j: usize| (b[i].as_f64().unwrap_or(0.) + b[j].as_f64().unwrap_or(0.) / 2.).round().to_string();
-        (at(0, 2), at(1, 3))
+        let out = self.cmd("hyprctl").args(["-j", "activewindow"]).output().expect("hyprctl");
+        let at: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        let origin = |k: usize| at["at"][k].as_f64().unwrap_or(0.);
+        let mid = |i: usize, j: usize| (origin(i) + b[i].as_f64().unwrap_or(0.) + b[j].as_f64().unwrap_or(0.) / 2.).round().to_string();
+        (mid(0, 2), mid(1, 3))
     }
 
     /// The screen, or an area of it, as the compositor has it.
