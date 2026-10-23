@@ -32,6 +32,11 @@ UI text goes through `i18n` by key: `t("editor.save")`, or `tr!("settings.freed_
 
 ## Traps already hit
 
+The longer story, and known debts (accessibility, menus on Linux): `docs/traps.md`.
+
+- A `window.refresh()` while GPUI draws is dropped: from a canvas, `window.on_next_frame(|w, _| w.refresh())`. A key binding's global action can't `update` the window it came from: `cx.defer`. The system's menus (`ui::native_menu`) run their own event loop: show them from a spawned task, never inside an update.
+- Platform edges (SPEC 3.10): the system's file dialogs only (`kadr_platform::dialog`, rfd), the system's menus for lists of choices (`ui::native_menu`; drawn by kadr only on Linux), keys and their hints from `kadr_platform::keymap` (write `secondary-s`, not `ctrl-s`; no "Ctrl+…" inside strings: `ui::shortcut`), style constants from `kadr_platform::style` (`ui::in_system_order` for Cancel/confirm rows). Text that's typed goes through `kadr_ui::text::Field` and GPUI's input handler, so input methods work.
+
 - GPUI clips children to rectangles only. Rounded images round themselves (`img().rounded()`), and bars inside a rounded window round their own outer corners.
 - After the pointer leaves a surface, GPUI keeps its last position, so hover sticks. Gate hover on `window.is_window_hovered()` (see `cards.rs`).
 - Wayland layer windows can't be moved or resized after creation. Use full-monitor layers plus `window.set_input_region` for click-through.
