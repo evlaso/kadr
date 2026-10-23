@@ -1,0 +1,38 @@
+[package]
+name = "kadr-ui-gpui"
+version = "0.2.0"
+edition = "2024"
+license.workspace = true
+description = "kadr's UI on GPUI CE: every screen, drawn and wired; the only crate that knows GPUI"
+publish = false
+
+[features]
+# `kadr dev mem` lists live allocations with their stacks (KADR_DEV=1 too).
+dev = []
+
+[dependencies]
+# GPUI Community Edition, pinned; updated on purpose, not automatically.
+gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", default-features = false, features = ["font-kit", "wayland"] }
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", features = ["wayland"] }
+smallvec = { version = "1", features = ["union"] }
+log = "0.4"
+raw-window-handle = "0.6"
+palette = "0.7"
+async-process = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures = "0.3"
+libc = "0.2"
+serde_json.workspace = true
+anyhow = "1.0.104"
+image.workspace = true
+tiny-skia.workspace = true
+resvg.workspace = true
+ab_glyph.workspace = true
+kadr-core = { path = "../kadr-core" }
+kadr-raster = { path = "../kadr-raster" }
+kadr-ui = { path = "../kadr-ui" }
+kadr-platform = { path = "../kadr-platform" }
+kadr-media = { path = "../kadr-media" }
+kadr-tray = { path = "../kadr-tray" }
+kadr-overlay = { path = "../kadr-overlay" }
+crc32fast = "1.5"

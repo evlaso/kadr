@@ -20,35 +20,19 @@ edition = "2024"
 license.workspace = true
 
 [features]
-# `kadr dev mem` lists live allocations with their stacks (KADR_DEV=1 too).
-dev = []
+dev = ["kadr-ui-gpui/dev"]
 
 [dependencies]
-# GPUI Community Edition, pinned; updated on purpose, not automatically.
-gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", default-features = false, features = ["font-kit", "wayland"] }
-gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "d52f747a7c4dd15fc0398047a491b7e5a49e578b", features = ["wayland"] }
-smallvec = { version = "1", features = ["union"] }
-log = "0.4"
-raw-window-handle = "0.6"
-palette = "0.7"
-async-process = "2"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
-futures = "0.3"
-libc = "0.2"
-serde_json.workspace = true
-anyhow = "1.0.104"
-image.workspace = true
-tiny-skia.workspace = true
-resvg.workspace = true
-ab_glyph.workspace = true
 kadr-core = { path = "crates/kadr-core" }
-kadr-raster = { path = "crates/kadr-raster" }
-kadr-ui = { path = "crates/kadr-ui" }
 kadr-platform = { path = "crates/kadr-platform" }
-kadr-media = { path = "crates/kadr-media" }
 kadr-tray = { path = "crates/kadr-tray" }
-kadr-overlay = { path = "crates/kadr-overlay" }
-crc32fast = "1.5"
+kadr-ui-gpui = { path = "crates/kadr-ui-gpui" }
+serde_json.workspace = true
+
+[dev-dependencies]
+# The e2e tests compare what kadr saved with what the rasteriser draws.
+image.workspace = true
+kadr-raster = { path = "crates/kadr-raster" }
 
 
 # For working on kadr and its tests: optimised, incremental, no

@@ -254,7 +254,7 @@ def measure_tray(idle):
 def measure_build(profile):
     """One small real change in a UI file (touching it isn't enough: rustc
     sees nothing changed), built again, then put back."""
-    target = ROOT / "src/ui.rs"
+    target = ROOT / "crates/kadr-ui-gpui/src/ui.rs"
     original = target.read_bytes()
     try:
         target.write_bytes(original + b"\nfn _bench_edit() -> u32 { 7 }\n")

@@ -5,6 +5,7 @@
 //! (`dirs`).
 
 pub mod bundle;
+pub mod cli;
 pub mod color;
 pub mod dirs;
 pub mod document;

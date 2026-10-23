@@ -3433,30 +3433,13 @@ dependencies = [
 name = "kadr"
 version = "0.2.0"
 dependencies = [
- "ab_glyph",
- "anyhow",
- "async-process",
- "chrono",
- "crc32fast",
- "futures",
- "gpui-ce",
- "gpui_ce_platform",
  "image",
  "kadr-core",
- "kadr-media",
- "kadr-overlay",
  "kadr-platform",
  "kadr-raster",
  "kadr-tray",
- "kadr-ui",
- "libc",
- "log",
- "palette",
- "raw-window-handle",
- "resvg",
+ "kadr-ui-gpui",
  "serde_json",
- "smallvec",
- "tiny-skia 0.12.0",
 ]
 
 [[package]]
@@ -3570,6 +3553,36 @@ dependencies = [
  "kadr-core",
  "kadr-raster",
  "serde_json",
+]
+
+[[package]]
+name = "kadr-ui-gpui"
+version = "0.2.0"
+dependencies = [
+ "ab_glyph",
+ "anyhow",
+ "async-process",
+ "chrono",
+ "crc32fast",
+ "futures",
+ "gpui-ce",
+ "gpui_ce_platform",
+ "image",
+ "kadr-core",
+ "kadr-media",
+ "kadr-overlay",
+ "kadr-platform",
+ "kadr-raster",
+ "kadr-tray",
+ "kadr-ui",
+ "libc",
+ "log",
+ "palette",
+ "raw-window-handle",
+ "resvg",
+ "serde_json",
+ "smallvec",
+ "tiny-skia 0.12.0",
 ]
 
 [[package]]

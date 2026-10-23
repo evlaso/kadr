@@ -64,6 +64,12 @@ pub struct Opts {
     pub countdown: u32,
 }
 
+impl From<kadr_core::cli::RecordFlags> for Opts {
+    fn from(f: kadr_core::cli::RecordFlags) -> Opts {
+        Opts { mic: f.mic, mic_device: f.mic_device, audio: f.audio, webcam: f.webcam, keys: f.keys, studio: f.studio, ..Opts::default() }
+    }
+}
+
 /// Countdown choices, cycled by the panel's timer button.
 pub const COUNTDOWNS: [u32; 3] = [0, 3, 5];
 
