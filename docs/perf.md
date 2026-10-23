@@ -206,5 +206,34 @@ The decision rule (SPEC §9.4), as far as it can be checked here:
 
 So: Tauri is out on the numbers. iced is a candidate that hasn't failed
 anything measurable, but rules 2 and 4 need the user (a Mac or Windows run,
-and a hand on the editor) before a migration is decided. Until then kadr
-stays on GPUI CE and both spike branches are kept.
+and a hand on the editor) before a migration is decided.
+
+### On macOS and Windows (`desktop-e2e`)
+
+2026-10-23, GitHub's `macos-latest` and `windows-latest` runners (1024×768
+screens, no GPU): the editor opened, the box tool picked with a real pointer
+(enigo), a box dragged out, Ctrl+S, the file checked (`scripts/desktop_e2e.py`;
+screenshots in each run's artifacts). Runs 39936264383 (`main`) and
+39939885788 (`spike/iced`).
+
+| | GPUI CE | iced |
+|---|---|---|
+| macOS 26 (arm64) | passed; Metal (GPUI names no adapter there) | passed; wgpu on Metal, Apple Paravirtual device |
+| Windows Server 2025 | passed; Direct3D 11 on WARP (Microsoft Basic Render Driver) | passed; wgpu on Dx12, WARP |
+| Changes to the framework's platform layer | none | none (the window fits a small screen in kadr's own code) |
+
+Neither needed a GPU: GPUI CE has no WARP device of its own, but takes WARP
+as one of the adapters Windows lists. An earlier iced run (39936291023)
+passed by mistake: its 1360×760 window hung off the screen, the box click
+missed and an arrow was saved; the check now looks at the button's colour
+and at the window being on screen.
+
+### Decision
+
+**2026-10-23: kadr stays on GPUI CE** (the user's call after these runs and
+a hand on the editor). iced met rules 1 and 2 and is the fallback should GPUI
+CE stall; Tauri failed rule 1. Per §9.4 the spike is removed: branches
+`spike/iced` (last at 07ecd12) and `spike/tauri` (4a8b070) are deleted, the numbers above and
+`scripts/spike.py` stay to measure a candidate again. The GPUI app keeps
+what the spike asked of it: the view-models in `kadr-ui` and the desktop
+e2e on macOS and Windows.
