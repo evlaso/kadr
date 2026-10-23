@@ -8,6 +8,7 @@ pub mod bundle;
 pub mod color;
 pub mod dirs;
 pub mod document;
+pub mod hotkeys;
 #[macro_use]
 pub mod i18n;
 pub mod project;

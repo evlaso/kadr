@@ -8,3 +8,4 @@ publish = false
 [dependencies]
 kadr-core = { path = "../kadr-core" }
 kadr-raster = { path = "../kadr-raster" }
+serde_json.workspace = true

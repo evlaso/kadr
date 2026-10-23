@@ -14,68 +14,33 @@ use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side, T
 use crate::studio::{PADDINGS, ZOOMS};
 use crate::{hotkeys, ocr, palette, storage, tray, util};
 use crate::i18n::t;
+use kadr_ui::settings::{Effect, SettingsVm, Tab};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tab {
-    General,
-    Screenshots,
-    Recording,
-    Studio,
-    Text,
-    Shortcuts,
-    Storage,
-    About,
-}
-
-impl Tab {
-    const ALL: [Tab; 8] = [Tab::General, Tab::Screenshots, Tab::Recording, Tab::Studio, Tab::Text, Tab::Shortcuts, Tab::Storage, Tab::About];
-
-    fn label(self) -> &'static str {
-        match self {
-            Tab::General => t("settings.general"),
-            Tab::Screenshots => t("common.screenshots"),
-            Tab::Recording => t("common.recording"),
-            Tab::Studio => t("common.studio"),
-            Tab::Text => t("common.text"),
-            Tab::Shortcuts => t("settings.shortcuts"),
-            Tab::Storage => t("settings.storage"),
-            Tab::About => t("settings.about_kadr"),
-        }
-    }
-
-    fn icon(self) -> Icon {
-        match self {
-            Tab::General => Icon::new(IconName::Settings),
-            Tab::Screenshots => Icon::new(IconName::Image),
-            Tab::Recording => Icon::from_path("icons/kadr/record.svg"),
-            Tab::Studio => Icon::from_path("icons/kadr/studio.svg"),
-            Tab::Text => Icon::new(IconName::CaseSensitive),
-            Tab::Shortcuts => Icon::new(IconName::Keyboard),
-            Tab::Storage => Icon::from_path("icons/kadr/storage.svg"),
-            Tab::About => Icon::from_path("icons/kadr/info.svg"),
-        }
+/// A section's icon in the list.
+fn tab_icon(tab: Tab) -> Icon {
+    match tab {
+        Tab::General => Icon::new(IconName::Settings),
+        Tab::Screenshots => Icon::new(IconName::Image),
+        Tab::Recording => Icon::from_path("icons/kadr/record.svg"),
+        Tab::Studio => Icon::from_path("icons/kadr/studio.svg"),
+        Tab::Text => Icon::new(IconName::CaseSensitive),
+        Tab::Shortcuts => Icon::new(IconName::Keyboard),
+        Tab::Storage => Icon::from_path("icons/kadr/storage.svg"),
+        Tab::About => Icon::from_path("icons/kadr/info.svg"),
     }
 }
 
 pub struct SettingsView {
-    settings: Settings,
-    tab: Tab,
+    /// The settings, the section, the search, the shortcuts: `kadr_ui`'s.
+    vm: SettingsVm,
     /// Installed OCR languages, e.g. "rus+eng".
     languages: String,
     downloading: bool,
-    /// Hyprland key specs for each of `hotkeys::ACTIONS`.
-    keys: Vec<Vec<String>>,
-    /// The action a new shortcut is being recorded for; binds are paused.
-    recording: Option<usize>,
     /// The language dropdown is open.
     languages_open: bool,
     languages_menu: crate::ui::MenuBounds,
     /// Space kadr's captures take, measured when the window opens.
     usage: storage::Usage,
-    /// Type-to-search over every section, like System Settings.
-    query: String,
-    /// Typing goes into the file name template instead of the search.
-    naming: bool,
     scroll: gpui::ScrollHandle,
     grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     focus: FocusHandle,
@@ -92,7 +57,7 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { settings: Settings::load(), tab: Tab::General, languages: ocr::languages(), downloading: false, keys: hotkeys::load(), recording: None, languages_open: false, languages_menu: Default::default(), usage: storage::usage(&Settings::load()), query: String::new(), naming: false, scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
+            SettingsView { vm: SettingsVm::new(Settings::load(), hotkeys::load()), languages: ocr::languages(), downloading: false, languages_open: false, languages_menu: Default::default(), usage: storage::usage(&Settings::load()), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
         })
     });
 }
@@ -100,7 +65,7 @@ pub fn open(cx: &mut App) {
 impl SettingsView {
     /// The language as a dropdown: there will be more than fit in a row.
     fn render_languages(&self, cx: &mut Context<Self>) -> AnyElement {
-        let current = self.settings.language;
+        let current = self.vm.settings.language;
         let menu = self.languages_open.then(|| {
             gpui::deferred(
                 v_flex()
@@ -126,8 +91,8 @@ impl SettingsView {
                             .child(Label::new(lang.name()))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.languages_open = false;
-                                this.settings.language = lang;
-                                this.settings.save();
+                                this.vm.settings.language = lang;
+                                this.vm.settings.save();
                                 crate::i18n::set(lang);
                                 cx.refresh_windows();
                                 cx.notify();
@@ -159,8 +124,7 @@ impl SettingsView {
     }
 
     fn update(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Settings)) {
-        change(&mut self.settings);
-        self.settings.save();
+        self.vm.change(change);
         cx.notify();
     }
 
@@ -230,14 +194,14 @@ impl SettingsView {
                     .rounded_smoothing(crate::ui::SMOOTHING)
                     .bg(colors.element_background)
                     .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Small).color(Color::Muted))
-                    .child(if self.query.is_empty() {
+                    .child(if self.vm.query.is_empty() {
                         div().text_color(colors.text_placeholder).child(t("settings.search")).into_any_element()
                     } else {
-                        div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(format!("{}▏", self.query)).into_any_element()
+                        div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(format!("{}▏", self.vm.query)).into_any_element()
                     }),
             )
             .children(Tab::ALL.into_iter().map(|tab| {
-                let on = tab == self.tab && self.query.is_empty();
+                let on = tab == self.vm.tab && self.vm.query.is_empty();
                 h_flex()
                     .id(SharedString::from(format!("tab-{}", tab.label())))
                     .gap_2()
@@ -248,11 +212,11 @@ impl SettingsView {
                     .cursor_pointer()
                     .when(on, |d| d.bg(accent))
                     .when(!on, |d| d.hover(|d| d.bg(colors.ghost_element_hover)))
-                    .child(tab.icon().size(IconSize::Small).color(if on { Color::Custom(on_accent) } else { Color::Muted }))
+                    .child(tab_icon(tab).size(IconSize::Small).color(if on { Color::Custom(on_accent) } else { Color::Muted }))
                     .child(Label::new(tab.label()).color(if on { Color::Custom(on_accent) } else { Color::Default }))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.tab = tab;
-                        this.query.clear();
+                        this.vm.tab = tab;
+                        this.vm.query.clear();
                         this.scroll.set_offset(gpui::point(px(0.), px(0.)));
                         cx.notify();
                     }))
@@ -273,7 +237,7 @@ impl SettingsView {
 
     /// A section's rows, each with its text for the search.
     fn tab_rows(&self, tab: Tab, cx: &mut Context<Self>) -> Vec<(String, AnyElement)> {
-        let s = self.settings.clone();
+        let s = self.vm.settings.clone();
         match tab {
             Tab::General => vec![
                 row(t("settings.language"),
@@ -293,8 +257,8 @@ impl SettingsView {
                                     .toggle_state(on)
                                     .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.settings.theme = mode;
-                                        this.settings.save();
+                                        this.vm.settings.theme = mode;
+                                        this.vm.settings.save();
                                         palette::refresh(cx);
                                         cx.notify();
                                     }))
@@ -416,8 +380,8 @@ impl SettingsView {
                         .style(ButtonStyle::Subtle)
                         .disabled(s.cleanup_days == 0)
                         .on_click(cx.listener(|this, _, _, cx| {
-                            let freed = storage::clean(&this.settings, this.settings.cleanup_days);
-                            this.usage = storage::usage(&this.settings);
+                            let freed = storage::clean(&this.vm.settings, this.vm.settings.cleanup_days);
+                            this.usage = storage::usage(&this.vm.settings);
                             util::notify(t("settings.storage_cleared"), &tr!("settings.freed_files", crate::studio::human_size(freed.bytes as f64), freed.files));
                             cx.notify();
                         }))
@@ -449,14 +413,12 @@ impl SettingsView {
     /// The chosen section; while searching, the matching rows of every
     /// section under their names.
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        let query = self.query.to_lowercase();
-        let searching = !query.is_empty();
-        let tabs: Vec<Tab> = if searching { Tab::ALL.to_vec() } else { vec![self.tab] };
+        let searching = self.vm.searching();
+        let tabs = self.vm.tabs_shown();
         let (line_color, group_bg) = (cx.theme().colors().border_variant, cx.theme().colors().element_background);
         let mut body = v_flex().px_6().pt_5().pb_4();
         let mut found = false;
         for tab in tabs {
-            let whole = tab.label().to_lowercase().contains(&query);
             // Rows in groups, each under its heading; one group while searching.
             let mut groups: Vec<(Option<AnyElement>, Vec<AnyElement>)> = vec![(None, Vec::new())];
             for (text, el) in self.tab_rows(tab, cx) {
@@ -464,7 +426,7 @@ impl SettingsView {
                     if !searching {
                         groups.push((Some(el), Vec::new()));
                     }
-                } else if !searching || whole || text.to_lowercase().contains(&query) {
+                } else if self.vm.row_shown(tab, &text) {
                     groups.last_mut().expect("a group").1.push(el);
                 }
             }
@@ -616,28 +578,30 @@ impl SettingsView {
 
     /// An action's shortcuts: click one to remove it, "+" records another.
     fn render_keys(&self, i: usize, cx: &mut Context<Self>) -> AnyElement {
-        let chips = self.keys[i].iter().enumerate().map(|(k, spec)| {
+        let chips = self.vm.keys[i].iter().enumerate().map(|(k, spec)| {
             ButtonLike::new(SharedString::from(format!("key-{i}-{k}")))
                 .style(ButtonStyle::Filled)
                 .child(div().px_1().font_family(kit::MONO_FONT).text_sm().child(hotkeys::label(spec)))
                 .tip(Tooltip::text(t("settings.remove_shortcut")))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.keys[i].remove(k);
-                    this.save_keys();
+                    if let Some(spec) = this.vm.keys[i].get(k).cloned() {
+                        this.vm.remove_key(i, &spec);
+                        this.save_keys();
+                    }
                     cx.notify();
                 }))
                 .into_any_element()
         });
-        let add = if self.recording == Some(i) {
+        let add = if self.vm.recording == Some(i) {
             Label::new(t("settings.press_shortcut_esc_cancel")).size(LabelSize::Small).color(Color::Accent).into_any_element()
         } else {
             IconButton::new(SharedString::from(format!("add-key-{i}")), IconName::Plus)
                 .tip(Tooltip::text(t("settings.add_shortcut")))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.recording.is_none() {
+                    if this.vm.recording.is_none() {
                         hotkeys::quiet(true);
                     }
-                    this.recording = Some(i);
+                    this.vm.start_recording(i);
                     cx.notify();
                 }))
                 .into_any_element()
@@ -649,7 +613,7 @@ impl SettingsView {
     /// the name it makes, and the tokens to put in with a click.
     fn render_name(&self, kind: crate::storage::Capture, ext: &str, cx: &mut Context<Self>) -> (String, AnyElement) {
         let colors = cx.theme().colors();
-        let template = &self.settings.name_template;
+        let template = &self.vm.settings.name_template;
         let example = format!("{}.{ext}", crate::storage::render_name(template, kind, chrono::Local::now(), 1));
         let id = if ext == "png" { "name-shot" } else { "name-video" };
         let field = h_flex()
@@ -661,17 +625,17 @@ impl SettingsView {
             .rounded_smoothing(crate::ui::SMOOTHING)
             .bg(colors.element_background)
             .border_1()
-            .border_color(if self.naming { colors.text_accent } else { gpui::transparent_black() })
+            .border_color(if self.vm.naming { colors.text_accent } else { gpui::transparent_black() })
             .cursor_text()
             .overflow_hidden()
-            .child(div().whitespace_nowrap().text_sm().child(if self.naming { format!("{template}▏") } else { template.clone() }))
+            .child(div().whitespace_nowrap().text_sm().child(if self.vm.naming { format!("{template}▏") } else { template.clone() }))
             .on_click(cx.listener(|this, _, _, cx| {
-                this.naming = true;
+                this.vm.naming = true;
                 cx.notify();
             }))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if this.naming {
-                    this.naming = false;
+                if this.vm.naming {
+                    this.vm.naming = false;
                     cx.notify();
                 }
             }));
@@ -692,7 +656,7 @@ impl SettingsView {
                         IconButton::new(SharedString::from(format!("{id}-reset")), IconName::Close)
                             .tip(Tooltip::text(t("settings.default")))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.naming = false;
+                                this.vm.naming = false;
                                 this.update(cx, |s| s.name_template = crate::storage::DEFAULT_NAME.into())
                             })),
                     )
@@ -703,53 +667,39 @@ impl SettingsView {
         row(t("settings.file_name"), &tr!("settings.for_example", example), control)
     }
 
-    fn name_key(&mut self, e: &KeyDownEvent, cx: &mut Context<Self>) {
+    /// A key in the window, as `kadr_ui` takes it; what's left to do here.
+    fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
-        match k.key.as_str() {
-            "escape" | "enter" | "tab" => self.naming = false,
-            "backspace" => {
-                self.settings.name_template.pop();
-                self.settings.save();
+        let key = kadr_ui::Key {
+            key: k.key.clone(),
+            ch: k.key_char.clone(),
+            ctrl: k.modifiers.control,
+            alt: k.modifiers.alt,
+            shift: k.modifiers.shift,
+            logo: k.modifiers.platform,
+        };
+        match self.vm.key(&key) {
+            Effect::Nothing => return,
+            Effect::Changed => {}
+            Effect::ScrollTop => self.scroll.set_offset(gpui::point(px(0.), px(0.))),
+            Effect::KeysChanged => {
+                hotkeys::quiet(false);
+                self.save_keys();
             }
-            _ if !(k.modifiers.control || k.modifiers.alt || k.modifiers.platform) => {
-                if let Some(ch) = k.key_char.as_deref().filter(|c| !c.chars().any(char::is_control)) {
-                    self.settings.name_template.push_str(ch);
-                    self.settings.save();
-                }
-            }
-            _ => {}
+            Effect::RecordingStopped => hotkeys::quiet(false),
+            Effect::Close => window.remove_window(),
         }
-        cx.notify();
-    }
-
-    fn record_key(&mut self, e: &KeyDownEvent, cx: &mut Context<Self>) {
-        let Some(i) = self.recording else { return };
-        let k = &e.keystroke;
-        let m = &k.modifiers;
-        if k.key == "escape" && !(m.control || m.alt || m.shift || m.platform) {
-            self.stop_recording();
-            return cx.notify();
-        }
-        // Modifiers alone: wait for the key.
-        let Some(spec) = hotkeys::spec(&k.key, m.control, m.alt, m.shift, m.platform) else { return };
-        // A shortcut belongs to one action.
-        for keys in &mut self.keys {
-            keys.retain(|s| *s != spec);
-        }
-        self.keys[i].push(spec);
-        self.stop_recording();
-        self.save_keys();
         cx.notify();
     }
 
     fn stop_recording(&mut self) {
-        if self.recording.take().is_some() {
+        if self.vm.stop_recording() {
             hotkeys::quiet(false);
         }
     }
 
     fn save_keys(&self) {
-        if let Err(e) = hotkeys::save(&self.keys) {
+        if let Err(e) = hotkeys::save(&self.vm.keys) {
             util::notify(t("settings.couldnt_save_shortcuts"), &e.to_string());
         }
     }
@@ -758,12 +708,7 @@ impl SettingsView {
 impl SettingsView {
     /// For `kadr dev state`.
     pub(crate) fn dev_state(&self) -> serde_json::Value {
-        serde_json::json!({
-            "tab": format!("{:?}", self.tab).to_lowercase(),
-            "query": self.query,
-            "recording_shortcut": self.recording,
-            "keys": self.keys,
-        })
+        self.vm.dev_state()
     }
 }
 
@@ -780,34 +725,7 @@ impl Render for SettingsView {
             .bg(cx.theme().colors().editor_background)
             .flex()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                if this.recording.is_some() {
-                    return this.record_key(e, cx);
-                }
-                if this.naming {
-                    return this.name_key(e, cx);
-                }
-                let i = Tab::ALL.iter().position(|t| *t == this.tab).unwrap_or(0);
-                let k = &e.keystroke;
-                match k.key.as_str() {
-                    "escape" if !this.query.is_empty() => this.query.clear(),
-                    "escape" => window.remove_window(),
-                    "tab" | "down" => this.tab = Tab::ALL[(i + 1) % Tab::ALL.len()],
-                    "up" => this.tab = Tab::ALL[(i + Tab::ALL.len() - 1) % Tab::ALL.len()],
-                    "backspace" => {
-                        this.query.pop();
-                    }
-                    // Typing anywhere searches.
-                    _ if !(k.modifiers.control || k.modifiers.alt || k.modifiers.platform) => {
-                        if let Some(ch) = k.key_char.as_deref().filter(|c| !c.chars().any(char::is_control)) {
-                            this.query.push_str(ch);
-                            this.scroll.set_offset(gpui::point(px(0.), px(0.)));
-                        }
-                    }
-                    _ => {}
-                }
-                cx.notify();
-            }))
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| this.key(e, window, cx)))
             .child(
                 v_flex()
                     .id("settings")

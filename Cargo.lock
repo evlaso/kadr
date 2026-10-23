@@ -3329,6 +3329,7 @@ version = "0.2.0"
 dependencies = [
  "kadr-core",
  "kadr-raster",
+ "serde_json",
 ]
 
 [[package]]

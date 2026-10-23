@@ -268,6 +268,16 @@ fn the_settings_switch_theme() {
     s.dev(&["click", "theme-Light", &id]);
     let light = brightness(&shot("light.png"));
     assert!(dark < 0.3 && light > 0.7, "dark {dark:.2}, light {light:.2}");
+
+    // Typing searches every section: the tray's switch stays, the language
+    // dropdown goes; Escape brings the section back.
+    s.dev(&["type", "tray", "--window", &id]);
+    assert_eq!(s.dev(&["state", &id])["view"]["query"], "tray");
+    let shown = |id_: &str| s.dev(&["dump", &id]).as_array().is_some_and(|n| n.iter().any(|n| n["id"] == id_));
+    assert!(shown("tray") && !shown("language"), "the search shows the tray switch alone");
+    s.dev(&["key", "escape", "--window", &id]);
+    assert_eq!(s.dev(&["state", &id])["view"]["query"], "");
+    assert!(shown("language"));
 }
 
 /// Scenario 5: a second `kadr edit` opens in the running kadr.
