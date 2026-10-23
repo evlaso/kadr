@@ -273,8 +273,10 @@ def overlay(t, warm=False):
     screenshot saved at that size. `warm`: through the overlay kept running
     (`kadr-overlay --serve`, as the tray does on macOS)."""
     label = " (warm)" if warm else ""
-    shots = t.out / ("shots-warm" if warm else "shots")
+    # Where kadr saves (its OMARCHY_SCREENSHOT_DIR); this pick's is the new one.
+    shots = t.out / "shots"
     shots.mkdir(exist_ok=True)
+    before = set(shots.glob("*.png"))
     t0 = time.monotonic()
     subprocess.Popen([str(BIN / f"kadr{EXE}"), "shot", "region"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     found = wait_for(lambda: next((w for w in json.loads(run(SHOT, "windows").stdout) if w["title"] == "kadr-picker"), None), timeout=10)
@@ -285,7 +287,7 @@ def overlay(t, warm=False):
     sx, sy, sw, sh = screen()
     cx, cy = sx + sw / 2, sy + sh / 2
     run(POINTER, "drag", cx - 200, cy - 120, cx + 200, cy + 120)
-    saved = wait_for(lambda: next(iter(sorted(shots.glob("*.png"))), None), timeout=10)
+    saved = wait_for(lambda: next(iter(sorted(set(shots.glob("*.png")) - before)), None), timeout=10)
     size = None
     if saved:
         # The PNG's own size, from its header.
@@ -336,9 +338,11 @@ def main():
         t.note("Ctrl+S saves a changed file", wait_for(lambda: work.read_bytes() != before, timeout=10))
         t.shot("saved")
         if shell == "gpui" and not LINUX:
+            # On macOS kadr starts the tray, which keeps the overlay warm
+            # (keep_warm): this first pick may go through it already.
             overlay(t)
             if platform.system() == "Darwin":
-                # Again, warm: the overlay kept running on the tray's socket.
+                # Again, through an overlay of the test's own on that socket.
                 import tempfile
                 socket = Path(tempfile.gettempdir()) / "kadr-overlay.sock"
                 with open(t.out / "overlay-serve.log", "ab") as log:
