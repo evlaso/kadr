@@ -10,8 +10,9 @@ pub const USAGE: &str = "kadr — screenshots and screen recording with a quick-
 
 Usage:
   kadr capture                                   every mode on one bar
-  kadr shot [smart|region|windows|fullscreen|timer|previous]
-                                                 take a screenshot (smart by default; previous: the last area)
+  kadr shot [smart|region|windows|fullscreen|all|timer|previous]
+                                                 take a screenshot (smart by default; all: every screen at once;
+                                                 previous: the last area)
   kadr shot scroll [\"X,Y WxH\"]                  scrolling screenshot (again to finish)
   kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
   kadr pin <file>                                pin an image on top of windows
@@ -37,7 +38,7 @@ Usage:
 ";
 
 /// What `kadr shot` takes.
-pub const MODES: [&str; 6] = ["smart", "region", "windows", "fullscreen", "timer", "previous"];
+pub const MODES: [&str; 7] = ["smart", "region", "windows", "fullscreen", "all", "timer", "previous"];
 
 /// `kadr record region|fullscreen`'s flags.
 #[derive(Clone, Default, PartialEq, Debug)]

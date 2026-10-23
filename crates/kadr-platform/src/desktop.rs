@@ -131,6 +131,40 @@ pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     screen.capture_image().map_err(|e| eprintln!("kadr: screenshot: {e}")).ok()
 }
 
+/// The windows showing on `mon`, topmost first, kadr's own ones with a
+/// title too (its overlay and cards aside): each with its id (for
+/// `grab_window`) and its frame in the monitor's logical pixels.
+pub fn windows_on(mon: &Mon) -> Vec<(u64, (f32, f32, f32, f32))> {
+    // The menu bar, the Dock and such are windows too on macOS.
+    const SYSTEM: [&str; 6] = ["Window Server", "Dock", "Control Center", "Notification Center", "SystemUIServer", "Spotlight"];
+    let own = std::process::id();
+    // Windows gives physical pixels, macOS points.
+    let s = if cfg!(windows) { mon.scale } else { 1. };
+    let Ok(all) = xcap::Window::all() else { return Vec::new() };
+    all.into_iter()
+        .filter(|w| !w.is_minimized().unwrap_or(true))
+        .filter(|w| {
+            let title = w.title().unwrap_or_default();
+            title != "kadr-picker" && !(title.is_empty() && w.pid().ok() == Some(own))
+        })
+        .filter(|w| !w.app_name().is_ok_and(|a| SYSTEM.contains(&a.as_str())))
+        .filter_map(|w| {
+            let (x, y, width, height) = (w.x().ok()? as f64 / s - mon.x as f64, w.y().ok()? as f64 / s - mon.y as f64, w.width().ok()? as f64 / s, w.height().ok()? as f64 / s);
+            let on = x < mon.w as f64 && y < mon.h as f64 && x + width > 0. && y + height > 0.;
+            let id = w.id().ok()? as u64;
+            (on && width >= 40. && height >= 40.).then_some((id, (x as f32, y as f32, width as f32, height as f32)))
+        })
+        .collect()
+}
+
+/// A window by itself, whatever covers it, in physical pixels: macOS draws
+/// it alone (its corners transparent), Windows through
+/// Windows.Graphics.Capture.
+pub fn grab_window(id: u64) -> Option<image::RgbaImage> {
+    let window = xcap::Window::all().ok()?.into_iter().find(|w| w.id().ok() == Some(id as u32))?;
+    window.capture_image().map_err(|e| eprintln!("kadr: window shot: {e}")).ok()
+}
+
 /// One of kadr's own windows as it is on screen, for `kadr dev shot`: by its
 /// title, or kadr's only titled one.
 pub fn own_window_shot(title: &str, _kind: &str) -> Option<image::RgbaImage> {

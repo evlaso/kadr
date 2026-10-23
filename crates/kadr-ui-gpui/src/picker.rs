@@ -34,6 +34,8 @@ pub struct Picked {
     pub whole: bool,
     /// A window was clicked: the area is that window's.
     pub window: bool,
+    /// That window's id, to take it by itself (`platform::grab_window`).
+    pub window_id: Option<u64>,
     /// The monitor as it was frozen, in physical pixels.
     pub frozen: Arc<image::RgbaImage>,
 }
@@ -70,7 +72,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     }
     let _picking = Picking;
     let mon = util::focused_monitor()?;
-    let windows = windows_on(&mon);
+    let windows: Vec<Rect> = crate::platform::windows_on(&mon).into_iter().map(|(_, r)| r).collect();
     // The last area, if it was on this monitor.
     let previous = previous_area()
         .filter(|(name, _)| *name == mon.name)
@@ -243,7 +245,12 @@ fn to_picked(rect: Rect, window: bool, mon: Mon, frozen: Arc<image::RgbaImage>) 
     if !whole {
         remember(&mon.name, area);
     }
-    Some(Picked { area, whole, window, mon, frozen })
+    // The clicked window's id: the one whose frame the area is.
+    let window_id = window
+        .then(|| crate::platform::windows_on(&mon).into_iter().find(|(_, r)| (r.0 - rect.0).abs() < 1. && (r.1 - rect.1).abs() < 1. && (r.2 - rect.2).abs() < 1. && (r.3 - rect.3).abs() < 1.))
+        .flatten()
+        .map(|(id, _)| id);
+    Some(Picked { area, whole, window, window_id, mon, frozen })
 }
 
 fn previous_file() -> std::path::PathBuf {
@@ -273,7 +280,7 @@ pub fn previous() -> Option<Picked> {
     let mons = util::monitors();
     let mon = mons.iter().find(|m| m.name == name).or_else(|| mons.iter().find(|m| m.contains(area.0 + area.2 / 2, area.1 + area.3 / 2)))?.clone();
     let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
-    Some(Picked { area, whole: false, window: false, mon, frozen })
+    Some(Picked { area, whole: false, window: false, window_id: None, mon, frozen })
 }
 
 static PICKING: AtomicBool = AtomicBool::new(false);
@@ -294,27 +301,6 @@ fn bgra(rgba: &image::RgbaImage) -> image::RgbaImage {
         px.0.swap(0, 2);
     }
     out
-}
-
-/// Visible windows on the monitor's workspace, in its logical coordinates,
-/// floating ones first (they're on top), then smaller before larger.
-fn windows_on(mon: &Mon) -> Vec<Rect> {
-    let monitors: serde_json::Value = util::hypr("j/monitors").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let workspace = monitors.as_array().into_iter().flatten().find(|m| m["name"] == mon.name.as_str()).and_then(|m| m["activeWorkspace"]["id"].as_i64());
-    let clients: serde_json::Value = util::hypr("j/clients").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let mut found: Vec<(bool, Rect)> = clients
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|c| c["mapped"] == true && c["hidden"] != true && c["workspace"]["id"].as_i64() == workspace)
-        .filter_map(|c| {
-            let (x, y) = (c["at"][0].as_f64()?, c["at"][1].as_f64()?);
-            let (w, h) = (c["size"][0].as_f64()?, c["size"][1].as_f64()?);
-            Some((c["floating"] == true, ((x - mon.x as f64) as f32, (y - mon.y as f64) as f32, w as f32, h as f32)))
-        })
-        .collect();
-    found.sort_by(|a, b| b.0.cmp(&a.0).then((a.1.2 * a.1.3).total_cmp(&(b.1.2 * b.1.3))));
-    found.into_iter().map(|(_, r)| r).collect()
 }
 
 pub(crate) use kadr_overlay::model::{BOTTOM, LEFT, RIGHT, Rect, TOP, handles};
@@ -671,5 +657,5 @@ impl Render for Picker {
 pub async fn whole_monitor() -> Option<Picked> {
     let mon = util::focused_monitor()?;
     let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
-    Some(Picked { area: (mon.x, mon.y, mon.w, mon.h), whole: true, window: false, mon, frozen })
+    Some(Picked { area: (mon.x, mon.y, mon.w, mon.h), whole: true, window: false, window_id: None, mon, frozen })
 }

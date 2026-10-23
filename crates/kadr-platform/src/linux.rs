@@ -275,6 +275,36 @@ pub fn own_window_shot(title: &str, kind: &str) -> Option<image::RgbaImage> {
 }
 
 /// The monitor as it is now, in physical pixels (grim, without the cursor).
+/// Visible windows on the monitor's workspace, with Hyprland's address as
+/// their id, in its logical coordinates: floating ones first (they're on
+/// top), then smaller before larger.
+pub fn windows_on(mon: &Mon) -> Vec<(u64, (f32, f32, f32, f32))> {
+    let json = |r: &str| hypr(r).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).unwrap_or_default();
+    let monitors = json("j/monitors");
+    let workspace = monitors.as_array().into_iter().flatten().find(|m| m["name"] == mon.name.as_str()).and_then(|m| m["activeWorkspace"]["id"].as_i64());
+    let clients = json("j/clients");
+    let mut found: Vec<(bool, u64, (f32, f32, f32, f32))> = clients
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| c["mapped"] == true && c["hidden"] != true && c["workspace"]["id"].as_i64() == workspace)
+        .filter_map(|c| {
+            let (x, y) = (c["at"][0].as_f64()?, c["at"][1].as_f64()?);
+            let (w, h) = (c["size"][0].as_f64()?, c["size"][1].as_f64()?);
+            let id = c["address"].as_str().and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok()).unwrap_or(0);
+            Some((c["floating"] == true, id, ((x - mon.x as f64) as f32, (y - mon.y as f64) as f32, w as f32, h as f32)))
+        })
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0).then((a.2.2 * a.2.3).total_cmp(&(b.2.2 * b.2.3))));
+    found.into_iter().map(|(_, id, r)| (id, r)).collect()
+}
+
+/// A window by itself: not on Hyprland yet (no toplevel export here), so
+/// the app cuts it from the screen.
+pub fn grab_window(_id: u64) -> Option<image::RgbaImage> {
+    None
+}
+
 pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     let out = std::process::Command::new("grim").args(["-o", &mon.name, "-t", "ppm", "-"]).output().ok()?;
     if !out.status.success() {

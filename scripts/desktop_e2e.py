@@ -367,6 +367,55 @@ def record(t):
     t.note("the recording has a steady frame rate", frames and frames >= 15 * length, frames=frames, fps=frames and round(frames / length, 1))
 
 
+def png_size(path):
+    head = path.read_bytes()[16:24]
+    return [int.from_bytes(head[:4], "big"), int.from_bytes(head[4:], "big")]
+
+
+def window_shot(t):
+    """A click on the editor's window in the overlay (`kadr shot smart`,
+    windows to snap to from the system): the window taken by itself, with
+    kadr's shadow around it."""
+    shots = t.out / "shots"
+    before = set(shots.glob("*.png"))
+    win = next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None)
+    if not t.note("the editor's window is there to take", win):
+        return
+    (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
+    t.log.write_text("")
+    subprocess.Popen([str(BIN / f"kadr{EXE}"), "shot", "smart"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    shown = wait_for(lambda: next((w for w in json.loads(run(SHOT, "windows").stdout) if w["title"] == "kadr-picker"), None), timeout=10)
+    if not t.note("the overlay shows for a window", shown):
+        return
+    time.sleep(0.5)
+    cx, cy = (wx + ww / 2) * scale, (wy + wh / 2) * scale
+    run(POINTER, "move", cx, cy)
+    time.sleep(0.3)
+    t.shot("window-hover")
+    run(POINTER, "click", cx, cy)
+    saved = wait_for(lambda: next(iter(sorted(set(shots.glob("*.png")) - before)), None), timeout=10)
+    size = saved and png_size(saved)
+    time.sleep(0.3)
+    log = t.log.read_text(encoding="utf-8", errors="replace") if t.log.exists() else ""
+    how = "by itself" if "window shot by itself" in log else "cut from the screen" if "window shot cut" in log else None
+    # The window and kadr's shadow margin (68 logical pixels each side),
+    # saved at 1x (the logical_size setting, on by default).
+    want = [round(ww + 136), round(wh + 136)]
+    near = size and all(abs(a - b) <= 8 for a, b in zip(size, want))
+    t.note("the window is taken by itself", near and how == "by itself", size=size, expected=want, how=how)
+
+
+def all_screens(t):
+    """`kadr shot all`: every screen in one picture, as big as the desktop."""
+    shots = t.out / "shots"
+    before = set(shots.glob("*.png"))
+    run(BIN / f"kadr{EXE}", "shot", "all", check=False)
+    saved = wait_for(lambda: next(iter(sorted(set(shots.glob("*.png")) - before)), None), timeout=15)
+    _, _, sw, sh = screen()
+    size = saved and png_size(saved)
+    t.note("every screen is taken at once", size and size[0] >= sw and size[1] >= sh, size=size, screen=[sw, sh])
+
+
 def type_text(s):
     if LINUX:
         run("wtype", s)
@@ -417,6 +466,8 @@ def main():
                 t.log.write_text("")
                 overlay(t, warm="again")
                 serve.kill()
+            window_shot(t)
+            all_screens(t)
             record(t)
     if proc is not None and proc.poll() is None:
         proc.kill()

@@ -4,6 +4,7 @@ use std::time::Duration;
 use gpui::{App, AsyncApp};
 
 use crate::settings::Settings;
+use crate::util::Mon;
 use crate::{cards, kit, picker, util};
 use crate::i18n::t;
 
@@ -37,6 +38,9 @@ pub fn deliver(path: PathBuf, _settings: &Settings, cx: &mut App) {
 
 /// Freeze the screen, pick (or take the whole monitor), save the picked part.
 async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<PathBuf> {
+    if mode == "all" {
+        return all_screens(settings, cx).await;
+    }
     let picked = match mode {
         "fullscreen" => picker::whole_monitor().await?,
         // The self-timer: 3, 2, 1 over the screen, then all of it.
@@ -66,7 +70,13 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     let saved = cx
         .background_executor()
         .spawn(async move {
-            let image = picked.crop();
+            // A clicked window by itself where the system gives it (macOS,
+            // Windows), else cut from the frozen screen.
+            let alone = picked.window_id.and_then(crate::platform::grab_window);
+            if picked.window {
+                eprintln!("kadr: window shot {}", if alone.is_some() { "by itself" } else { "cut from the screen" });
+            }
+            let image = alone.unwrap_or_else(|| picked.crop());
             let image = match shadow {
                 Some((rounding, scale)) => with_shadow(&image, rounding, scale),
                 None => image,
@@ -81,6 +91,47 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
             None
         }
     }
+}
+
+/// Every monitor at once, laid out as the desktop has them.
+async fn all_screens(settings: &Settings, cx: &mut AsyncApp) -> Option<PathBuf> {
+    let dir = settings.screenshot_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = crate::storage::capture_path(&dir, crate::storage::Capture::Screenshot, "png");
+    let (target, logical) = (path.clone(), settings.logical_size);
+    let saved = cx
+        .background_executor()
+        .spawn(async move {
+            let shots: Vec<(Mon, image::RgbaImage)> = util::monitors().into_iter().filter_map(|m| Some((m.clone(), crate::platform::grab_monitor(&m)?))).collect();
+            let (image, scale) = side_by_side(&shots).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
+            save_png(image, scale, logical, &target).map_err(std::io::Error::other)
+        })
+        .await;
+    match saved {
+        Ok(()) => Some(path),
+        Err(e) => {
+            util::notify(t("common.couldnt_save"), &e.to_string());
+            None
+        }
+    }
+}
+
+/// Monitors' pictures put where the monitors are, at the sharpest one's
+/// scale (the others scaled up to it); the gaps between them transparent.
+fn side_by_side(shots: &[(Mon, image::RgbaImage)]) -> Option<(image::RgbaImage, f64)> {
+    let scale = shots.iter().map(|(m, _)| m.scale).fold(0., f64::max);
+    let left = shots.iter().map(|(m, _)| m.x).min()?;
+    let top = shots.iter().map(|(m, _)| m.y).min()?;
+    let right = shots.iter().map(|(m, _)| m.x + m.w).max()?;
+    let bottom = shots.iter().map(|(m, _)| m.y + m.h).max()?;
+    let px = |v: i32| (v as f64 * scale).round() as u32;
+    let mut out = image::RgbaImage::new(px(right - left).max(1), px(bottom - top).max(1));
+    for (m, shot) in shots {
+        let (w, h) = (px(m.w), px(m.h));
+        let shot = if shot.dimensions() == (w, h) { shot.clone() } else { image::imageops::resize(shot, w, h, image::imageops::FilterType::Lanczos3) };
+        image::imageops::replace(&mut out, &shot, px(m.x - left) as i64, px(m.y - top) as i64);
+    }
+    Some((out, scale))
 }
 
 /// Save a screenshot taken in screen pixels at `scale`: scaled down to 1×
@@ -183,6 +234,22 @@ pub fn with_shadow(image: &image::RgbaImage, rounding: f32, scale: f64) -> image
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_screen_goes_where_it_is_at_the_sharpest_scale() {
+        let mon = |name: &str, x, y, w, h, scale| Mon { name: name.into(), x, y, w, h, phys: ((w as f64 * scale) as i64, (h as f64 * scale) as i64), scale, hz: 60., focused: false };
+        let plain = |w, h, v| image::RgbaImage::from_pixel(w, h, image::Rgba([v, v, v, 255]));
+        // A 2× laptop at the left, a 1× monitor right of it and lower.
+        let shots = [(mon("eDP-1", 0, 0, 100, 50, 2.), plain(200, 100, 10)), (mon("DP-1", 100, 20, 80, 40, 1.), plain(80, 40, 200))];
+        let (out, scale) = side_by_side(&shots).unwrap();
+        assert_eq!((out.dimensions(), scale), ((360, 120), 2.));
+        assert_eq!(out.get_pixel(10, 10).0, [10, 10, 10, 255]);
+        // The 1× one scaled up to 2×, placed at (200, 40).
+        assert_eq!(out.get_pixel(210, 50).0, [200, 200, 200, 255]);
+        assert_eq!(out.get_pixel(359, 119).0, [200, 200, 200, 255]);
+        // Under the laptop and above the monitor: nothing.
+        assert_eq!(out.get_pixel(300, 10).0[3], 0);
+    }
 
     #[test]
     fn window_shots_get_round_corners_and_a_shadow_around() {
