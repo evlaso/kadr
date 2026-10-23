@@ -251,6 +251,7 @@ static ALLOC: dev::Counting = dev::Counting;
 
 fn main() {
     dev::track();
+    dev::log_to_stderr();
     platform::set_dirs();
     i18n::set(settings::Settings::load().language);
     // The cursor stamps and the studio's pointer in the user's own theme.

@@ -10,7 +10,14 @@ artifacts.
 
 gpui is kadr itself, found and driven through its dev hooks (KADR_DEV=1);
 iced is the phase 2 spike (branch spike/iced), found by its window title.
-Needs `cargo build --release -p kadr -p kadr-testkit` (and -p kadr-ui-iced).
+Needs `cargo build --release -p kadr -p kadr-testkit` (and
+`-p kadr-ui-iced --features info`, which reports its renderer).
+
+The outcome in result.json is `passed`, `failed`, or `gpu_unavailable`: the
+shell's log (app.log) shows it couldn't get a GPU to draw with, which says
+the runner has none, not that the framework failed; that one exits 0 too.
+`renderer` says what really drew: GPUI's adapter (a software one is WARP on
+Windows), or iced's wgpu backend or its tiny-skia fallback.
 On Linux it runs too, inside `scripts/nested.sh`'s session (grim and wtype
 stand in for kadr-shot and the keyboard), to try the script itself.
 """
@@ -30,6 +37,23 @@ BIN = ROOT / "target/release"
 POINTER = BIN / f"kadr-pointer{EXE}"
 SHOT = BIN / f"kadr-shot{EXE}"
 LINUX = platform.system() == "Linux"
+
+# What a shell's log says when it got no GPU to draw with: GPUI on Metal,
+# Direct3D 11 (it tries the DXGI adapters, WARP among them when Windows lists
+# it, with no WARP device of its own) and wgpu; iced when wgpu and tiny-skia
+# both failed.
+GPU_ERRORS = [
+    "failed to initialize a gpu context",
+    "unable to access a compatible graphics device",
+    "no compatible direct3d 11 adapter",
+    "getting dxgi adapter",
+    "d3d11createdevice",
+    "no gpu adapter",
+    "gpu resources not available",
+    "graphicscreationfailed",
+    "graphicsadapternotfound",
+    "failed to create wgpu",
+]
 
 
 def key(combo):
@@ -71,6 +95,8 @@ class Test:
         self.out.mkdir(parents=True)
         self.steps = []
         self.shots = 0
+        self.log = self.out / "app.log"
+        self.renderer = None
 
     def note(self, step, ok, **detail):
         self.steps.append({"step": step, "ok": bool(ok), **detail})
@@ -84,10 +110,29 @@ class Test:
         if r.returncode != 0:
             print(f"  (no screenshot: {r.stderr.strip()})")
 
+    def start(self, *args, env=None):
+        """The shell under test, its output in app.log: read for the GPU's
+        errors, and away from ours (what it starts, a clipboard helper, may
+        outlive it holding it)."""
+        with open(self.log, "ab") as log:
+            return subprocess.Popen([str(a) for a in args], env=env, stdout=log, stderr=log)
+
+    def gpu_error(self):
+        try:
+            lines = self.log.read_text(errors="replace").splitlines()
+        except OSError:
+            return None
+        return next((l.strip() for l in lines if any(e in l.lower() for e in GPU_ERRORS)), None)
+
     def finish(self):
         ok = all(s["ok"] for s in self.steps) and bool(self.steps)
-        (self.out / "result.json").write_text(json.dumps({"shell": self.shell, "system": platform.platform(), "ok": ok, "steps": self.steps}, indent=2) + "\n")
-        return ok
+        gpu = None if ok else self.gpu_error()
+        outcome = "passed" if ok else "gpu_unavailable" if gpu else "failed"
+        result = {"shell": self.shell, "system": platform.platform(), "outcome": outcome, "ok": ok, "renderer": self.renderer, "steps": self.steps}
+        if gpu:
+            result["gpu_error"] = gpu
+        (self.out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+        return outcome
 
 
 def dev(*args):
@@ -99,11 +144,9 @@ def dev(*args):
 def gpui(t, work):
     """kadr's editor: the window and the tool's button from the dev hooks,
     which give real screen positions on macOS and Windows."""
-    env = dict(os.environ, KADR_DEV="1")
-    # Its output away from ours: what it starts (a clipboard helper) may
-    # outlive it holding it.
-    proc = subprocess.Popen([str(BIN / f"kadr{EXE}"), "edit", str(work)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    win = wait_for(lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None))
+    # KADR_DEV also puts GPUI's log (the GPU it took) on stderr.
+    proc = t.start(BIN / f"kadr{EXE}", "edit", work, env=dict(os.environ, KADR_DEV="1"))
+    win = wait_for(lambda: proc.poll() is None and next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None))
     if not t.note("the editor opens", win):
         return proc
     t.note("the picture loads", wait_for(lambda: (dev("state") or {}).get("view", {}).get("image")))
@@ -112,6 +155,10 @@ def gpui(t, work):
     # Again now that it's settled: the first answer can be the size asked
     # for, before the system gave the window its own.
     win = next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), win)
+    gpu = win.get("gpu") or {}
+    t.renderer = {"framework": "gpui", **gpu}
+    if os.name == "nt" and gpu.get("software"):
+        t.renderer["warp"] = True
     # Window and element bounds are logical; Windows' pointer is physical.
     (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
     tool = dev("find", "tool-r")
@@ -136,7 +183,7 @@ def iced(t, work):
     if not exe.exists():
         t.note("the iced spike is built", False, hint="it lives on branch spike/iced")
         return None
-    proc = subprocess.Popen([str(exe), "edit", str(work)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = t.start(exe, "edit", work)
 
     def windows():
         if LINUX:
@@ -147,9 +194,15 @@ def iced(t, work):
     def window():
         return next((w for w in windows() if w["title"] == "kadr-iced editor"), None)
 
-    win = wait_for(window)
+    win = wait_for(lambda: proc.poll() is None and window())
     if not t.note("the editor opens with its picture", win):
         return proc
+    # The spike says what draws it (wgpu, or tiny-skia when wgpu failed).
+    line = wait_for(lambda: next((l for l in t.log.read_text(errors="replace").splitlines() if l.startswith("kadr-iced renderer:")), None), timeout=5)
+    if line:
+        fields = dict(f.split("=", 1) for f in line.split(":", 1)[1].split("\t") if "=" in f)
+        backend = fields.get("backend", "")
+        t.renderer = {"framework": "iced", "renderer": "tiny-skia" if backend == "tiny-skia" else "wgpu", "backend": backend, "adapter": fields.get("adapter")}
     time.sleep(1)
     t.shot("opened")
     run(POINTER, "click", win["x"] + 105, win["y"] + 24)
@@ -172,9 +225,9 @@ def main():
         t.shot("saved")
     if proc is not None and proc.poll() is None:
         proc.kill()
-    ok = t.finish()
-    print(f"{shell}: {'passed' if ok else 'FAILED'} ({t.out})")
-    return 0 if ok else 1
+    outcome = t.finish()
+    print(f"{shell}: {outcome} ({t.out}), renderer {t.renderer}")
+    return 1 if outcome == "failed" else 0
 
 
 if __name__ == "__main__":

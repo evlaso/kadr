@@ -3290,6 +3290,7 @@ dependencies = [
  "kadr-tray",
  "kadr-ui",
  "libc",
+ "log",
  "palette",
  "resvg",
  "serde_json",

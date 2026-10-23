@@ -189,6 +189,27 @@ pub fn on() -> bool {
     *ON.get_or_init(|| std::env::var_os("KADR_DEV").is_some_and(|v| v != "0"))
 }
 
+/// GPUI's own log (which GPU it took, why a window couldn't get one) on
+/// stderr, for a kadr under test: without a logger it goes nowhere.
+pub fn log_to_stderr() {
+    struct Stderr;
+    impl log::Log for Stderr {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            // GPUI's notes, everyone's warnings (zbus's notes are noise).
+            m.level() <= log::Level::Warn || m.level() <= log::Level::Info && m.target().starts_with("gpui")
+        }
+        fn log(&self, r: &log::Record) {
+            if self.enabled(r.metadata()) {
+                eprintln!("{} {}: {}", r.level(), r.target(), r.args());
+            }
+        }
+        fn flush(&self) {}
+    }
+    if on() && log::set_logger(&Stderr).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
 /// An interactive element as the last frame drew it.
 #[derive(Clone)]
 struct Node {
@@ -373,7 +394,7 @@ fn windows(cx: &mut App) -> Value {
         .into_iter()
         .filter_map(|w| {
             let id = w.window_id().as_u64();
-            let (title, b, scale) = w.update(cx, |_, window, _| (window.window_title(), window.bounds(), window.scale_factor())).ok()?;
+            let (title, b, scale, gpu) = w.update(cx, |_, window, _| (window.window_title(), window.bounds(), window.scale_factor(), window.gpu_specs())).ok()?;
             Some(json!({
                 "id": id,
                 "kind": kind_of(w),
@@ -381,6 +402,9 @@ fn windows(cx: &mut App) -> Value {
                 "bounds": [f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)],
                 "scale": scale,
                 "active": active == Some(id),
+                // What draws it: on a machine without a GPU, a software one
+                // (WARP on Windows, llvmpipe on Linux) or none.
+                "gpu": gpu.map(|g| json!({ "device": g.device_name, "driver": g.driver_name, "software": g.is_software_emulated })),
             }))
         })
         .collect();

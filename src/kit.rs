@@ -335,6 +335,7 @@ pub fn open_layer<V: Render + 'static>(
             Some(handle)
         }
         Err(e) => {
+            eprintln!("kadr: couldn't open a window: {e:#}");
             crate::util::notify(t("app.kadr_couldnt_open_window"), &e.to_string());
             None
         }
@@ -369,6 +370,7 @@ pub fn open_window<V: Render + 'static>(
             Some(handle)
         }
         Err(e) => {
+            eprintln!("kadr: couldn't open a window: {e:#}");
             crate::util::notify(t("app.kadr_couldnt_open_window"), &e.to_string());
             None
         }

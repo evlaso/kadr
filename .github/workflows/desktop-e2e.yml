@@ -26,7 +26,8 @@ jobs:
       - name: Build kadr and the test tools
         run: |
           cargo build --release --locked -p kadr -p kadr-testkit
-          if [ -d crates/kadr-ui-iced ]; then cargo build --release --locked -p kadr-ui-iced; fi
+          # The spike with wgpu, tiny-skia as its fallback, saying which drew.
+          if [ -d crates/kadr-ui-iced ]; then cargo build --release --locked -p kadr-ui-iced --features info; fi
 
       # Synthetic input and screen capture need the user's consent on macOS.
       # The runner has no one to give it: try granting it to the shell and the
@@ -43,6 +44,9 @@ jobs:
             done
           done
 
+      # Each writes target/desktop-e2e/<system>-<shell>/result.json with an
+      # outcome: passed, failed, or gpu_unavailable (the runner had no GPU
+      # for it, which isn't the framework failing; it exits 0).
       - name: Pointer e2e, kadr (GPUI)
         id: gpui
         continue-on-error: true
@@ -62,6 +66,18 @@ jobs:
 
       - name: Result
         run: |
-          echo "gpui: ${{ steps.gpui.outcome }}, iced: ${{ steps.iced.outcome || 'not on this branch' }}"
-          test "${{ steps.gpui.outcome }}" = success
-          test "${{ steps.iced.outcome || 'success' }}" = success
+          $(command -v python3 || command -v python) - <<'EOF'
+          import json, os, pathlib, sys
+          rows, failed = [], False
+          shells = ["gpui"] + (["iced"] if pathlib.Path("crates/kadr-ui-iced").exists() else [])
+          for shell in shells:
+              r = next(pathlib.Path("target/desktop-e2e").glob(f"*-{shell}/result.json"), None)
+              v = json.loads(r.read_text()) if r else {"shell": shell, "outcome": "failed", "gpu_error": "no result.json: the script itself broke"}
+              failed |= v["outcome"] == "failed"
+              rows.append(f"| {v['shell']} | {v['outcome']} | {json.dumps(v.get('renderer'))} | {v.get('gpu_error', '')} |")
+          table = "\n".join(["| shell | outcome | renderer | GPU error |", "|---|---|---|---|", *rows])
+          print(table)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(f"### ${{ matrix.os }}\n\n{table}\n")
+          sys.exit(1 if failed else 0)
+          EOF
