@@ -4,6 +4,7 @@
 //!   kadr-shot windows              the windows: pid, title, x, y, w, h (JSON)
 //!   kadr-shot screen OUT.png       the first monitor
 //!   kadr-shot window PID OUT.png   a process's first window
+//!   kadr-shot pixel X Y            the first monitor's colour at a point (#rrggbb)
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -38,6 +39,17 @@ fn main() {
             let window = xcap::Window::all().unwrap_or_default().into_iter().find(|w| w.pid().ok() == Some(pid)).unwrap_or_else(|| fail("no such window"));
             save(window.capture_image(), out);
         }
+        Some("pixel") => {
+            let at = |i: usize| args.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or_else(|| usage());
+            let (x, y) = (at(1), at(2));
+            let monitor = xcap::Monitor::all().ok().and_then(|m| m.into_iter().next()).unwrap_or_else(|| fail("no monitor"));
+            let image = monitor.capture_image().unwrap_or_else(|e| fail(&format!("capture: {e}")));
+            // The picture is in pixels, the point in the monitor's own units.
+            let scale = image.width() as f64 / monitor.width().unwrap_or(image.width()).max(1) as f64;
+            let (px, py) = (((x - monitor.x().unwrap_or(0) as f64) * scale) as u32, ((y - monitor.y().unwrap_or(0) as f64) * scale) as u32);
+            let p = image.get_pixel_checked(px, py).unwrap_or_else(|| fail("off the monitor"));
+            println!("#{:02x}{:02x}{:02x}", p[0], p[1], p[2]);
+        }
         _ => usage(),
     }
 }
@@ -55,7 +67,7 @@ fn main() {
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 fn usage() -> ! {
-    fail("usage: kadr-shot windows | screen OUT.png | window PID OUT.png")
+    fail("usage: kadr-shot windows | screen OUT.png | window PID OUT.png | pixel X Y")
 }
 
 fn fail(why: &str) -> ! {

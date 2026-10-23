@@ -135,6 +135,15 @@ class Test:
         return outcome
 
 
+def pixel(x, y):
+    """The screen's colour at a point, as (r, g, b)."""
+    if LINUX:
+        out = subprocess.run(["grim", "-g", f"{int(x)},{int(y)} 1x1", "-t", "ppm", "-"], capture_output=True, timeout=10).stdout
+    else:
+        out = bytes.fromhex(run(SHOT, "pixel", x, y).stdout.strip().lstrip("#"))
+    return tuple(out[-3:])
+
+
 def dev(*args):
     r = run(BIN / f"kadr{EXE}", "dev", *args, check=False, timeout=10)
     v = json.loads(r.stdout)
@@ -157,8 +166,12 @@ def gpui(t, work):
     win = next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), win)
     gpu = win.get("gpu") or {}
     t.renderer = {"framework": "gpui", **gpu}
-    if os.name == "nt" and gpu.get("software"):
-        t.renderer["warp"] = True
+    if os.name == "nt":
+        # GPUI's software flag stays false for WARP, which Windows lists as
+        # the Microsoft Basic Render Driver.
+        t.renderer["warp"] = bool(gpu.get("software")) or "Basic Render Driver" in (gpu.get("device") or "")
+    if not gpu and platform.system() == "Darwin":
+        t.renderer["note"] = "Metal; GPUI reports no adapter on macOS"
     # Window and element bounds are logical; Windows' pointer is physical.
     (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
     tool = dev("find", "tool-r")
@@ -205,7 +218,16 @@ def iced(t, work):
         t.renderer = {"framework": "iced", "renderer": "tiny-skia" if backend == "tiny-skia" else "wgpu", "backend": backend, "adapter": fields.get("adapter")}
     time.sleep(1)
     t.shot("opened")
-    run(POINTER, "click", win["x"] + 105, win["y"] + 24)
+    # Again now that it's settled: the spike fits itself to a small screen.
+    time.sleep(0.5)
+    win = window() or win
+    t.note("the window is on screen", win["x"] >= 0 and win["y"] >= 0, bounds=[win["x"], win["y"], win["w"], win["h"]])
+    click = (win["x"] + 105, win["y"] + 24)
+    run(POINTER, "click", *click)
+    # The chosen tool's button turns the accent blue: look inside its
+    # padding, clear of the label.
+    colour = wait_for(lambda: (lambda c: c if c[2] - c[0] > 60 else None)(pixel(win["x"] + 86, win["y"] + 14)), timeout=5)
+    t.note("the box tool is picked", colour, click=click, colour=list(pixel(win["x"] + 86, win["y"] + 14)))
     cx, cy = win["x"] + win["w"] / 2, win["y"] + win["h"] / 2
     run(POINTER, "drag", cx - 100, cy - 60, cx + 100, cy + 60)
     t.shot("drawn")
