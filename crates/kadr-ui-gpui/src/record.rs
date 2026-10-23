@@ -611,6 +611,7 @@ async fn begin(area: Area, opts: &Opts, cx: &mut AsyncApp) -> Result<Started, Op
     let recording = match recording {
         Ok(r) => r,
         Err(e) => {
+            eprintln!("kadr: recording didn't start: {e}");
             if let Some(cam) = webcam {
                 util::signal(cam, util::Signal::Terminate);
             }

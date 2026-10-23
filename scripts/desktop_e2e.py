@@ -175,7 +175,7 @@ def gpui(t, work):
     which give real screen positions on macOS and Windows."""
     # KADR_DEV also puts GPUI's log (the GPU it took) on stderr.
     # Screenshots land in the test's folder (the overlay step below).
-    proc = t.start(BIN / f"kadr{EXE}", "edit", work, env=dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(t.out / "shots")))
+    proc = t.start(BIN / f"kadr{EXE}", "edit", work, env=dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(t.out / "shots"), OMARCHY_SCREENRECORD_DIR=str(t.out / "videos")))
     win = wait_for(lambda: proc.poll() is None and next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None))
     if not t.note("the editor opens", win):
         return proc
@@ -310,6 +310,52 @@ def overlay(t, warm=False):
     t.note("the overlay's timings are logged" + label, timing, **timing)
 
 
+def mp4_duration(path):
+    """Seconds from an MP4's movie header (moov/mvhd), None while it has none
+    (still being written)."""
+    data = path.read_bytes()
+
+    def boxes(start, end):
+        while start + 8 <= end:
+            size, kind = int.from_bytes(data[start:start + 4], "big"), data[start + 4:start + 8]
+            if size == 1:
+                size = int.from_bytes(data[start + 8:start + 16], "big")
+            if size < 8 or start + size > end:
+                return
+            yield kind, start + 8, start + size
+            start += size
+
+    for kind, body, end in boxes(0, len(data)):
+        if kind == b"moov":
+            for kind, b, _ in boxes(body, end):
+                if kind == b"mvhd":
+                    v1 = data[b] == 1
+                    scale_at = b + (20 if v1 else 12)
+                    scale = int.from_bytes(data[scale_at:scale_at + 4], "big")
+                    length = int.from_bytes(data[scale_at + 4:scale_at + (12 if v1 else 8)], "big")
+                    return length / scale if scale else None
+    return None
+
+
+def record(t):
+    """A recording through the system's recorder (kadr_platform::record):
+    `kadr record fullscreen`, about three seconds, `kadr record stop`, the
+    MP4's length from its header."""
+    videos = t.out / "videos"
+    videos.mkdir(exist_ok=True)
+    before = set(videos.glob("*.mp4"))
+    t0 = time.monotonic()
+    run(BIN / f"kadr{EXE}", "record", "fullscreen", check=False)
+    file = wait_for(lambda: next(iter(set(videos.glob("*.mp4")) - before), None), timeout=15)
+    if not t.note("recording starts", file, ms=round((time.monotonic() - t0) * 1000)):
+        return
+    time.sleep(3)
+    t.shot("recording")
+    run(BIN / f"kadr{EXE}", "record", "stop", check=False)
+    length = wait_for(lambda: mp4_duration(file), timeout=20)
+    t.note("the recording is saved", length and 2 <= length <= 8, seconds=length and round(length, 2), size=file.stat().st_size if file.exists() else None)
+
+
 def type_text(s):
     if LINUX:
         run("wtype", s)
@@ -360,6 +406,7 @@ def main():
                 t.log.write_text("")
                 overlay(t, warm="again")
                 serve.kill()
+                record(t)
     if proc is not None and proc.poll() is None:
         proc.kill()
     outcome = t.finish()

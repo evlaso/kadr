@@ -34,7 +34,13 @@ objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
 # The system's cursors, for the studio and the editor's stamps.
 objc2-app-kit = { version = "0.3.2", features = ["NSCursor", "NSImage", "NSGraphicsContext", "objc2-core-graphics"] }
-objc2-foundation = { version = "0.3.2", features = ["NSGeometry"] }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSArray", "NSDictionary", "NSError", "NSString", "NSURL", "NSValue", "NSObject"] }
+# Recording (record/sck.rs): ScreenCaptureKit's stream into an AVAssetWriter.
+block2 = "0.6"
+dispatch2 = "0.3"
+objc2-core-media = { version = "0.3.2", features = ["CMBase", "CMSampleBuffer", "CMTime"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "AVAssetWriter", "AVAssetWriterInput", "AVMediaFormat", "AVVideoSettings", "objc2-core-media"] }
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-graphics", "objc2-core-foundation", "SCShareableContent", "SCStream"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }

@@ -71,9 +71,10 @@ pub fn unsupported(what: &str) {
 /// Hand kadr-core the system's folders, before anything reads settings.
 pub fn set_dirs() {
     let data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/share")).join("kadr");
-    // Omarchy's screenshots folder where it says.
+    // Omarchy's screenshots and recordings folders where it says.
     let pictures = std::env::var_os("OMARCHY_SCREENSHOT_DIR").map(PathBuf::from).unwrap_or_else(|| user_dir("PICTURES", "Pictures"));
-    kadr_core::dirs::set(kadr_core::dirs::Dirs { config: config_dir(), cache: cache_dir(), data, pictures, videos: user_dir("VIDEOS", "Videos"), runtime: runtime_dir() });
+    let videos = std::env::var_os("OMARCHY_SCREENRECORD_DIR").map(PathBuf::from).unwrap_or_else(|| user_dir("VIDEOS", "Videos"));
+    kadr_core::dirs::set(kadr_core::dirs::Dirs { config: config_dir(), cache: cache_dir(), data, pictures, videos, runtime: runtime_dir() });
 }
 
 /// A folder under the user's home, for fallbacks.

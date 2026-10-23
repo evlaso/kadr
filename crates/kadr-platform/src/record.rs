@@ -15,7 +15,10 @@ use crate::Mon;
 #[cfg(target_os = "linux")]
 #[path = "record/gsr.rs"]
 mod imp;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+#[path = "record/sck.rs"]
+mod imp;
+#[cfg(target_os = "windows")]
 #[path = "record/none.rs"]
 mod imp;
 
