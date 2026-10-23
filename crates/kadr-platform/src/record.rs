@@ -19,7 +19,7 @@ mod imp;
 #[path = "record/sck.rs"]
 mod imp;
 #[cfg(target_os = "windows")]
-#[path = "record/none.rs"]
+#[path = "record/wgc.rs"]
 mod imp;
 
 /// What to record and how.

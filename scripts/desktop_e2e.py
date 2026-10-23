@@ -406,7 +406,7 @@ def main():
                 t.log.write_text("")
                 overlay(t, warm="again")
                 serve.kill()
-                record(t)
+            record(t)
     if proc is not None and proc.poll() is None:
         proc.kill()
     outcome = t.finish()
