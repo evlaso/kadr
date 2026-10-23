@@ -58,13 +58,20 @@ objc2-app-kit = "0.3.2"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
+# For working on kadr and its tests: optimised, incremental, no
+# whole-program pass, so a one-file change builds in seconds.
 [profile.release]
 strip = true
-# Smaller and a little faster: whole-program optimisation, one unit, no
-# unwinding tables. Tests still unwind (cargo uses the test profile's own).
+panic = "abort"
+incremental = true
+
+# What's shipped: `cargo build --profile dist` → target/dist/kadr. Smaller
+# and a little faster: whole-program optimisation in one unit, ~2.5 min.
+[profile.dist]
+inherits = "release"
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+incremental = false
 
 # Smaller where speed doesn't matter: the D-Bus stack (the tray, the portal,
 # notifications), accessibility, regex, the decoders of formats kadr only
@@ -122,16 +129,6 @@ opt-level = "s"
 opt-level = "s"
 [profile.release.package.chrono]
 opt-level = "s"
-
-# For working on kadr: release speed without the whole-program pass, which
-# takes an incremental build from ~11 s to ~2.5 min. `cargo build --profile
-# fast` → target/fast/kadr; `just` runs the tests with it.
-[profile.fast]
-inherits = "release"
-lto = false
-codegen-units = 16
-incremental = true
-panic = "unwind"
 
 # GPUI CE's Linux platform with drawing tablet support (see vendor/README.md).
 [patch."https://github.com/gpui-ce/gpui-ce"]

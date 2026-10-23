@@ -40,8 +40,8 @@
 Нужны `gpu-screen-recorder`, `ffmpeg`, `tesseract` (с данными для английского), `grim` и `wl-clipboard`. В Omarchy всё это либо уже есть, либо ставится через `pacman`. Для сборки нужен Rust 1.95 или новее.
 
 ```sh
-cargo build --release
-install -m755 target/release/kadr ~/.local/bin/kadr
+cargo build --profile dist
+install -m755 target/dist/kadr ~/.local/bin/kadr
 ```
 
 Подключи хук Hyprland: с ним окна kadr плавающие, работают горячие клавиши из настроек kadr, а для студии записываются клики и клавиши.

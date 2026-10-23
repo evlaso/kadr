@@ -97,6 +97,15 @@ What took the binary from 34.4 to 25.0 MB:
 
 The X11 backend costs about 14 KB, so it stays (best effort, per the spec).
 
+## Profiles: release for work, dist for shipping
+
+2026-10-23, the user's decision: `--release` has no whole-program pass and
+builds incrementally, so the 20 s incremental budget is measured on it
+(0.75 s for a one-line change); `dist` (fat LTO, one codegen unit, the same
+per-crate opt-levels) is what's shipped and what the size is measured on
+(24.99 MB). The size budget is 25 MB soft (a warning) and 30 MB hard; no
+squeezing beyond that.
+
 ## Copies of the picture in the editor
 
 `kadr dev mem` with a 3840×2160 picture (a noise PNG of 40.8 MB, so the

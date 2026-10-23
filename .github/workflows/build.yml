@@ -35,10 +35,10 @@ jobs:
             libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxcb-xinput-dev \
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev libfontconfig-dev
       - name: Build
-        run: cargo build --release --locked
+        run: cargo build --profile dist --locked
       - name: Test
         run: cargo test --release --locked
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/release/${{ matrix.binary }}
+          path: target/dist/${{ matrix.binary }}

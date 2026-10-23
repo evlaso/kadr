@@ -7,7 +7,8 @@ warns when a number is more than 15% worse than the base in docs/perf.json.
 It drives the real session: the area picker shows on the focused monitor for
 a moment (and is closed with Escape), an editor window opens and closes. Run
 it while not using the machine. Needs grim, wtype, magick, and kadr built
-with `cargo build --release` (it is installed to ~/.local/bin first).
+with `cargo build --profile dist`, what's shipped (it is installed to
+~/.local/bin first).
 
   scripts/bench.py [--runs N] [--idle SECONDS] [--no-build] [--save-base]
 """
@@ -25,7 +26,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BIN = ROOT / "target/release/kadr"
+BIN = ROOT / "target/dist/kadr"
 INSTALLED = Path.home() / ".local/bin/kadr"
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 SOCK = RUNTIME / "kadr.sock"
@@ -41,11 +42,11 @@ BUDGETS = {
     "hotkey_overlay_warm_ms": (80, "ms"),
     "hotkey_overlay_cold_ms": (300, "ms"),
     "edit_window_ms": (400, "ms"),
-    "binary_mb": (25, "MB"),
+    "binary_mb": (30, "MB"),
     "incremental_build_s": (20, "s"),
 }
-# Measured, but without a budget of their own.
-INFO = {"incremental_fast_s": "s"}
+# Soft budgets: going over is a warning, not a failure.
+SOFT = {"binary_mb": 25}
 
 
 def hypr(request):
@@ -252,7 +253,7 @@ def main():
     a = ap.parse_args()
 
     if not a.no_build:
-        subprocess.run([CARGO, "build", "--release"], cwd=ROOT, check=True)
+        subprocess.run([CARGO, "build", "--profile", "dist"], cwd=ROOT, check=True)
     stop_all()
     shutil.copy2(BIN, INSTALLED)
 
@@ -274,8 +275,9 @@ def main():
     result["editor_4k_rss_mb"], result["idle_cpu_percent"] = round(rss, 1), round(cpu, 2)
     result["tray_rss_mb"] = round(measure_tray(a.idle), 1)
     if not a.no_build:
+        # Working builds are --release; dist is the slow, shipped one.
+        subprocess.run([CARGO, "build", "--release"], cwd=ROOT, check=True, capture_output=True)
         result["incremental_build_s"] = round(measure_build("release"), 1)
-        result["incremental_fast_s"] = round(measure_build("fast"), 1)
 
     # Leave the tray as it was before.
     subprocess.Popen([str(INSTALLED), "tray"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -298,12 +300,11 @@ def main():
             mark = "  not measured"
         elif v > budget:
             mark, failed = "  OVER BUDGET", True
+        elif key in SOFT and v > SOFT[key]:
+            mark = f"  over the soft budget ({SOFT[key]}{unit})"
         elif b and v > b * 1.15:
             mark = "  >15% worse than base"
         print(f"{key:<26}{'-' if v is None else v:>10}{budget:>9}{unit}{'-' if b is None else b:>10}{mark}")
-    for key, unit in INFO.items():
-        if key in result:
-            print(f"{key:<26}{result[key]:>10}{'-':>9}{unit}{base.get(key, '-'):>10}")
     print(f"\nwritten: {ROOT / 'target/bench.json'}")
     sys.exit(1 if failed else 0)
 

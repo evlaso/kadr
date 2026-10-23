@@ -40,8 +40,8 @@ Screenshots and screen recording in the spirit of CleanShot X, in Rust on GPUI C
 kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `grim` and `wl-clipboard`. On Omarchy they're either there already or come from `pacman`. Building needs Rust 1.95 or newer.
 
 ```sh
-cargo build --release
-install -m755 target/release/kadr ~/.local/bin/kadr
+cargo build --profile dist
+install -m755 target/dist/kadr ~/.local/bin/kadr
 ```
 
 Add the Hyprland hook: it floats kadr's windows, loads the hotkeys set in kadr's settings, and logs clicks and keys for the studio.
