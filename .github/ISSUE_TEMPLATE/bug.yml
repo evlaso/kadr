@@ -1,0 +1,40 @@
+name: Bug
+description: Something in kadr doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead. A screenshot or recording helps.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: kadr version
+      description: The commit or release (Settings → About kadr).
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - Linux (Hyprland)
+        - Linux (another desktop)
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: details
+    attributes:
+      label: System details
+      description: Distribution and version, desktop, GPU; or the macOS / Windows version.
+  - type: textarea
+    id: log
+    attributes:
+      label: Output
+      description: What kadr printed, if anything (run it from a terminal with KADR_DEV=1 for more).
+      render: text

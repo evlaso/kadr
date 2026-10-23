@@ -1,8 +1,10 @@
 # kadr
 
-Screenshots and screen recording, in Rust on GPUI CE. Made for Linux on [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland). Dark and light themes are built in and follow the system by default. English and Russian.
+Screenshots and screen recording for the desktop: capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video. Written in Rust on [GPUI CE](https://github.com/gpui-ce/gpui-ce). Made first for Linux on [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland), coming to macOS and Windows. English and Russian; dark and light themes follow the system.
 
-**Status:** works on Linux (Wayland, Hyprland); macOS and Windows build in CI but haven't been tried on a real machine, and recording and window picking aren't ported there yet. No release yet.
+![The editor: an arrow, a box and a caption on a screenshot, on a gradient backdrop](docs/images/editor.png)
+
+**Status:** works on Linux (Wayland, Hyprland). macOS and Windows build and pass their end-to-end test in CI (the editor, typing, the system's menus, the area overlay), but nobody has used them on a real machine yet, and recording and window picking aren't ported there. No release yet; the first will be 0.3.0.
 
 [Читать по-русски](docs/README.ru.md)
 
@@ -39,10 +41,14 @@ Screenshots and screen recording, in Rust on GPUI CE. Made for Linux on [Omarchy
 
 ## Install
 
-kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `grim` and `wl-clipboard`. On Omarchy they're either there already or come from `pacman`. Building needs Rust 1.95 or newer.
+There are no packages yet: Homebrew, winget and the AUR come with the first release (0.3.0). Until then kadr is built from source, which needs Rust 1.95 or newer.
+
+### Linux (Hyprland)
+
+kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `grim` and `wl-clipboard`. On Omarchy they're either there already or come from `pacman`.
 
 ```sh
-cargo build --profile dist
+cargo build --profile dist -p kadr -p kadr-tray
 install -m755 target/dist/kadr target/dist/kadr-tray ~/.local/bin/
 ```
 
@@ -52,11 +58,36 @@ Add the Hyprland hook: it floats kadr's windows, loads the hotkeys set in kadr's
 cp data/hypr/kadr.lua ~/.config/hypr/kadr.lua
 ```
 
-Then add `require("hypr.kadr")` to `~/.config/hypr/hyprland.lua`. Set hotkeys in kadr's settings (Shortcuts); start the tray icon from `autostart.lua`:
+Then add `require("hypr.kadr")` to `~/.config/hypr/hyprland.lua`, and start the tray icon from `autostart.lua`:
 
 ```lua
-o.launch_on_start("kadr tray")
+o.launch_on_start("kadr-tray")
 ```
+
+### macOS and Windows
+
+Build kadr, its tray and its area overlay, and keep the three side by side:
+
+```sh
+cargo build --profile dist -p kadr -p kadr-tray -p kadr-overlay
+```
+
+The tray holds the global hotkeys there, so start `kadr-tray` at login. Unsigned builds of every commit are attached to the [Actions](https://github.com/vlasmn/kadr/actions) runs started by hand; on macOS such a build needs `xattr -d com.apple.quarantine kadr kadr-tray kadr-overlay` before it opens.
+
+## Hotkeys
+
+Set them in kadr's settings (Shortcuts). The defaults on macOS and Windows; on Linux kadr starts from your Hyprland bindings:
+
+| Keys | Does |
+|---|---|
+| Ctrl+Shift+1 | Screenshot of an area |
+| Ctrl+Shift+2 | Recording |
+| Ctrl+Shift+3 | Recognize text |
+| Ctrl+Shift+4 | History |
+| Ctrl+Shift+5 | Settings |
+| Ctrl+Shift+6 | Scrolling screenshot |
+
+While picking an area: Space for windows only, A for an aspect ratio, digits for a size, arrows to nudge (Alt+arrows to resize), P for the last area, Enter to take it, Esc to cancel.
 
 ## Commands
 
@@ -83,13 +114,11 @@ kadr install-desktop                               .kadr file type, icon and men
 ## Platforms
 
 - **Linux** (Wayland, Hyprland): everything works.
-- **macOS and Windows:** they build in CI; not yet tried on a real machine. Screenshots, the clipboard, notifications, the tray icon and global hotkeys are written (through cross-platform crates); recording, picking windows and the studio's click log aren't ported yet. Everything system-specific lives in `crates/kadr-platform`, so it can be ported one function at a time.
-
-Linux builds are attached to every commit on `main` in [Actions](https://github.com/vlasmn/kadr/actions); macOS and Windows ones to `v*` tags and manual runs.
+- **macOS and Windows:** the editor, the studio, screenshots, the clipboard, notifications, the tray, global hotkeys and the area overlay are written and pass the end-to-end test on CI's runners; recording, picking windows and the studio's click log aren't ported yet. Everything system-specific lives in `crates/kadr-platform`.
 
 ## Development
 
-How the code is laid out, the conventions and the known pitfalls are in [CLAUDE.md](CLAUDE.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) has how to build and test. Where the project is heading is [docs/SPEC.ru.md](docs/SPEC.ru.md) (in Russian); the measurements are in [docs/perf.md](docs/perf.md), known debts and pitfalls in [docs/traps.md](docs/traps.md), and [CLAUDE.md](CLAUDE.md) is the guide for coding agents.
 
 ## License
 

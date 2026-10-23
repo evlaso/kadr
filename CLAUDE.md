@@ -58,3 +58,4 @@ The longer story, and known debts (accessibility, menus on Linux): `docs/traps.m
 - Look and feel: a soft, clean Apple-like look, like a well-made Mac utility. No glass. Separate groups with space and tone, not lines. The main action uses the accent color.
 - Before changing the user's Hyprland config (`~/.config/hypr/*.lua`), back up the file (`.bak-<timestamp>`).
 - Commits go to `main` (GitHub `vlasmn/kadr`, public: no personal paths, tokens or real screenshots in commits; test pictures are drawn; don't name other products as the model for kadr's design, in docs or comments). End commit messages with the `Co-Authored-By` trailer the session specifies.
+- Commit subjects are conventional commits (`feat:`, `fix:`, `perf:`, `ui:`, `docs:`, `test:`, `refactor:`, `chore:`), what changed for a person; the changelog is drafted from them (SPEC 12.4). How to contribute, for people: `CONTRIBUTING.md`.
