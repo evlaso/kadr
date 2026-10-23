@@ -137,11 +137,14 @@ class Test:
 
 def pixel(x, y):
     """The screen's colour at a point, as (r, g, b)."""
-    if LINUX:
-        out = subprocess.run(["grim", "-g", f"{int(x)},{int(y)} 1x1", "-t", "ppm", "-"], capture_output=True, timeout=10).stdout
-    else:
-        out = bytes.fromhex(run(SHOT, "pixel", x, y).stdout.strip().lstrip("#"))
-    return tuple(out[-3:])
+    try:
+        if LINUX:
+            out = subprocess.run(["grim", "-g", f"{int(x)},{int(y)} 1x1", "-t", "ppm", "-"], capture_output=True, timeout=10).stdout
+        else:
+            out = bytes.fromhex(run(SHOT, "pixel", x, y, check=False).stdout.strip().lstrip("#"))
+    except (subprocess.TimeoutExpired, ValueError):
+        out = b""
+    return tuple(out[-3:]) if len(out) >= 3 else (0, 0, 0)
 
 
 def dev(*args):
