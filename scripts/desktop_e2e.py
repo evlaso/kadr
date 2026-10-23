@@ -136,7 +136,7 @@ class Test:
         result = {"shell": self.shell, "system": platform.platform(), "outcome": outcome, "ok": ok, "renderer": self.renderer, "steps": self.steps}
         if gpu:
             result["gpu_error"] = gpu
-        (self.out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+        (self.out / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         return outcome
 
 
@@ -324,6 +324,9 @@ def iced(t, work):
 
 
 def main():
+    # UTF-8 out whatever the console's code page (cp1252 on Windows can't
+    # print "мир").
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     shell = sys.argv[1] if len(sys.argv) > 1 else "gpui"
     if LINUX:
         # The runners' screen, 1024x768, on the nested session's output.

@@ -72,12 +72,12 @@ jobs:
           shells = ["gpui"] + (["iced"] if pathlib.Path("crates/kadr-ui-iced").exists() else [])
           for shell in shells:
               r = next(pathlib.Path("target/desktop-e2e").glob(f"*-{shell}/result.json"), None)
-              v = json.loads(r.read_text()) if r else {"shell": shell, "outcome": "failed", "gpu_error": "no result.json: the script itself broke"}
+              v = json.loads(r.read_text(encoding="utf-8")) if r else {"shell": shell, "outcome": "failed", "gpu_error": "no result.json: the script itself broke"}
               failed |= v["outcome"] == "failed"
               rows.append(f"| {v['shell']} | {v['outcome']} | {json.dumps(v.get('renderer'))} | {v.get('gpu_error', '')} |")
           table = "\n".join(["| shell | outcome | renderer | GPU error |", "|---|---|---|---|", *rows])
           print(table)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
               f.write(f"### ${{ matrix.os }}\n\n{table}\n")
           sys.exit(1 if failed else 0)
           EOF
