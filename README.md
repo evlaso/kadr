@@ -4,7 +4,7 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 
 ![The editor: an arrow, a box and a caption on a screenshot, on a gradient backdrop](docs/images/editor.png)
 
-**Status:** works on Linux (Wayland, Hyprland). macOS and Windows build and pass their end-to-end test in CI (the editor, typing, the system's menus, the area overlay), but nobody has used them on a real machine yet, and recording and window picking aren't ported there. No release yet; the first will be 0.3.0.
+**Status:** works on Linux (Wayland, Hyprland). macOS and Windows build and pass their end-to-end test in CI (the editor, typing, the system's menus, the area overlay), but nobody has used them on a real machine yet, and recording and window picking aren't ported there. The first pre-release is [0.3.0-alpha.1](https://github.com/vlasmn/kadr/releases); testers on macOS and Windows are very welcome.
 
 [Читать по-русски](docs/README.ru.md)
 
@@ -41,7 +41,7 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 
 ## Install
 
-There are no packages yet: Homebrew, winget and the AUR come with the first release (0.3.0). Until then kadr is built from source, which needs Rust 1.95 or newer.
+[Releases](https://github.com/vlasmn/kadr/releases) has builds for the three systems: a `.tar.xz` for Linux (with an `INSTALL.md`), `Kadr.app` in a `.dmg` for macOS (Apple silicon and Intel) and a portable `.zip` for Windows. They aren't signed yet: on macOS run `xattr -dr com.apple.quarantine /Applications/Kadr.app` once after copying the app. Homebrew, winget and the AUR come later. kadr can also be built from source, which needs Rust 1.95 or newer.
 
 ### Linux (Hyprland)
 

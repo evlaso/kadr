@@ -1,0 +1,111 @@
+name: release
+
+# A tag v<version> on main (SPEC 12.2): the dist build on each system, its
+# archive with a .sha256, a GitHub release (a pre-release for 0.3.0-alpha.1
+# and the like) whose body is the version's CHANGELOG section, and
+# releases/latest.json on the gh-pages branch for the tray's update check.
+# By hand, it builds and packs without publishing, to try the job.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            system: linux
+          - os: macos-latest
+            system: macos
+          - os: windows-latest
+            system: windows
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        # The tag names the workspace's version, or nothing is released.
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          [[ $GITHUB_REF_TYPE != tag || $GITHUB_REF_NAME == "v$version" ]] || { echo "the tag isn't v$version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.system == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: Linux libraries
+        if: matrix.system == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxcb-xinput-dev \
+            libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev libfontconfig-dev
+      - name: Build and pack (Linux, Windows)
+        if: matrix.system != 'macos'
+        run: |
+          cargo build --profile dist --locked -p kadr -p kadr-tray -p kadr-overlay
+          scripts/package.sh ${{ matrix.system }} "$VERSION" out
+      - name: Build and pack (macOS, universal)
+        if: matrix.system == 'macos'
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --profile dist --locked --target $target -p kadr -p kadr-tray -p kadr-overlay
+          done
+          scripts/bundle-macos.sh "$VERSION" out
+          cd out && shasum -a 256 "kadr-$VERSION-macos-universal.dmg" > "kadr-$VERSION-macos-universal.dmg.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.system }}
+          path: |
+            out/kadr-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          scripts/release.py notes "$version" > notes.md
+          scripts/release.py latest "$version" files > latest.json
+          prerelease=$([[ $version == *-* ]] && echo --prerelease || true)
+          gh release create "$GITHUB_REF_NAME" files/* --title "kadr $version" --notes-file notes.md $prerelease --verify-tag
+      - name: latest.json on gh-pages
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth 1 origin gh-pages; then
+            git worktree add pages FETCH_HEAD
+            git -C pages switch -c gh-pages
+          else
+            git worktree add --orphan -b gh-pages pages
+          fi
+          mkdir -p pages/releases
+          cp latest.json pages/releases/latest.json
+          git -C pages add releases/latest.json
+          git -C pages commit -m "chore: latest.json for $version"
+          git -C pages push origin HEAD:gh-pages

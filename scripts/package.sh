@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# A release's archive for Linux or Windows (SPEC 12.2), from the dist build
+# (`cargo build --profile dist -p kadr -p kadr-tray -p kadr-overlay`), with a
+# .sha256 beside it. macOS has its own: scripts/bundle-macos.sh.
+#
+#   scripts/package.sh linux|windows VERSION OUT_DIR
+set -euo pipefail
+
+os=$1
+version=$2
+out=$3
+root=$(cd "$(dirname "$0")/.." && pwd)
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+stage=$(mktemp -d)
+
+case $os in
+linux)
+    name="kadr-$version-x86_64-linux"
+    dir="$stage/$name"
+    mkdir -p "$dir"
+    # The area overlay is a thread of kadr on Linux: no kadr-overlay.
+    install -m755 "$root/target/dist/kadr" "$root/target/dist/kadr-tray" "$dir/"
+    cp "$root/data/hypr/kadr.lua" "$root/LICENSE" "$root/README.md" "$root/CHANGELOG.md" "$dir/"
+    cat >"$dir/INSTALL.md" <<'EOF'
+# Installing kadr on Linux (Hyprland)
+
+kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `grim` and `wl-clipboard`.
+
+```sh
+install -m755 kadr kadr-tray ~/.local/bin/
+cp kadr.lua ~/.config/hypr/kadr.lua
+```
+
+Add `require("hypr.kadr")` to `~/.config/hypr/hyprland.lua` (it floats kadr's windows, loads the hotkeys set in kadr's settings and logs clicks and keys for the studio), and start the tray from `autostart.lua`:
+
+```lua
+o.launch_on_start("kadr-tray")
+```
+
+`kadr --help` lists the commands; `kadr settings` opens the settings.
+EOF
+    file="$name.tar.xz"
+    tar -C "$stage" -cJf "$out/$file" "$name"
+    ;;
+windows)
+    name="kadr-$version-x86_64-windows"
+    dir="$stage/$name"
+    mkdir -p "$dir"
+    cp "$root/target/dist/kadr.exe" "$root/target/dist/kadr-tray.exe" "$root/target/dist/kadr-overlay.exe" "$dir/"
+    cp "$root/LICENSE" "$root/README.md" "$root/CHANGELOG.md" "$dir/"
+    file="$name.zip"
+    (cd "$stage" && 7z a -tzip -bso0 "$out/$file" "$name")
+    ;;
+*)
+    echo "usage: $0 linux|windows VERSION OUT_DIR" >&2
+    exit 2
+    ;;
+esac
+
+rm -rf "$stage"
+(cd "$out" && sha256sum "$file" >"$file.sha256")
+echo "$out/$file"

@@ -182,6 +182,24 @@ so the tray keeps the overlay warm there by default; the first window in a
 warm process still costs ~100 ms, the next ones 27. Windows needs none.
 The screen grab is now the largest part on macOS.
 
+Then the warm overlay took the screen grab and kept its window (run
+39964626958): it warms ScreenCaptureKit up at start (the displays, a
+filter and configuration each, one picture: 340 ms, once) and makes its
+window hidden (153 ms, once); a pick then reuses both. The cold column is
+now really cold (`KADR_KEEP_WARM=0`, no tray overlay).
+
+| Step | macOS, cold | macOS, warm (1st pick) | macOS, warm (2nd) |
+|---|---|---|---|
+| kadr: grab the screen | 46 ms | — | — |
+| kadr: write the spec | 25 ms | 0 ms | 0 ms |
+| overlay: grab (ScreenCaptureKit) | — | **20 ms** | 60 ms |
+| overlay: request → window | 89 ms (new process) | 0 ms (spare) | 0 ms (spare) |
+| overlay: request → first frame | 218 ms | **10 ms** | 6 ms |
+
+The first warm pick costs ~30 ms from the request to the frame. The second
+grab's 60 ms against the first's 20 is one sample on a shared runner; to
+watch on a real Mac.
+
 ## How each is measured
 
 - **Tray RSS**: a fresh `kadr tray` (on Linux the StatusNotifierItem through

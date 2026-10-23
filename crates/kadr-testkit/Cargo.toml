@@ -1,6 +1,6 @@
 [package]
 name = "kadr-testkit"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 description = "Tools for the e2e tests: a pointer and keyboard, and screenshots, on every system"

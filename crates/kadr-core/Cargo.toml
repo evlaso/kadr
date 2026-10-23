@@ -1,6 +1,6 @@
 [package]
 name = "kadr-core"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 description = "kadr's data and logic: no OS, no UI"

@@ -1,6 +1,6 @@
 [package]
 name = "kadr-ui-gpui"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 description = "kadr's UI on GPUI CE: every screen, drawn and wired; the only crate that knows GPUI"

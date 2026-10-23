@@ -1,6 +1,6 @@
 [package]
 name = "kadr-raster"
-version = "0.2.0"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 description = "Draws a kadr drawing onto its picture: the one way to get pixels from a document"

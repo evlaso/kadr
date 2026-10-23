@@ -3431,7 +3431,7 @@ dependencies = [
 
 [[package]]
 name = "kadr"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "image",
  "kadr-core",
@@ -3444,7 +3444,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-core"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "chrono",
  "image",
@@ -3453,7 +3453,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-media"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "async-io",
  "async-process",
@@ -3467,7 +3467,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-overlay"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "block2 0.6.2",
  "image",
@@ -3492,7 +3492,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-platform"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "arboard",
  "image",
@@ -3515,7 +3515,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-raster"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "ab_glyph",
  "image",
@@ -3526,7 +3526,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-testkit"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "enigo",
  "image",
@@ -3538,7 +3538,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-tray"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "dispatch2",
  "global-hotkey",
@@ -3556,7 +3556,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-ui"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "kadr-core",
  "kadr-raster",
@@ -3565,7 +3565,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-ui-gpui"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "ab_glyph",
  "anyhow",
