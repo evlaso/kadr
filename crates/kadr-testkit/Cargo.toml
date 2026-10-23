@@ -1,0 +1,14 @@
+[package]
+name = "kadr-testkit"
+version = "0.2.0"
+edition = "2024"
+description = "Tools for the e2e tests: a virtual pointer for a Wayland session"
+publish = false
+
+[[bin]]
+name = "kadr-pointer"
+path = "src/pointer.rs"
+
+[dependencies]
+wayland-client = "0.31.15"
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }

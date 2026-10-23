@@ -14,6 +14,11 @@ use serde_json::Value;
 
 const KADR: &str = env!("CARGO_BIN_EXE_kadr");
 
+/// The virtual pointer (`crates/kadr-testkit`), built by `just e2e`.
+fn pointer() -> PathBuf {
+    root().join("target/release/kadr-pointer")
+}
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -77,6 +82,19 @@ impl Session {
     /// The window of this kind, once it's up.
     fn window(&self, kind: &str) -> Value {
         wait(Duration::from_secs(10), || self.try_dev(&["windows"])?.as_array()?.iter().find(|w| w["kind"] == kind).cloned()).unwrap_or_else(|| panic!("no {kind} window"))
+    }
+
+    /// `kadr-pointer <args>`: a real pointer in the session.
+    fn pointer(&self, args: &[&str]) {
+        let ok = self.cmd(pointer().to_str().unwrap()).args(args).status().expect("kadr-pointer (just e2e builds it)");
+        assert!(ok.success(), "kadr-pointer {args:?}");
+    }
+
+    /// The middle of an element, by its id, in screen pixels.
+    fn middle(&self, id: &str) -> (String, String) {
+        let b = self.dev(&["find", id])["bounds"].clone();
+        let at = |i: usize, j: usize| (b[i].as_f64().unwrap_or(0.) + b[j].as_f64().unwrap_or(0.) / 2.).round().to_string();
+        (at(0, 2), at(1, 3))
     }
 
     /// The screen, or an area of it, as the compositor has it.
@@ -223,6 +241,29 @@ fn the_editor_saves_what_the_rasteriser_draws() {
     let saved = image::open(&path).expect("saved").to_rgba8();
     let share = alike(&saved, &expected);
     assert!(share > 0.999, "the saved file isn't the rasteriser's: {:.2}% alike", share * 100.);
+}
+
+/// Scenario 2 again, with a real pointer: the tool's button clicked where
+/// it's drawn, the box dragged out on the picture.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_editor_draws_with_a_real_pointer() {
+    let s = Session::start();
+    let path = fixture(&s, "shot.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    let (x, y) = s.middle("tool-r");
+    s.pointer(&["click", &x, &y]);
+    s.pointer(&["drag", "900", "450", "1100", "600"]);
+    let state = wait(Duration::from_secs(2), || s.try_dev(&["state"]).filter(|v| v["view"]["shapes"].as_array().is_some_and(|a| !a.is_empty()))).expect("nothing drawn");
+    assert_eq!(state["view"]["tool"], "rect");
+    let shape = &state["view"]["shapes"][0];
+    assert_eq!(shape["kind"], "rect");
+    // 200×150 screen pixels at the picture's scale.
+    let (a, b) = (&shape["a"], &shape["b"]);
+    let (w, h) = ((b[0].as_f64().unwrap() - a[0].as_f64().unwrap()).abs(), (b[1].as_f64().unwrap() - a[1].as_f64().unwrap()).abs());
+    assert!((w / h - 200. / 150.).abs() < 0.05, "a {w}×{h} box");
 }
 
 /// Scenario 3, its studio half: a recording exported through the studio has
