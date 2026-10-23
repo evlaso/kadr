@@ -251,6 +251,9 @@ fn to_picked(rect: Rect, window: bool, mon: Mon, frozen: Arc<image::RgbaImage>) 
         .then(|| crate::platform::windows_on(&mon).into_iter().find(|(_, r)| (r.0 - rect.0).abs() < 1. && (r.1 - rect.1).abs() < 1. && (r.2 - rect.2).abs() < 1. && (r.3 - rect.3).abs() < 1.))
         .flatten()
         .map(|(id, _)| id);
+    if window {
+        eprintln!("kadr: picked a window at {area:?}, id {window_id:?}");
+    }
     Some(Picked { area, whole, window, window_id, mon, frozen })
 }
 

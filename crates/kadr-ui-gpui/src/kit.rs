@@ -371,6 +371,9 @@ pub fn open_window<V: Render + 'static>(
     };
     match cx.open_window(options, |window, cx| {
         window.set_rem_size(px(REM));
+        // Named in the system's window lists (and so kept in the overlay's
+        // windows to snap to, while kadr's untitled overlays and cards aren't).
+        window.set_window_title("kadr");
         build(window, cx)
     }) {
         Ok(handle) => {

@@ -58,6 +58,7 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
         "region" => picker::pick(false, true, cx).await?,
         _ => picker::pick(true, true, cx).await?,
     };
+    eprintln!("kadr: shot {mode}: {:?}{}", picked.area, if picked.window { " (a window)" } else { "" });
     let dir = settings.screenshot_dir();
     let _ = std::fs::create_dir_all(&dir);
     let path = crate::storage::capture_path(&dir, crate::storage::Capture::Screenshot, "png");
@@ -84,6 +85,7 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
             save_png(image, scale, logical, &target)
         })
         .await;
+    eprintln!("kadr: shot {mode} saved: {}", saved.is_ok());
     match saved {
         Ok(()) => Some(path),
         Err(e) => {

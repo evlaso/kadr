@@ -255,7 +255,9 @@ pub fn window_rounding() -> f32 {
 pub fn own_window_shot(title: &str, kind: &str) -> Option<image::RgbaImage> {
     let pid = std::process::id() as u64;
     let clients: serde_json::Value = serde_json::from_str(&hypr("j/clients")?).ok()?;
-    let client = clients.as_array()?.iter().find(|c| c["pid"].as_u64() == Some(pid) && c["title"].as_str() == Some(title));
+    // By its class (the window's kind), else its title.
+    let mine = |c: &&serde_json::Value| c["pid"].as_u64() == Some(pid);
+    let client = clients.as_array()?.iter().filter(mine).find(|c| c["class"].as_str() == Some(kind)).or_else(|| clients.as_array()?.iter().filter(mine).find(|c| c["title"].as_str() == Some(title)));
     let geometry = match client {
         Some(c) => format!("{},{} {}x{}", c["at"][0], c["at"][1], c["size"][0], c["size"][1]),
         None => {
