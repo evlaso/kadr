@@ -32,8 +32,26 @@ start() {
   hyprctl eval 'hl.window_rule({ match = { class = "^aquamarine$" }, float = true, size = "1920 1080", workspace = "special:kadr-e2e silent", render_unfocused = true })' >/dev/null 2>&1 \
     || hyprctl keyword windowrule 'float,size 1920 1080,workspace special:kadr-e2e silent,renderunfocused,class:^(aquamarine)$' >/dev/null 2>&1 || true
 
+  # A bus that starts no services: with the session's own config it would
+  # start the desktop portal on demand, in the real session's environment
+  # (attached to the real Hyprland), which then crashed when this bus went
+  # away, once per test session.
+  cat >"$dir/bus.conf" <<'CONF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <!-- Required; the address option below says where. -->
+  <listen>unix:tmpdir=/tmp</listen>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+CONF
   local bus
-  bus=$(dbus-daemon --session --fork --print-address=1 --print-pid=3 --address="unix:path=$dir/bus" 3>"$dir/dbus.pid")
+  bus=$(dbus-daemon --config-file="$dir/bus.conf" --fork --print-address=1 --print-pid=3 --address="unix:path=$dir/bus" 3>"$dir/dbus.pid")
 
   env -u HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR="$dir" WAYLAND_DISPLAY="$parent_display" DBUS_SESSION_BUS_ADDRESS="$bus" \
     setsid start-hyprland -- -c "$PWD/tests/e2e/hypr.lua" >"$dir/hyprland.out" 2>&1 &
