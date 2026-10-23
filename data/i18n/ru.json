@@ -38,6 +38,7 @@
  "cli.unknown_mode": "неизвестный режим: {}",
  "cli.unknown_recording_mode": "неизвестный режим записи: {}",
  "common.appearance": "Оформление",
+ "common.pictures": "Картинки",
  "common.arrow": "Стрелка",
  "common.background": "Фон",
  "common.camera": "Камера",

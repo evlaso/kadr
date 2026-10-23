@@ -11,6 +11,10 @@ kadr-core = { path = "../kadr-core" }
 image.workspace = true
 serde_json.workspace = true
 libc = "0.2"
+# The system's own open, save and folder dialogs (SPEC 3.10): the portal on
+# Linux, NSOpenPanel on macOS, the common dialogs on Windows.
+rfd = "0.17.2"
+raw-window-handle = "0.6"
 
 # macOS and Windows share one implementation of the clipboard, notifications,
 # the trash, monitors and screenshots (desktop.rs).

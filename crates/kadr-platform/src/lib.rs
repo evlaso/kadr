@@ -19,6 +19,7 @@ mod imp;
 
 pub use imp::*;
 
+pub mod dialog;
 pub mod keymap;
 pub mod style;
 

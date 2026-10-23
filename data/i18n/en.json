@@ -38,6 +38,7 @@
  "cli.unknown_mode": "unknown mode: {}",
  "cli.unknown_recording_mode": "unknown recording mode: {}",
  "common.appearance": "Appearance",
+ "common.pictures": "Pictures",
  "common.arrow": "Arrow",
  "common.background": "Background",
  "common.camera": "Camera",

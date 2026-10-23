@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, App, BorderStyle, BoxShadow, Bounds, Context, CursorStyle, FocusHandle, Image, ImageFormat, ImageSource,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, RenderImage,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage,
     Window, canvas, div, img, linear_color_stop, linear_gradient, point, px, relative,
     rgba, size,
 };
@@ -1015,10 +1015,10 @@ impl StudioEditor {
         }
     }
 
-    fn pick_wallpaper(&mut self, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(t("common.choose_background_image").into()) });
+    fn pick_wallpaper(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = kadr_platform::dialog::open(Some(window), t("common.choose_background_image"), &[kadr_platform::dialog::Filter { name: t("common.pictures"), extensions: kadr_platform::dialog::PICTURES }], false);
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(paths) = paths.await else { return };
             let Some(path) = paths.into_iter().next() else { return };
             let _ = this.update(cx, |editor, cx| {
                 editor.project.wallpaper = Some(path);
@@ -2198,7 +2198,7 @@ impl StudioEditor {
             tile("own-wallpaper".into(), own)
                 .child(div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).border_1().border_dashed().border_color(colors.border).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
                 .tip(Tooltip::text(t("common.your_own_image")))
-                .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
+                .on_click(cx.listener(|this, _, window, cx| this.pick_wallpaper(window, cx)))
                 .into_any_element(),
         );
 

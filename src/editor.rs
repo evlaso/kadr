@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use gpui::{
     FillOptions, PathStyle,
-    App, BorderStyle, Bounds, BoxShadow, Context, PathPromptOptions, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
+    App, BorderStyle, Bounds, BoxShadow, Context, CursorStyle, FocusHandle, Hsla, Image, ImageFormat,
     KeyDownEvent, MouseButton, ScrollWheelEvent, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Point,
     Window, canvas, div, img, linear_color_stop, linear_gradient, 
     point, px, rgba, size,
@@ -1901,10 +1901,10 @@ impl Editor {
         cx.notify();
     }
 
-    fn pick_wallpaper(&mut self, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(t("common.choose_background_image").into()) });
+    fn pick_wallpaper(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = kadr_platform::dialog::open(Some(window), t("common.choose_background_image"), &[kadr_platform::dialog::Filter { name: t("common.pictures"), extensions: kadr_platform::dialog::PICTURES }], false);
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(paths) = paths.await else { return };
             let Some(path) = paths.into_iter().next() else { return };
             let _ = this.update(cx, |editor, cx| {
                 editor.frame.backdrop = Backdrop::Wallpaper(path);
@@ -1992,9 +1992,13 @@ impl Editor {
         self.finish_text();
         let dir = self.path.parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| crate::settings::Settings::load().screenshot_dir());
         let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned());
-        let picked = cx.prompt_for_new_path(&dir, name.as_deref());
+        let filters = [
+            kadr_platform::dialog::Filter { name: "PNG", extensions: &["png"] },
+            kadr_platform::dialog::Filter { name: t("bundle.project"), extensions: &["kadr"] },
+        ];
+        let picked = kadr_platform::dialog::save(Some(window), t("editor.save_as"), &dir, name.as_deref(), &filters);
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(path))) = picked.await else { return };
+            let Some(path) = picked.await else { return };
             // A name ending in .kadr saves an editable project there.
             let project = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("kadr"));
             let _ = this.update_in(cx, |editor, window, cx| {
@@ -2032,10 +2036,10 @@ impl Editor {
     }
 
     /// A picture from a file, put on top like a dropped one.
-    fn pick_picture(&mut self, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: true, prompt: Some(t("editor.choose_picture").into()) });
+    fn pick_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = kadr_platform::dialog::open(Some(window), t("editor.choose_picture"), &[kadr_platform::dialog::Filter { name: t("common.pictures"), extensions: kadr_platform::dialog::PICTURES }], true);
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(paths) = paths.await else { return };
             let _ = this.update(cx, |editor, cx| {
                 for path in paths {
                     if let Some(picture) = std::fs::read(&path).ok().and_then(|bytes| decode_picture(&bytes)) {
@@ -2215,7 +2219,7 @@ impl Editor {
                 this.set_tool(Tool::Crop, cx);
                 cx.notify();
             })))
-            .child(mode("mode-picture", Icon::from_path("icons/image_plus.svg").size(IconSize::Tool), false, tr!("editor.add_picture_tip", crate::ui::shortcut(kadr_platform::keymap::Command::Paste)).into()).on_click(cx.listener(|this, _, _, cx| this.pick_picture(cx))));
+            .child(mode("mode-picture", Icon::from_path("icons/image_plus.svg").size(IconSize::Tool), false, tr!("editor.add_picture_tip", crate::ui::shortcut(kadr_platform::keymap::Command::Paste)).into()).on_click(cx.listener(|this, _, window, cx| this.pick_picture(window, cx))));
 
         let history = h_flex()
             .gap_0p5()
@@ -3250,7 +3254,7 @@ impl Editor {
                         .child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)),
                 )
                 .tip(Tooltip::text(t("common.your_own_image")))
-                .on_click(cx.listener(|this, _, _, cx| this.pick_wallpaper(cx)))
+                .on_click(cx.listener(|this, _, window, cx| this.pick_wallpaper(window, cx)))
                 .into_any_element(),
         );
 

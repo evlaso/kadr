@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    App, Context, FocusHandle, KeyDownEvent, PathPromptOptions, Window, div,
+    App, Context, FocusHandle, KeyDownEvent, Window, div,
     linear_color_stop, linear_gradient, px,
 };
 use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
@@ -128,12 +128,10 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn pick_folder(&mut self, screenshots: bool, cx: &mut Context<Self>) {
-        let answer = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some(t("settings.choose").into()) });
+    fn pick_folder(&mut self, screenshots: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let answer = kadr_platform::dialog::folder(Some(window), t("settings.choose"));
         cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(mut paths))) = answer.await
-                && let Some(dir) = paths.pop()
-            {
+            if let Some(dir) = answer.await {
                 let _ = this.update(cx, |view, cx| {
                     view.update(cx, |s| {
                         if screenshots {
@@ -525,7 +523,7 @@ fn folder(cx: &mut Context<SettingsView>, dir: PathBuf, custom: bool, screenshot
     h_flex()
         .gap_1()
         .child(div().max_w(px(260. * kit::SCALE)).child(Label::new(shown).size(LabelSize::Small).color(Color::Muted).truncate()))
-        .child(Button::new(if screenshots { "pick-shots" } else { "pick-videos" }, t("settings.choose_folder")).style(ButtonStyle::Subtle).on_click(cx.listener(move |this, _, _, cx| this.pick_folder(screenshots, cx))))
+        .child(Button::new(if screenshots { "pick-shots" } else { "pick-videos" }, t("settings.choose_folder")).style(ButtonStyle::Subtle).on_click(cx.listener(move |this, _, window, cx| this.pick_folder(screenshots, window, cx))))
         .when(custom, |row| {
             row.child(
                 IconButton::new(if screenshots { "reset-shots" } else { "reset-videos" }, IconName::Close)
