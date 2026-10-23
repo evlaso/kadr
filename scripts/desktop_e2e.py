@@ -278,7 +278,8 @@ def overlay(t, warm=False):
     shots.mkdir(exist_ok=True)
     before = set(shots.glob("*.png"))
     t0 = time.monotonic()
-    subprocess.Popen([str(BIN / f"kadr{EXE}"), "shot", "region"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Its output in app.log: it may be the kadr that serves the rest.
+    t.start(BIN / f"kadr{EXE}", "shot", "region")
     found = wait_for(lambda: next((w for w in json.loads(run(SHOT, "windows").stdout) if w["title"] == "kadr-picker"), None), timeout=10)
     if not t.note("the overlay shows" + label, found, ms=round((time.monotonic() - t0) * 1000), window=found and [found["x"], found["y"], found["w"], found["h"]]):
         return
@@ -395,7 +396,7 @@ def window_shot(t):
         return
     (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
     t.log.write_text("")
-    subprocess.Popen([str(BIN / f"kadr{EXE}"), "shot", "smart"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    t.start(BIN / f"kadr{EXE}", "shot", "smart")
     shown = wait_for(lambda: next((w for w in json.loads(run(SHOT, "windows").stdout) if w["title"] == "kadr-picker"), None), timeout=10)
     if not t.note("the overlay shows for a window", shown):
         return

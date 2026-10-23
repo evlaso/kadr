@@ -191,7 +191,13 @@ pub fn window_at(mon: &Mon, (x, y): (f32, f32)) -> Option<u64> {
 /// it alone (its corners transparent), Windows through
 /// Windows.Graphics.Capture.
 pub fn grab_window(id: u64) -> Option<image::RgbaImage> {
+    // Windows: kadr's own Windows.Graphics.Capture frame (xcap's came back
+    // empty, or hung with kadr's main thread busy).
+    #[cfg(windows)]
+    return crate::record::imp::window_shot(id as isize);
+    #[cfg(not(windows))]
     let window = xcap::Window::all().ok()?.into_iter().find(|w| w.id().ok() == Some(id as u32))?;
+    #[cfg(not(windows))]
     window.capture_image().map_err(|e| eprintln!("kadr: window shot: {e}")).ok()
 }
 

@@ -20,7 +20,7 @@ mod imp;
 mod imp;
 #[cfg(target_os = "windows")]
 #[path = "record/wgc.rs"]
-mod imp;
+pub(crate) mod imp;
 
 /// What to record and how.
 #[derive(Clone, Debug)]

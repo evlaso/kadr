@@ -296,6 +296,68 @@ fn repeater(shared: Arc<Shared>, stop: Arc<AtomicBool>, last: Arc<Mutex<Option<i
     })
 }
 
+/// A window by itself, whatever covers it: one frame of it through
+/// Windows.Graphics.Capture (its own frame pool, free-threaded, so nothing
+/// waits on a UI thread), within two seconds. Physical pixels, the DWM's
+/// frame (the invisible resize border cut off).
+pub(crate) fn window_shot(hwnd: isize) -> Option<image::RgbaImage> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    // SAFETY: as in `Session::start`: objects made here, each frame read
+    // before it's let go.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let window = HWND(hwnd as *mut _);
+        let (device, context) = device().ok()?;
+        let dxgi: IDXGIDevice = device.cast().ok()?;
+        let d3d: IDirect3DDevice = CreateDirect3D11DeviceFromDXGIDevice(&dxgi).and_then(|i| i.cast()).ok()?;
+        let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().ok()?;
+        let item: GraphicsCaptureItem = interop.CreateForWindow(window).ok()?;
+        let size = item.Size().ok()?;
+        // Where the DWM's frame sits in the captured surface.
+        let (mut outer, mut frame) = (RECT::default(), RECT::default());
+        let _ = GetWindowRect(window, &mut outer);
+        let framed = DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut frame as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32).is_ok();
+        let (left, top) = if framed { ((frame.left - outer.left).max(0), (frame.top - outer.top).max(0)) } else { (0, 0) };
+        let (width, height) = if framed { (frame.right - frame.left, frame.bottom - frame.top) } else { (size.Width, size.Height) };
+        let (width, height) = (width.min(size.Width - left).max(1), height.min(size.Height - top).max(1));
+        let staging = staging(&device, width as u32, height as u32).ok()?;
+        let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d, DirectXPixelFormat::B8G8R8A8UIntNormalized, 1, size).ok()?;
+        let session = pool.CreateCaptureSession(&item).ok()?;
+        let _ = session.SetIsCursorCaptureEnabled(false);
+        let _ = session.SetIsBorderRequired(false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(Some(tx));
+        pool.FrameArrived(&TypedEventHandler::<Direct3D11CaptureFramePool, windows::core::IInspectable>::new(move |pool, _| {
+            let Some(pool) = pool.as_ref() else { return Ok(()) };
+            let frame = pool.TryGetNextFrame()?;
+            let Some(tx) = tx.lock().unwrap().take() else { return Ok(()) };
+            let access: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
+            let texture: ID3D11Texture2D = access.GetInterface()?;
+            let area = D3D11_BOX { left: left as u32, top: top as u32, front: 0, right: (left + width) as u32, bottom: (top + height) as u32, back: 1 };
+            context.CopySubresourceRegion(&staging, 0, 0, 0, 0, &texture, 0, Some(&area));
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+            let row = width as usize * 4;
+            let mut rgba = Vec::with_capacity(row * height as usize);
+            for y in 0..height as usize {
+                let src = std::slice::from_raw_parts((mapped.pData as *const u8).add(y * mapped.RowPitch as usize), row);
+                rgba.extend(src.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], 255]));
+            }
+            context.Unmap(&staging, 0);
+            let _ = tx.send(rgba);
+            Ok(())
+        }))
+        .ok()?;
+        session.StartCapture().ok()?;
+        let got = rx.recv_timeout(Duration::from_secs(2)).ok();
+        let _ = session.Close();
+        let _ = pool.Close();
+        image::RgbaImage::from_raw(width as u32, height as u32, got?)
+    }
+}
+
 /// A hardware Direct3D 11 device (WARP where there's no GPU) with its context.
 unsafe fn device() -> windows::core::Result<(ID3D11Device, ID3D11DeviceContext)> {
     unsafe {
