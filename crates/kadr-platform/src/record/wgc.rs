@@ -343,8 +343,14 @@ pub(crate) fn window_shot(hwnd: isize) -> Option<image::RgbaImage> {
         let (mut outer, mut frame) = (RECT::default(), RECT::default());
         let _ = GetWindowRect(window, &mut outer);
         let framed = DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut frame as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32).is_ok();
-        let (left, top) = if framed { ((frame.left - outer.left).max(0), (frame.top - outer.top).max(0)) } else { (0, 0) };
-        let (width, height) = if framed { (frame.right - frame.left, frame.bottom - frame.top) } else { (size.Width, size.Height) };
+        // The size is the DWM's frame. The surface is either the whole window
+        // rect (the invisible resize border around the frame) or the frame
+        // itself: only in the first case is there a border to cut off.
+        let (fw, fh) = (frame.right - frame.left, frame.bottom - frame.top);
+        let whole_rect = (size.Width, size.Height) == (outer.right - outer.left, outer.bottom - outer.top);
+        let (left, top) = if framed && whole_rect { ((frame.left - outer.left).max(0), (frame.top - outer.top).max(0)) } else { (0, 0) };
+        let (width, height) = if framed { (fw, fh) } else { (size.Width, size.Height) };
+        eprintln!("kadr: window shot: surface {}x{}, window rect {}x{}, frame {fw}x{fh}", size.Width, size.Height, outer.right - outer.left, outer.bottom - outer.top);
         let (width, height) = (width.min(size.Width - left).max(1), height.min(size.Height - top).max(1));
         let staging = staging(&device, width as u32, height as u32).ok()?;
         let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d, DirectXPixelFormat::B8G8R8A8UIntNormalized, 1, size).ok()?;
