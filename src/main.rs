@@ -26,7 +26,6 @@ mod studio;
 mod studio_editor;
 mod track;
 mod trim;
-mod tray;
 mod ui;
 mod job;
 mod kit;
@@ -273,7 +272,7 @@ fn main() {
     }
     // The tray icon is its own small process, without GPUI.
     if args.first().map(String::as_str) == Some("tray") {
-        return tray::run();
+        return kadr_tray::run();
     }
     if args.first().map(String::as_str) == Some("dev") {
         dev_client(&args);
@@ -330,7 +329,7 @@ fn main() {
         record::init(cx);
         storage::auto();
         platform::ensure_desktop();
-        tray::ensure();
+        kadr_tray::ensure();
         command.run(cx);
 
         cx.spawn(async move |cx| {

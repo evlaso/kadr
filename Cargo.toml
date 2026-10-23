@@ -39,24 +39,9 @@ kadr-raster = { path = "crates/kadr-raster" }
 kadr-ui = { path = "crates/kadr-ui" }
 kadr-platform = { path = "crates/kadr-platform" }
 kadr-media = { path = "crates/kadr-media" }
+kadr-tray = { path = "crates/kadr-tray" }
 crc32fast = "1.5"
 
-# The tray icon speaks StatusNotifierItem over D-Bus (Linux only for now).
-[target.'cfg(target_os = "linux")'.dependencies]
-ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
-
-# On macOS and Windows `kadr tray` holds the icon and the global hotkeys.
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-global-hotkey = "0.9.0"
-tray-icon = "0.26.1"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-dispatch2 = "0.3"
-objc2 = "0.6"
-objc2-app-kit = "0.3.2"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 # For working on kadr and its tests: optimised, incremental, no
 # whole-program pass, so a one-file change builds in seconds.

@@ -337,6 +337,22 @@ fn the_settings_switch_theme() {
     assert!(shown("language"));
 }
 
+/// The tray runs once: a second `kadr-tray` (or `kadr tray`) leaves at once.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_tray_runs_once() {
+    let s = Session::start();
+    let tray = root().join("target/release/kadr-tray");
+    let mut first = s.cmd(tray.to_str().unwrap()).spawn().expect("kadr-tray (just e2e builds it)");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(first.try_wait().expect("the tray").is_none(), "the tray quit on its own");
+    for second in [s.cmd(tray.to_str().unwrap()).status(), s.cmd(KADR).arg("tray").status()] {
+        assert!(second.expect("a second tray").success(), "a second tray leaves quietly");
+    }
+    assert!(first.try_wait().expect("the tray").is_none(), "the first one stays");
+    let _ = first.kill();
+}
+
 /// Scenario 5: a second `kadr edit` opens in the running kadr.
 #[test]
 #[ignore = "e2e: just e2e"]

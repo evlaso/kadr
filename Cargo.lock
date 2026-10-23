@@ -3247,9 +3247,7 @@ dependencies = [
  "async-process",
  "chrono",
  "crc32fast",
- "dispatch2",
  "futures",
- "global-hotkey",
  "gpui-ce",
  "gpui_ce_platform",
  "image",
@@ -3257,18 +3255,14 @@ dependencies = [
  "kadr-media",
  "kadr-platform",
  "kadr-raster",
+ "kadr-tray",
  "kadr-ui",
- "ksni",
  "libc",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
  "palette",
  "resvg",
  "serde_json",
  "smallvec",
  "tiny-skia",
- "tray-icon",
- "windows 0.62.2",
 ]
 
 [[package]]
@@ -3329,6 +3323,24 @@ version = "0.2.0"
 dependencies = [
  "wayland-client",
  "wayland-protocols-wlr",
+]
+
+[[package]]
+name = "kadr-tray"
+version = "0.2.0"
+dependencies = [
+ "dispatch2",
+ "global-hotkey",
+ "kadr-core",
+ "kadr-platform",
+ "ksni",
+ "libc",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "serde_json",
+ "tiny-skia",
+ "tray-icon",
+ "windows 0.62.2",
 ]
 
 [[package]]

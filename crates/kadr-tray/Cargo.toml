@@ -1,0 +1,35 @@
+[package]
+name = "kadr-tray"
+version = "0.2.0"
+edition = "2024"
+description = "kadr's tray icon and global hotkeys: a small process without a UI framework"
+publish = false
+
+[[bin]]
+name = "kadr-tray"
+path = "src/main.rs"
+
+[dependencies]
+kadr-core = { path = "../kadr-core" }
+kadr-platform = { path = "../kadr-platform" }
+serde_json.workspace = true
+tiny-skia.workspace = true
+libc = "0.2"
+
+# The tray icon speaks StatusNotifierItem over D-Bus (Linux), where the
+# hotkeys are the compositor's binds.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
+
+# The menu bar / notification area icon and the global hotkeys elsewhere.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+global-hotkey = "0.9.0"
+tray-icon = "0.26.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3"
+objc2 = "0.6"
+objc2-app-kit = "0.3.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"] }

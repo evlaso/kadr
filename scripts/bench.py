@@ -100,9 +100,9 @@ def kadr_pids(main_only=True):
                 continue
         except OSError:
             continue
-        if not argv or Path(argv[0].decode(errors="replace")).name != "kadr":
+        if not argv or Path(argv[0].decode(errors="replace")).name not in ("kadr", "kadr-tray"):
             continue
-        if main_only and len(argv) > 1 and argv[1] == b"tray":
+        if main_only and (Path(argv[0].decode(errors="replace")).name == "kadr-tray" or (len(argv) > 1 and argv[1] == b"tray")):
             continue
         pids.append(int(p.name))
     return pids
@@ -242,8 +242,9 @@ def measure_editor_rss_and_cpu(image, seconds=30):
 
 
 def measure_tray(idle):
+    """`kadr-tray`, what's installed beside kadr and started at login."""
     stop_all()
-    proc = start("tray", dev_hooks=False)
+    proc = subprocess.Popen([str(BIN.with_name("kadr-tray"))], env=session_env(False), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     time.sleep(idle)
     rss = rss_mb(proc.pid) if proc.poll() is None else None
     stop_all()
@@ -273,7 +274,7 @@ def main():
     a = ap.parse_args()
 
     if not a.no_build:
-        subprocess.run([CARGO, "build", "--profile", "dist"], cwd=ROOT, check=True)
+        subprocess.run([CARGO, "build", "--profile", "dist", "-p", "kadr", "-p", "kadr-tray"], cwd=ROOT, check=True)
     start_session()
     try:
         result = measure_all(a)

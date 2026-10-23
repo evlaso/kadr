@@ -41,7 +41,7 @@ kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `gr
 
 ```sh
 cargo build --profile dist
-install -m755 target/dist/kadr ~/.local/bin/kadr
+install -m755 target/dist/kadr target/dist/kadr-tray ~/.local/bin/
 ```
 
 Add the Hyprland hook: it floats kadr's windows, loads the hotkeys set in kadr's settings, and logs clicks and keys for the studio.

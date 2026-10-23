@@ -2,7 +2,10 @@
 //! specs in Hyprland's form ("CTRL + SHIFT + code:10"), which kadr keeps on
 //! every system: turned into global-hotkey's form (`global`), shown to people
 //! (`label`), made from a pressed key (`spec`). Where they're stored and how
-//! the system gets them is the app's (`hotkeys.rs`).
+//! the system gets them is the app's (`hotkeys.rs`); where they're kept and
+//! reading them (`load`) is here, for the tray too.
+
+use std::path::PathBuf;
 
 /// Something a hotkey can do: a title for the settings and the command.
 pub struct Action {
@@ -122,6 +125,40 @@ pub fn label(spec: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("+")
+}
+
+/// Hyprland's config folder.
+pub fn hypr_dir() -> PathBuf {
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config/hypr")
+}
+
+/// Where kadr keeps its binds: in Hyprland's config on Linux, its own elsewhere.
+pub fn own_file() -> PathBuf {
+    if cfg!(target_os = "linux") { hypr_dir().join("kadr-keys.lua") } else { crate::dirs::config().join("hotkeys.lua") }
+}
+
+/// Where there's no Hyprland config to take them from: Ctrl+Shift and a digit.
+const DEFAULTS: &str = r#"o.bind("CTRL + SHIFT + code:10", "", "kadr shot region")
+o.bind("CTRL + SHIFT + code:11", "", "kadr record")
+o.bind("CTRL + SHIFT + code:12", "", "kadr text")
+o.bind("CTRL + SHIFT + code:13", "", "kadr history")
+o.bind("CTRL + SHIFT + code:14", "", "kadr settings")
+o.bind("CTRL + SHIFT + code:15", "", "kadr shot scroll")
+"#;
+
+/// Hyprland key specs ("CTRL + SHIFT + code:10") for each of `ACTIONS`.
+pub fn load() -> Vec<Vec<String>> {
+    let fallback = || if cfg!(target_os = "linux") { std::fs::read_to_string(hypr_dir().join("bindings.lua")) } else { Ok(DEFAULTS.to_owned()) };
+    let text = std::fs::read_to_string(own_file()).or_else(|_| fallback()).unwrap_or_default();
+    let mut keys = vec![Vec::new(); ACTIONS.len()];
+    for (spec, command) in text.lines().filter_map(parse_bind) {
+        if let Some(i) = ACTIONS.iter().position(|a| a.command == command)
+            && !keys[i].contains(&spec)
+        {
+            keys[i].push(spec);
+        }
+    }
+    keys
 }
 
 #[cfg(test)]

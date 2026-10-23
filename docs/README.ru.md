@@ -41,7 +41,7 @@
 
 ```sh
 cargo build --profile dist
-install -m755 target/dist/kadr ~/.local/bin/kadr
+install -m755 target/dist/kadr target/dist/kadr-tray ~/.local/bin/
 ```
 
 Подключи хук Hyprland: с ним окна kadr плавающие, работают горячие клавиши из настроек kadr, а для студии записываются клики и клавиши.

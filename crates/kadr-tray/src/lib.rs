@@ -1,27 +1,74 @@
-//! `kadr tray`: an icon in the panel's tray. kadr itself exits when idle, so
-//! the icon lives in this small separate process without GPUI: a click opens
-//! the settings, the menu starts captures, each by running `kadr …` like the
-//! hotkeys do. On Linux it's a StatusNotifierItem (the Omarchy shell hosts
-//! it); on macOS and Windows it's the menu bar or notification area icon, and
-//! this process also holds kadr's global hotkeys, so there it runs even with
-//! the icon switched off.
+//! kadr's tray: an icon in the panel's tray, and on macOS and Windows the
+//! global hotkeys. kadr itself exits when idle, so this lives in a small
+//! process of its own with no UI framework (`kadr-tray`, or `kadr tray`): a
+//! click opens the settings, the menu and the hotkeys start captures. A
+//! running kadr gets the command over its socket; otherwise a new one starts.
+//! On Linux the icon is a StatusNotifierItem (the Omarchy shell hosts it) and
+//! the hotkeys are the compositor's binds; on macOS and Windows it's the menu
+//! bar or notification area icon, and the process runs even with the icon
+//! switched off, for the hotkeys.
 
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::PathBuf;
 
-use crate::settings::Settings;
-use crate::util;
+use kadr_core::settings::{Settings, ThemeMode};
+use kadr_platform as platform;
 
 fn lock_path() -> PathBuf {
-    util::runtime_dir().join("kadr-tray.lock")
+    platform::runtime_dir().join("kadr-tray.lock")
 }
 
-/// Run `kadr <args>` as its own process.
+/// The `kadr` binary: this one, or the one beside `kadr-tray`.
+fn kadr_exe() -> OsString {
+    let Ok(exe) = std::env::current_exe() else { return "kadr".into() };
+    let stem = exe.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    if stem != "kadr-tray" {
+        return exe.into();
+    }
+    let sibling = exe.with_file_name(if cfg!(windows) { "kadr.exe" } else { "kadr" });
+    if sibling.exists() { sibling.into() } else { "kadr".into() }
+}
+
+/// `kadr <args>`: to the running kadr over its socket when there is one
+/// (no new process to start), else as a new one.
 fn kadr<S: AsRef<str>>(args: &[S]) {
-    let exe = std::env::current_exe().map(OsString::from).unwrap_or_else(|_| "kadr".into());
-    let mut argv = vec![exe];
-    argv.extend(args.iter().map(|a| OsString::from(a.as_ref())));
-    util::spawn(&argv);
+    let args: Vec<String> = args.iter().map(|a| a.as_ref().to_owned()).collect();
+    if let Some(mut stream) = platform::ipc::connect()
+        && writeln!(stream, "{}", serde_json::to_string(&args).unwrap_or_default()).is_ok()
+    {
+        return;
+    }
+    let mut argv = vec![kadr_exe()];
+    argv.extend(args.into_iter().map(OsString::from));
+    platform::spawn(&argv);
+}
+
+/// A monotonic clock in milliseconds, the same across processes, for the
+/// hotkey → overlay timing.
+fn monotonic_ms() -> u64 {
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: clock_gettime fills the timespec we pass.
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        ts.tv_sec as u64 * 1000 + ts.tv_nsec as u64 / 1_000_000
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: plain GetTickCount64.
+        unsafe { windows::Win32::System::SystemInformation::GetTickCount64() }
+    }
+}
+
+/// Note a hotkey in the tray's log (`hotkey_at=<ms>`), for the bench.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+fn mark_hotkey(command: &str) {
+    let log = kadr_core::dirs::cache().join("kadr-tray.log");
+    let _ = std::fs::create_dir_all(kadr_core::dirs::cache());
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
+        let _ = writeln!(f, "hotkey_at={} command={command}", monotonic_ms());
+    }
 }
 
 /// Held for the life of `kadr tray`: there's only one. The system frees it
@@ -71,9 +118,15 @@ fn running() -> bool {
     claim().is_none()
 }
 
-/// Start the tray icon (when it's switched on in the settings).
+/// Start the tray (when it's switched on in the settings): `kadr-tray` where
+/// it's installed beside kadr, `kadr tray` otherwise.
 pub fn start() {
-    kadr(&["tray"]);
+    let exe = std::env::current_exe().ok();
+    let tray = exe.as_ref().map(|e| e.with_file_name(if cfg!(windows) { "kadr-tray.exe" } else { "kadr-tray" })).filter(|t| t.exists());
+    match tray {
+        Some(tray) => platform::spawn(&[tray.into_os_string()]),
+        None => platform::spawn(&[kadr_exe(), "tray".into()]),
+    };
 }
 
 /// Stop a running `kadr tray` (when it's switched off in the settings).
@@ -82,7 +135,7 @@ pub fn stop() {
     if let Some(pid) = pid
         && running()
     {
-        util::signal(pid, util::Signal::Terminate);
+        platform::signal(pid, platform::Signal::Terminate);
     }
 }
 
@@ -109,9 +162,15 @@ pub fn ensure() {
 /// A viewfinder (four corner brackets and a dot) in the theme's text colour.
 fn pixmap(size: u32) -> Option<tiny_skia::Pixmap> {
     use tiny_skia::{FillRule, LineCap, Paint, PathBuilder, Pixmap, Stroke, Transform};
-    let color = crate::ui::rgb_of(crate::palette::theme_without_gpui().colors.text);
+    let dark = match Settings::load().theme {
+        ThemeMode::Dark => true,
+        ThemeMode::Light => false,
+        ThemeMode::System => platform::prefers_dark().unwrap_or(true),
+    };
+    // The palette's text colour: Sumi Dark's, or the light theme's.
+    let [r, g, b] = if dark { [0xCE, 0xCD, 0xC3] } else { [0x1C, 0x1B, 0x1A] };
     let mut paint = Paint::default();
-    paint.set_color_rgba8((color.r * 255.) as u8, (color.g * 255.) as u8, (color.b * 255.) as u8, 255);
+    paint.set_color_rgba8(r, g, b, 255);
     paint.anti_alias = true;
 
     let s = size as f32;
@@ -145,7 +204,7 @@ fn rgba(size: u32) -> Option<Vec<u8>> {
 
 /// The menu: a label and the `kadr` arguments it runs.
 fn menu() -> [(&'static str, &'static [&'static str]); 5] {
-    use crate::i18n::t;
+    use kadr_core::i18n::t;
     [
         (t("tray.screenshot"), &["shot", "smart"]),
         (t("common.record_screen"), &["record"]),
@@ -169,8 +228,8 @@ mod sni {
     use ksni::{Icon, MenuItem, ToolTip};
 
     use super::{become_tray, kadr, menu, remove, rgba};
-    use crate::i18n::t;
-    use crate::settings::Settings;
+    use kadr_core::i18n::t;
+    use kadr_core::settings::Settings;
 
     struct Tray {
         icon: Vec<Icon>,
@@ -259,9 +318,9 @@ mod desktop {
     use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
     use super::{become_tray, kadr, remove, rgba};
-    use crate::hotkeys;
-    use crate::i18n::t;
-    use crate::settings::Settings;
+    use kadr_core::hotkeys;
+    use kadr_core::i18n::t;
+    use kadr_core::settings::Settings;
 
     thread_local! {
         static TRAY: RefCell<Option<TrayIcon>> = const { RefCell::new(None) };
@@ -339,6 +398,7 @@ mod desktop {
             if e.state == HotKeyState::Pressed
                 && let Some(args) = commands.get(&e.id)
             {
+                super::mark_hotkey(&args.join(" "));
                 kadr(args);
             }
         }));

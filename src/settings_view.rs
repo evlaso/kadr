@@ -12,7 +12,7 @@ use crate::ui::{ButtonLike, Switch, ToggleState, Tooltip, prelude::*};
 use crate::kit;
 use crate::settings::{CARD_SECONDS, FPS, MAX_CARDS, QUALITIES, Settings, Side, ThemeMode};
 use crate::studio::{PADDINGS, ZOOMS};
-use crate::{hotkeys, ocr, palette, storage, tray, util};
+use crate::{hotkeys, ocr, palette, storage, util};
 use crate::i18n::t;
 use kadr_ui::settings::{Effect, SettingsVm, Tab};
 
@@ -274,7 +274,7 @@ impl SettingsView {
                         s.save();
                         // Started over either way: where it also holds the
                         // hotkeys, it keeps running without the icon.
-                        tray::restart();
+                        kadr_tray::restart();
                     }),
                 ),
                 heading(t("settings.thumbnails")),

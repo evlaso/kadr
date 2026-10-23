@@ -18,16 +18,6 @@ pub fn theme(cx: &App) -> Theme {
     built_in(dark)
 }
 
-/// For places without GPUI (the tray): the setting, the desktop's
-/// preference, or dark.
-pub fn theme_without_gpui() -> Theme {
-    built_in(match Settings::load().theme {
-        ThemeMode::Dark => true,
-        ThemeMode::Light => false,
-        ThemeMode::System => crate::platform::prefers_dark().unwrap_or(true),
-    })
-}
-
 /// Apply the theme setting to open windows.
 pub fn refresh(cx: &mut App) {
     let theme = theme(cx);
