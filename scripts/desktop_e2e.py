@@ -72,7 +72,9 @@ def run(*args, check=True, timeout=30):
     """A tool, waited for at most `timeout` seconds (a kadr that never
     answers mustn't hang the job)."""
     try:
-        return subprocess.run([str(a) for a in args], capture_output=True, text=True, check=check, timeout=timeout)
+        # UTF-8 whatever the system's code page (cp1252 on Windows would
+        # read "мир" in kadr's JSON as "Ð¼Ð¸Ñ€").
+        return subprocess.run([str(a) for a in args], capture_output=True, encoding="utf-8", errors="replace", check=check, timeout=timeout)
     except subprocess.TimeoutExpired as e:
         return subprocess.CompletedProcess(e.cmd, 124, "", f"timed out after {timeout} s")
 
