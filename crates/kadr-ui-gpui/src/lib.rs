@@ -90,6 +90,7 @@ fn run_command(command: Command, cx: &mut App) {
         Command::History => history::open(cx),
         Command::Settings => settings_view::open(cx),
         Command::Capture => launcher::toggle(cx),
+        Command::UpdateAvailable(version, page) => cards::show_update(version, page, cx),
     }
 }
 

@@ -33,6 +33,7 @@ Usage:
                                                  (windows, dump, find, click, drag, key, type, state, shot, mem)
   kadr text [image]                              recognize text (in an area or an image) and copy it
   kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+  kadr --version                                 the version
 ";
 
 /// What `kadr shot` takes.
@@ -70,6 +71,9 @@ pub enum Command {
     Settings,
     /// Every mode on one bar.
     Capture,
+    /// A newer release is out (its version and page): from the tray's
+    /// check, not listed in the usage.
+    UpdateAvailable(String, String),
 }
 
 impl Command {
@@ -114,6 +118,10 @@ impl Command {
             Some("history") => Ok(Command::History),
             Some("settings") => Ok(Command::Settings),
             Some("capture") => Ok(Command::Capture),
+            Some("update-available") => match (args.get(1), args.get(2)) {
+                (Some(version), Some(page)) => Ok(Command::UpdateAvailable(version.clone(), page.clone())),
+                _ => Err(crate::tr!("cli.unknown_command", "update-available")),
+            },
             Some("record") => match args.get(1).map(String::as_str) {
                 None => Ok(Command::Record(None, None)),
                 Some("stop") => Ok(Command::RecordStop),

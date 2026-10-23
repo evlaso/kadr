@@ -15,3 +15,4 @@ pub mod i18n;
 pub mod project;
 pub mod settings;
 pub mod storage;
+pub mod update;

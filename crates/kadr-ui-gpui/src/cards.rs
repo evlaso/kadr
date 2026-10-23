@@ -72,6 +72,9 @@ struct CardView {
     text: Option<Option<String>>,
     /// A link in that text (or a QR code), to open from the card.
     link: Option<String>,
+    /// A newer release's version: the card says so, its link is the
+    /// release's page.
+    update: Option<String>,
     /// A job still working on this video: its progress and title. The card
     /// shows the video blurred until the job hands over its result.
     job: Option<(Rc<job::Job>, &'static str)>,
@@ -113,7 +116,7 @@ pub fn show(path: PathBuf, cx: &mut App) {
         };
         match loaded {
             Some((image, height, video)) => {
-                let _ = cx.update(|cx| add(path, CardView { image: Some(image), text: None, link: None, job: None, height, video }, cx));
+                let _ = cx.update(|cx| add(path, CardView { image: Some(image), text: None, link: None, job: None, height, video, update: None }, cx));
             }
             None => util::notify(t("card.couldnt_open_file"), &path.display().to_string()),
         }
@@ -182,14 +185,19 @@ pub fn set_hidden(hidden: bool, cx: &mut App) -> bool {
 
 /// A card with recognized text (copied already), or with "nothing found".
 pub fn show_text(text: Option<String>, link: Option<String>, cx: &mut App) {
-    add(PathBuf::new(), CardView { image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None }, cx);
+    add(PathBuf::new(), CardView { image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None, update: None }, cx);
+}
+
+/// A newer release is out (the tray's check): a card with its page.
+pub fn show_update(version: String, page: String, cx: &mut App) {
+    add(PathBuf::new(), CardView { image: None, text: Some(Some(String::new())), link: Some(page), job: None, height: THUMB_MAX, video: None, update: Some(version) }, cx);
 }
 
 /// A card for a job on `source` (an export, a trim, a GIF): the video's
 /// first frame, blurred, with the job's progress. Returns its id for
 /// `complete`.
 pub fn show_job(job: Rc<job::Job>, title: &'static str, source: PathBuf, cx: &mut App) -> usize {
-    let id = add(source.clone(), CardView { image: None, text: None, link: None, job: Some((job, title)), height: THUMB_MAX, video: None }, cx);
+    let id = add(source.clone(), CardView { image: None, text: None, link: None, job: Some((job, title)), height: THUMB_MAX, video: None, update: None }, cx);
     cx.spawn(async move |cx| {
         if let Some((image, _, _)) = video_preview(&source, cx).await {
             let _ = cx.update(|cx| with_card(id, cx, |card| card.view.image = Some(image)));
@@ -632,12 +640,14 @@ impl CardStack {
         let id = card.id;
         let colors = cx.theme().colors();
         let surface = colors.elevated_surface_background;
-        let (title, body): (&str, String) = match text {
-            Some(text) => (t("ocr.text_copied"), text.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join("\n")),
-            None if !ocr::has_russian() => (t("ocr.no_text_found"), t("ocr.for_russian_text_install_tesseract").into()),
-            None => (t("ocr.no_text_found"), t("ocr.try_selecting_larger_area").into()),
+        let update = card.view.update.as_deref();
+        let (title, body): (String, String) = match text {
+            _ if update.is_some() => (tr!("update.available", update.unwrap_or_default()), t("update.whats_new_on_release_page").into()),
+            Some(text) => (t("ocr.text_copied").into(), text.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join("\n")),
+            None if !ocr::has_russian() => (t("ocr.no_text_found").into(), t("ocr.for_russian_text_install_tesseract").into()),
+            None => (t("ocr.no_text_found").into(), t("ocr.try_selecting_larger_area").into()),
         };
-        let chars = text.map(|t| t.chars().count());
+        let chars = text.filter(|_| update.is_none()).map(|t| t.chars().count());
         let ink = hsla(0., 0., 0.12, 1.);
         let pill = |el: Stateful<Div>| {
             el.flex()
@@ -649,7 +659,8 @@ impl CardStack {
                 .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
                 .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
         };
-        let copy = text.map(|t| t.to_owned());
+        let copy = text.filter(|_| update.is_none()).map(|t| t.to_owned());
+        let link_label = if update.is_some() { t("update.release_page") } else { t("ocr.open_link") };
         let link = card.view.link.clone();
         let hover = div()
             .absolute()
@@ -682,7 +693,7 @@ impl CardStack {
                         .h(px(PILL_H))
                         .gap_1()
                         .child(Icon::from_path("icons/kadr/link.svg").size(IconSize::Small).color(Color::Custom(ink)))
-                        .child(Label::new(t("ocr.open_link")).size(LabelSize::XSmall).color(Color::Custom(ink)))
+                        .child(Label::new(link_label).size(LabelSize::XSmall).color(Color::Custom(ink)))
                         .tip(Tooltip::text(link.clone()))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();

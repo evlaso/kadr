@@ -369,6 +369,8 @@
  "settings.screenshot_size": "Screenshot size",
  "settings.screenshot_size_tip": "1× matches the design pixel for pixel",
  "settings.screen_pixels": "Screen pixels",
+ "settings.check_for_updates": "Check for updates",
+ "settings.tray_looks_for_new_release": "Once a day the tray looks for a new release and shows a card. Nothing is downloaded.",
  "shortcuts.all_modes_on_one_bar": "All modes on one bar",
  "shortcuts.history": "History",
  "shortcuts.record_previous_area": "Record the previous area",
@@ -501,5 +503,8 @@
  "trim.play": "Play",
  "trim.save_gif": "Save GIF",
  "trim.selected": "Selected {}",
- "trim.trimming_video": "Trimming the video"
+ "trim.trimming_video": "Trimming the video",
+ "update.available": "kadr {} is out",
+ "update.whats_new_on_release_page": "What's new and the downloads are on the release page.",
+ "update.release_page": "Release page"
 }

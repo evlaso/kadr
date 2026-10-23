@@ -369,6 +369,8 @@
  "settings.screenshot_size": "Размер скриншота",
  "settings.screenshot_size_tip": "1× — пиксель в пиксель с макетом",
  "settings.screen_pixels": "Пиксели экрана",
+ "settings.check_for_updates": "Проверять обновления",
+ "settings.tray_looks_for_new_release": "Раз в день трей проверяет, вышел ли новый релиз, и показывает карточку. Ничего не скачивается.",
  "shortcuts.all_modes_on_one_bar": "Все режимы на одной панели",
  "shortcuts.history": "История",
  "shortcuts.record_previous_area": "Запись прошлой области",
@@ -501,5 +503,8 @@
  "trim.play": "Проиграть",
  "trim.save_gif": "Сохранить GIF",
  "trim.selected": "Выбрано {}",
- "trim.trimming_video": "Обрезаю видео"
+ "trim.trimming_video": "Обрезаю видео",
+ "update.available": "Вышел kadr {}",
+ "update.whats_new_on_release_page": "Что нового и файлы для загрузки — на странице релиза.",
+ "update.release_page": "Страница релиза"
 }

@@ -36,6 +36,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("-h" | "--help" | "help") => return print!("{USAGE}"),
+        Some("-V" | "--version") => return println!("kadr {}", kadr_core::update::CURRENT),
         Some("install-desktop") => {
             match kadr_platform::install_desktop() {
                 Ok(()) => println!("{}", t("bundle.desktop_installed")),

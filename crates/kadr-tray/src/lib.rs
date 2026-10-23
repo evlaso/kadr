@@ -290,6 +290,7 @@ mod sni {
             return;
         }
         let Some(_instance) = become_tray() else { return };
+        super::watch_for_updates();
         let tray = Tray { icon: [22, 32, 48, 64].into_iter().filter_map(icon).collect() };
         // Started before the panel (autostart, or a session without one),
         // the icon waits for it instead of giving up.
@@ -304,6 +305,30 @@ mod sni {
 
 #[cfg(target_os = "linux")]
 pub use sni::run;
+
+/// Looks for a newer release while the tray runs (SPEC 12.3): at start
+/// when the last look is over an hour old, then once a day; a newer one
+/// gets kadr's card, once. Off in the settings (`check_updates`).
+fn watch_for_updates() {
+    use kadr_core::update::{CURRENT, LATEST_URL, Latest, State};
+    std::thread::spawn(|| {
+        let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let mut at_start = true;
+        loop {
+            let mut state = State::load();
+            if kadr_core::settings::Settings::load().check_updates && state.due(now(), at_start) {
+                if let Some(latest) = platform::fetch(LATEST_URL).and_then(|b| Latest::parse(&b)) {
+                    if state.found(&latest, now(), CURRENT) {
+                        kadr(&["update-available", &latest.version, &latest.notes_url]);
+                    }
+                    state.save();
+                }
+            }
+            at_start = false;
+            std::thread::sleep(std::time::Duration::from_secs(kadr_core::update::AT_START));
+        }
+    });
+}
 
 /// Where kadr finds the warm overlay (`kadr-overlay --serve`).
 pub fn overlay_socket() -> std::path::PathBuf {
@@ -396,6 +421,7 @@ mod desktop {
     /// Hold the hotkeys and the icon until the session ends.
     pub fn run() {
         let Some(_instance) = become_tray() else { return };
+        super::watch_for_updates();
         #[cfg(target_os = "macos")]
         // KADR_KEEP_WARM=0 turns it off for this run (desktop-e2e's cold step).
         if kadr_core::settings::Settings::load().keep_warm && std::env::var_os("KADR_KEEP_WARM").is_none_or(|v| v != "0") {

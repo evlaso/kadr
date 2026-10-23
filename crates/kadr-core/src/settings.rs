@@ -73,6 +73,8 @@ pub struct Settings {
     /// The tray keeps the area overlay running, warm, so it shows at once
     /// (SPEC 3.6): on by default on macOS, where starting it cold is slow.
     pub keep_warm: bool,
+    /// The tray looks for a newer release (`update`) and kadr shows a card.
+    pub check_updates: bool,
     pub max_cards: usize,
     /// None keeps the XDG videos folder.
     pub video_dir: Option<PathBuf>,
@@ -113,6 +115,7 @@ impl Default for Settings {
             card_side: Side::Left,
             tray: true,
             keep_warm: cfg!(target_os = "macos"),
+            check_updates: true,
             max_cards: 4,
             video_dir: None,
             fps: 0,
@@ -154,6 +157,7 @@ impl Settings {
             card_side: if v["card_side"].as_str() == Some("right") { Side::Right } else { Side::Left },
             tray: bool_or("tray", d.tray),
             keep_warm: bool_or("keep_warm", d.keep_warm),
+            check_updates: bool_or("check_updates", d.check_updates),
             max_cards: (num_or("max_cards", d.max_cards as u64) as usize).clamp(1, 8),
             video_dir: dir("video_dir"),
             fps: num_or("fps", d.fps as u64) as u32,
@@ -186,6 +190,7 @@ impl Settings {
             "card_side": if self.card_side == Side::Right { "right" } else { "left" },
             "tray": self.tray,
             "keep_warm": self.keep_warm,
+            "check_updates": self.check_updates,
             "max_cards": self.max_cards,
             "video_dir": dir(&self.video_dir),
             "fps": self.fps,

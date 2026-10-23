@@ -121,6 +121,18 @@ pub mod ipc {
     }
 }
 
+/// A plain GET of `url` through the system's curl (every system kadr runs
+/// on has one, Windows 10 and later too), so no HTTP stack is built in:
+/// the body, or None on any failure.
+pub fn fetch(url: &str) -> Option<Vec<u8>> {
+    let mut command = std::process::Command::new(if cfg!(windows) { "curl.exe" } else { "curl" });
+    command.args(["-fsSL", "--max-time", "20", "--proto", "=https", url]).stdin(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000); // CREATE_NO_WINDOW
+    let out = command.output().ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
 /// Fire-and-forget process, reaped on a helper thread.
 pub fn spawn<S: AsRef<OsStr>>(argv: &[S]) -> Option<u32> {
     let (cmd, args) = argv.split_first()?;

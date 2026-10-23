@@ -298,6 +298,7 @@ impl SettingsView {
                         kadr_tray::restart();
                     }),
                 ),
+                row(t("settings.check_for_updates"), t("settings.tray_looks_for_new_release"), switch("check-updates", s.check_updates, cx, |s, on| s.check_updates = on)),
                 heading(t("settings.thumbnails")),
                 row(t("settings.thumbnail_goes_away_after"),
                     t("settings.stays_while_pointer_over"),
