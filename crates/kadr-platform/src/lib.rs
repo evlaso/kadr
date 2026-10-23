@@ -23,6 +23,8 @@ pub mod dialog;
 pub mod keymap;
 pub mod menu;
 pub mod record;
+#[cfg(target_os = "linux")]
+mod toplevel;
 pub mod style;
 
 #[cfg(not(target_os = "linux"))]

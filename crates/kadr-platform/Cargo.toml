@@ -16,6 +16,11 @@ libc = "0.2"
 rfd = "0.17.2"
 raw-window-handle = "0.6"
 
+# A window by itself on Wayland (toplevel.rs): the standard capture protocols.
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
 # macOS and Windows share one implementation of the clipboard, notifications,
 # the trash, monitors and screenshots (desktop.rs).
 [target.'cfg(not(target_os = "linux"))'.dependencies]

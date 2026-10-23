@@ -299,10 +299,13 @@ pub fn windows_on(mon: &Mon) -> Vec<(u64, (f32, f32, f32, f32))> {
     found.into_iter().map(|(_, id, r)| (id, r)).collect()
 }
 
-/// A window by itself: not on Hyprland yet (no toplevel export here), so
-/// the app cuts it from the screen.
-pub fn grab_window(_id: u64) -> Option<image::RgbaImage> {
-    None
+/// A window by itself, whatever covers it (Hyprland's address as its id),
+/// through the compositor's toplevel capture; None where there's none, and
+/// the app cuts the window from the screen.
+pub fn grab_window(id: u64) -> Option<image::RgbaImage> {
+    let clients: serde_json::Value = serde_json::from_str(&hypr("j/clients")?).ok()?;
+    let client = clients.as_array()?.iter().find(|c| c["address"].as_str().and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok()) == Some(id))?;
+    super::toplevel::grab(client["class"].as_str()?, client["title"].as_str().unwrap_or_default())
 }
 
 pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {

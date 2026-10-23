@@ -3514,6 +3514,8 @@ dependencies = [
  "rfd",
  "serde_json",
  "trash",
+ "wayland-client",
+ "wayland-protocols",
  "windows 0.62.2",
  "xcap",
 ]
