@@ -122,4 +122,4 @@ kadr install-desktop                               тип файлов .kadr, и
 
 ## Лицензия
 
-[MIT](../LICENSE). Сторонние части в комплекте — под своими лицензиями: иконки Lucide (ISC, `data/icons/ui/LICENSE-lucide.txt`), шрифты (SIL OFL 1.1, `data/fonts`) и пропатченный Linux-крейт GPUI CE (Apache-2.0, `vendor/gpui_linux`).
+[MIT](../LICENSE). Сторонние части в комплекте — под своими лицензиями: иконки Lucide (ISC, `data/icons/ui/LICENSE-lucide.txt`), шрифты (SIL OFL 1.1, `data/fonts`), запасные курсоры (Adwaita от GNOME Project, CC BY-SA 3.0, `data/cursors/LICENSE`) и пропатченный Linux-крейт GPUI CE (Apache-2.0, `vendor/gpui_linux`).

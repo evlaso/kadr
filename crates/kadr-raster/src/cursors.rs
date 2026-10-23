@@ -3,8 +3,8 @@
 //! the editor stamps it. The pictures are the system's own (`set_theme`:
 //! the XCursor theme on Linux, NSCursor on macOS, the system cursors on
 //! Windows). Where it has none, and always in the golden tests (no theme is
-//! set there), kadr's own small set is drawn: an arrow, a pointing hand, an
-//! I-beam and an open hand, original drawings in `data/cursors`.
+//! set there), the bundled set is drawn: the Adwaita cursors (GNOME, CC BY-SA
+//! 3.0, `data/cursors/LICENSE`), at 96 pixels, scaled to size.
 
 use std::sync::OnceLock;
 
@@ -15,17 +15,23 @@ use kadr_core::document::cursor;
 /// (No "move": macOS themes draw it as the closed hand.)
 pub const STAMPS: [&str; 8] = ["arrow", "pointer", "text", "grab", "grabbing", "crosshair", "not-allowed", "wait"];
 
-/// kadr's own pictures on a 32-unit canvas, and their hotspots there.
-const OWN: [(&str, &str, (f32, f32)); 4] = [
-    ("arrow", include_str!("../../../data/cursors/arrow.svg"), (5., 3.)),
-    ("pointer", include_str!("../../../data/cursors/pointer.svg"), (12.9, 4.4)),
-    ("text", include_str!("../../../data/cursors/text.svg"), (16., 16.)),
-    ("grab", include_str!("../../../data/cursors/grab.svg"), (15., 15.)),
+/// The bundled pictures (96 pixels square) and their hotspots there, in
+/// `CURSORS`' order.
+const BUNDLED: [(&str, &[u8], (f32, f32)); 13] = [
+    ("arrow", include_bytes!("../../../data/cursors/arrow.png"), (12., 4.)),
+    ("pointer", include_bytes!("../../../data/cursors/pointer.png"), (28., 20.)),
+    ("text", include_bytes!("../../../data/cursors/text.png"), (44., 48.)),
+    ("grab", include_bytes!("../../../data/cursors/grab.png"), (44., 8.)),
+    ("grabbing", include_bytes!("../../../data/cursors/grabbing.png"), (36., 20.)),
+    ("crosshair", include_bytes!("../../../data/cursors/crosshair.png"), (44., 44.)),
+    ("move", include_bytes!("../../../data/cursors/move.png"), (12., 4.)),
+    ("not-allowed", include_bytes!("../../../data/cursors/not-allowed.png"), (48., 48.)),
+    ("wait", include_bytes!("../../../data/cursors/wait.png"), (44., 44.)),
+    ("ew-resize", include_bytes!("../../../data/cursors/ew-resize.png"), (48., 48.)),
+    ("ns-resize", include_bytes!("../../../data/cursors/ns-resize.png"), (48., 52.)),
+    ("nwse-resize", include_bytes!("../../../data/cursors/nwse-resize.png"), (44., 44.)),
+    ("nesw-resize", include_bytes!("../../../data/cursors/nesw-resize.png"), (44., 44.)),
 ];
-
-/// The arrow's height in canvas units: a shape drawn at `height` pixels has
-/// the arrow that tall, and the others in proportion.
-const ARROW_UNITS: f32 = 22.4;
 
 /// The system's cursor for a shape at an arrow height: its picture and hotspot.
 pub type Theme = fn(&str, f32) -> Option<(RgbaImage, (f64, f64))>;
@@ -87,29 +93,43 @@ pub fn render(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))
     own(cursor(name), height)
 }
 
-/// kadr's own picture of the shape: the closed hand drawn as the open one,
-/// what it has no picture for as the arrow.
+/// The bundled picture of the shape (the arrow for a name it lacks), scaled
+/// so the arrow is `height` tall: premultiplied, as the canvas wants.
 fn own(name: &str, height: f32) -> Option<(tiny_skia::Pixmap, (f64, f64))> {
-    let name = if name == "grabbing" { "grab" } else { name };
-    let (_, svg, (hx, hy)) = OWN.iter().find(|(n, _, _)| *n == name).unwrap_or(&OWN[0]);
-    let tree = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()).ok()?;
-    let k = height / ARROW_UNITS;
-    let side = (32. * k).ceil() as u32;
-    let mut pm = tiny_skia::Pixmap::new(side, side)?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(k, k), &mut pm.as_mut());
+    /// The bundled arrow's visible height, its margin aside.
+    fn arrow_height() -> f32 {
+        static H: OnceLock<f32> = OnceLock::new();
+        *H.get_or_init(|| {
+            let Ok(arrow) = image::load_from_memory(BUNDLED[0].1) else { return 96. };
+            let arrow = arrow.to_rgba8();
+            let rows: Vec<u32> = (0..arrow.height()).filter(|&y| (0..arrow.width()).any(|x| arrow.get_pixel(x, y)[3] > 0)).collect();
+            rows.first().zip(rows.last()).map_or(96., |(a, b)| (b - a + 1) as f32)
+        })
+    }
+    let (_, png, (hx, hy)) = BUNDLED.iter().find(|(n, _, _)| *n == name).unwrap_or(&BUNDLED[0]);
+    let picture = image::load_from_memory(png).ok()?.to_rgba8();
+    let k = height / arrow_height();
+    let (w, h) = (((picture.width() as f32 * k).round() as u32).max(1), ((picture.height() as f32 * k).round() as u32).max(1));
+    let scaled = image::imageops::resize(&picture, w, h, image::imageops::FilterType::CatmullRom);
+    let mut pm = tiny_skia::Pixmap::new(w, h)?;
+    for (dst, p) in pm.pixels_mut().iter_mut().zip(scaled.pixels()) {
+        let [r, g, b, a] = p.0;
+        *dst = tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply();
+    }
     Some((pm, ((hx * k) as f64, (hy * k) as f64)))
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn kadr_s_own_set_draws() {
-        for (name, _, _) in super::OWN {
+    fn the_bundled_set_draws() {
+        for (name, _, _) in super::BUNDLED {
             let (pm, _) = super::own(name, 40.).unwrap();
             assert!(pm.pixels().iter().any(|p| p.alpha() == 255), "{name} is empty");
         }
+        assert_eq!(super::BUNDLED.map(|b| b.0), kadr_core::document::CURSORS, "one picture per shape, in order");
         // What it has no picture for falls back to the arrow.
-        assert_eq!(super::own("crosshair", 40.).unwrap().1, super::own("arrow", 40.).unwrap().1);
+        assert_eq!(super::own("help", 40.).unwrap().1, super::own("arrow", 40.).unwrap().1);
     }
 
     /// A stand-in for the system: a box per shape, the arrow 20 tall at

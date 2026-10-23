@@ -122,4 +122,4 @@ kadr install-desktop                               .kadr file type, icon and men
 
 ## License
 
-[MIT](LICENSE). Bundled third-party pieces keep their own licenses: the Lucide icons (ISC, `data/icons/ui/LICENSE-lucide.txt`), the fonts (SIL OFL 1.1, `data/fonts`), and the patched GPUI CE Linux platform crate (Apache-2.0, `vendor/gpui_linux`).
+[MIT](LICENSE). Bundled third-party pieces keep their own licenses: the Lucide icons (ISC, `data/icons/ui/LICENSE-lucide.txt`), the fonts (SIL OFL 1.1, `data/fonts`), the fallback cursors (Adwaita by the GNOME Project, CC BY-SA 3.0, `data/cursors/LICENSE`), and the patched GPUI CE Linux platform crate (Apache-2.0, `vendor/gpui_linux`).
