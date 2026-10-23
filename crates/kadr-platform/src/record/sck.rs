@@ -1,8 +1,11 @@
 //! Recording on macOS: ScreenCaptureKit hands the display's frames (and
 //! what the computer plays, and from macOS 15 the microphone) to an
 //! AVAssetWriter, which encodes H.264 on the media engine and AAC into an
-//! MP4. A pause leaves samples out and shifts the later ones back by the
-//! time it took, so the file has no gap.
+//! MP4. The stream sends a picture only when the screen changes; for the
+//! frames in between (idle ones, with no picture) the last picture is
+//! written again, so the file has a steady frame rate like the other
+//! systems'. A pause leaves samples out and shifts the later ones back by
+//! the time it took, so the file has no gap.
 
 use std::ptr::NonNull;
 use std::sync::mpsc;
@@ -36,6 +39,8 @@ struct Writer {
     video: Retained<AVAssetWriterInput>,
     system: Option<Retained<AVAssetWriterInput>>,
     mic: Option<Retained<AVAssetWriterInput>>,
+    /// The last picture, written again for idle frames.
+    picture: Option<CFRetained<CMSampleBuffer>>,
     /// Told once the first frame started the file.
     first: Option<mpsc::Sender<()>>,
     started: bool,
@@ -60,14 +65,24 @@ impl Shared {
         let mut w = self.0.lock().unwrap();
         // SAFETY: a live sample buffer from the stream, read in its handler.
         unsafe {
-            if w.finished || !buffer.is_valid() || !buffer.data_is_ready() {
-                return;
-            }
-            // Frames with nothing new (the screen didn't change) have no picture.
-            if kind == SCStreamOutputType::Screen && buffer.image_buffer().is_none() {
+            // An idle frame has no data at all; any other has to be ready.
+            let idle = kind == SCStreamOutputType::Screen && buffer.image_buffer().is_none();
+            if w.finished || !buffer.is_valid() || (!idle && !buffer.data_is_ready()) {
                 return;
             }
             let pts = buffer.presentation_time_stamp();
+            // Frames with nothing new (the screen didn't change) have no
+            // picture: the last one again, at this frame's time.
+            let mut again = None;
+            if idle {
+                let Some(last) = &w.picture else { return };
+                let Some(copy) = retimed(last, |_| pts) else { return };
+                again = Some(copy);
+            }
+            let buffer: &CMSampleBuffer = again.as_deref().unwrap_or(buffer);
+            if kind == SCStreamOutputType::Screen && !idle {
+                w.picture = Some(CFRetained::retain(NonNull::from(buffer)));
+            }
             if !w.started {
                 if kind != SCStreamOutputType::Screen || !w.writer.startWriting() {
                     return;
@@ -100,7 +115,7 @@ impl Shared {
             }
             match w.offset {
                 Some(by) => {
-                    if let Some(shifted) = shifted(buffer, by) {
+                    if let Some(shifted) = retimed(buffer, |t| t.subtract(by)) {
                         input.appendSampleBuffer(&shifted);
                     }
                 }
@@ -118,17 +133,17 @@ impl Shared {
     }
 }
 
-/// `buffer` with its times moved `by` earlier.
-unsafe fn shifted(buffer: &CMSampleBuffer, by: CMTime) -> Option<CFRetained<CMSampleBuffer>> {
+/// A copy of `buffer` with each time `to` something else.
+unsafe fn retimed(buffer: &CMSampleBuffer, to: impl Fn(CMTime) -> CMTime) -> Option<CFRetained<CMSampleBuffer>> {
     unsafe {
         let mut count = 0;
         buffer.sample_timing_info_array(0, std::ptr::null_mut(), &mut count);
         let mut timing = vec![CMSampleTimingInfo { duration: CMTime::new(0, 1), presentationTimeStamp: CMTime::new(0, 1), decodeTimeStamp: CMTime::new(0, 1) }; count as usize];
         buffer.sample_timing_info_array(count, timing.as_mut_ptr(), &mut count);
         for t in &mut timing {
-            t.presentationTimeStamp = t.presentationTimeStamp.subtract(by);
+            t.presentationTimeStamp = to(t.presentationTimeStamp);
             if t.decodeTimeStamp.flags.contains(objc2_core_media::CMTimeFlags::Valid) {
-                t.decodeTimeStamp = t.decodeTimeStamp.subtract(by);
+                t.decodeTimeStamp = to(t.decodeTimeStamp);
             }
         }
         let mut out: *mut CMSampleBuffer = std::ptr::null_mut();
@@ -238,6 +253,7 @@ impl Session {
                 video,
                 system,
                 mic: mic_input,
+                picture: None,
                 first: Some(first_tx),
                 started: false,
                 finished: false,

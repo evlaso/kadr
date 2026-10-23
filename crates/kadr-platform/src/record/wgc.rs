@@ -5,7 +5,9 @@
 //! computer plays comes from WASAPI's loopback and the microphone from its
 //! capture endpoint, both as 16-bit 48 kHz stereo, encoded as AAC. Silence
 //! is written where the system plays nothing, so the tracks stay in step.
-//! A pause leaves frames out and shifts the later ones back.
+//! Windows sends a frame only when the screen changes; between them the
+//! last one is written again, so the file has a steady frame rate like the
+//! other systems'. A pause leaves frames out and shifts the later ones back.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -173,9 +175,10 @@ impl Session {
             let (first_tx, first_rx) = std::sync::mpsc::channel();
             let first = Mutex::new(Some(first_tx));
             let frames = shared.clone();
-            let last = Mutex::new(None::<i64>);
-            let mut bytes = vec![0u8; (width * height * 4) as usize];
-            let bytes = Mutex::new(std::mem::take(&mut bytes));
+            // The last frame and its time, shared with the repeater below.
+            let last = Arc::new(Mutex::new(None::<i64>));
+            let bytes = Arc::new(Mutex::new(vec![0u8; (width * height * 4) as usize]));
+            let (frame_last, frame_bytes) = (last.clone(), bytes.clone());
             pool.FrameArrived(&TypedEventHandler::<Direct3D11CaptureFramePool, windows::core::IInspectable>::new(move |pool, _| {
                 let Some(pool) = pool.as_ref() else { return Ok(()) };
                 let frame = pool.TryGetNextFrame()?;
@@ -190,7 +193,7 @@ impl Session {
                 }
                 let Some(time) = w.time(now) else { return Ok(()) };
                 // No more than the frame rate.
-                let mut last = last.lock().unwrap();
+                let mut last = frame_last.lock().unwrap();
                 if last.is_some_and(|l| time - l < frame_time * 9 / 10) {
                     return Ok(());
                 }
@@ -201,7 +204,7 @@ impl Session {
                 context.CopySubresourceRegion(&staging, 0, 0, 0, 0, &texture, 0, Some(&area));
                 let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
                 context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-                let mut out = bytes.lock().unwrap();
+                let mut out = frame_bytes.lock().unwrap();
                 let row = width as usize * 4;
                 for y in 0..height as usize {
                     let src = std::slice::from_raw_parts((mapped.pData as *const u8).add(y * mapped.RowPitch as usize), row);
@@ -223,6 +226,7 @@ impl Session {
             if let Some(stream) = streams.1 {
                 audio.push(audio_thread(shared.clone(), stop.clone(), stream, false));
             }
+            audio.push(repeater(shared.clone(), stop.clone(), last, bytes, frame_time));
             let session = Session { shared, pool, session, stop, audio: Mutex::new(audio) };
             if first_rx.recv_timeout(Duration::from_secs(5)).is_err() {
                 session.shared.0.lock().unwrap().ended = None;
@@ -270,6 +274,26 @@ impl Session {
             shared.end();
         });
     }
+}
+
+/// Writes the last frame again whenever a frame's time has gone by without
+/// a new one (the screen didn't change).
+fn repeater(shared: Arc<Shared>, stop: Arc<AtomicBool>, last: Arc<Mutex<Option<i64>>>, bytes: Arc<Mutex<Vec<u8>>>, frame_time: i64) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let tick = Duration::from_nanos(frame_time as u64 * 100 / 2);
+        while !stop.load(Ordering::SeqCst) {
+            std::thread::sleep(tick);
+            let w = shared.0.lock().unwrap();
+            let Some(now) = w.time(Instant::now()) else { continue };
+            let mut last = last.lock().unwrap();
+            let Some(at) = *last else { continue };
+            if now - at >= frame_time {
+                let at = at + frame_time;
+                w.write(w.video, &bytes.lock().unwrap(), at, frame_time);
+                *last = Some(at);
+            }
+        }
+    })
 }
 
 /// A hardware Direct3D 11 device (WARP where there's no GPU) with its context.

@@ -337,6 +337,13 @@ def mp4_duration(path):
     return None
 
 
+def mp4_frames(path):
+    """The first track's sample count (the video's frames), from its stsz box."""
+    data = path.read_bytes()
+    at = data.find(b"stsz")
+    return int.from_bytes(data[at + 12:at + 16], "big") if at >= 0 else None
+
+
 def record(t):
     """A recording through the system's recorder (kadr_platform::record):
     `kadr record fullscreen`, about three seconds, `kadr record stop`, the
@@ -353,7 +360,11 @@ def record(t):
     t.shot("recording")
     run(BIN / f"kadr{EXE}", "record", "stop", check=False)
     length = wait_for(lambda: mp4_duration(file), timeout=20)
+    frames = length and mp4_frames(file)
     t.note("the recording is saved", length and 2 <= length <= 8, seconds=length and round(length, 2), size=file.stat().st_size if file.exists() else None)
+    # A steady frame rate, like gpu-screen-recorder's on Linux, even with
+    # nothing moving on screen: at least 15 frames a second.
+    t.note("the recording has a steady frame rate", frames and frames >= 15 * length, frames=frames, fps=frames and round(frames / length, 1))
 
 
 def type_text(s):
