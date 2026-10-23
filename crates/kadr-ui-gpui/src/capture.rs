@@ -102,7 +102,7 @@ async fn all_screens(settings: &Settings, cx: &mut AsyncApp) -> Option<PathBuf> 
     let saved = cx
         .background_executor()
         .spawn(async move {
-            let shots: Vec<(Mon, image::RgbaImage)> = util::monitors().into_iter().filter_map(|m| Some((m.clone(), crate::platform::grab_monitor(&m)?))).collect();
+            let shots: Vec<(Mon, image::RgbaImage)> = util::monitors().into_iter().filter_map(|m| Some((m.clone(), picker::grab(&m)?))).collect();
             let (image, scale) = side_by_side(&shots).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
             save_png(image, scale, logical, &target).map_err(std::io::Error::other)
         })

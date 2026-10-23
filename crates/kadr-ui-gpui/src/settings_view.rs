@@ -327,6 +327,7 @@ impl SettingsView {
                         t("settings.screenshot_size_tip"),
                         chips(cx, "shot-size", vec!["1×".into(), t("settings.screen_pixels").into()], Some((!s.logical_size) as usize), |s, i| s.logical_size = i == 0),
                     ),
+                    row(t("settings.pointer_in_screenshots"), t("settings.pointer_in_screenshots_tip"), switch("shot-cursor", s.shot_cursor, cx, |s, on| s.shot_cursor = on)),
                     row(
                         t("settings.self_timer"),
                         t("settings.self_timer_tip"),

@@ -306,7 +306,27 @@ pub fn grab_window(_id: u64) -> Option<image::RgbaImage> {
 }
 
 pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
-    let out = std::process::Command::new("grim").args(["-o", &mon.name, "-t", "ppm", "-"]).output().ok()?;
+    grim(mon, false)
+}
+
+/// The monitor with the pointer in it, as the compositor draws it.
+pub fn grab_monitor_with_cursor(mon: &Mon) -> Option<image::RgbaImage> {
+    grim(mon, true)
+}
+
+/// The shape the pointer has now, as a `cursors` name: grim draws it on
+/// Linux, so none is needed here.
+pub fn pointer_shape() -> Option<&'static str> {
+    None
+}
+
+fn grim(mon: &Mon, cursor: bool) -> Option<image::RgbaImage> {
+    let mut args = vec!["-o", &mon.name, "-t", "ppm"];
+    if cursor {
+        args.push("-c");
+    }
+    args.push("-");
+    let out = std::process::Command::new("grim").args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }

@@ -67,6 +67,8 @@ pub struct Settings {
     /// Screenshots are scaled down to logical pixels (1×), so a pixel of the
     /// picture is a pixel of the design; off keeps every screen pixel.
     pub logical_size: bool,
+    /// Screenshots have the pointer in them.
+    pub shot_cursor: bool,
     /// How long the self-timer counts down (`kadr shot timer`), one of
     /// `TIMER_SECONDS`.
     pub timer_seconds: u32,
@@ -117,6 +119,7 @@ impl Default for Settings {
             window_shadow: true,
             logical_size: true,
             timer_seconds: 3,
+            shot_cursor: false,
             card_seconds: 10,
             card_side: Side::Left,
             tray: true,
@@ -159,6 +162,7 @@ impl Settings {
             name_template: v["name_template"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or(&d.name_template).to_owned(),
             window_shadow: bool_or("window_shadow", d.window_shadow),
             logical_size: bool_or("logical_size", d.logical_size),
+            shot_cursor: bool_or("shot_cursor", d.shot_cursor),
             timer_seconds: Some(num_or("timer_seconds", d.timer_seconds as u64) as u32).filter(|n| TIMER_SECONDS.contains(n)).unwrap_or(d.timer_seconds),
             card_seconds: num_or("card_seconds", d.card_seconds as u64) as u32,
             card_side: if v["card_side"].as_str() == Some("right") { Side::Right } else { Side::Left },
@@ -194,6 +198,7 @@ impl Settings {
             "window_shadow": self.window_shadow,
             "logical_size": self.logical_size,
             "timer_seconds": self.timer_seconds,
+            "shot_cursor": self.shot_cursor,
             "card_seconds": self.card_seconds,
             "card_side": if self.card_side == Side::Right { "right" } else { "left" },
             "tray": self.tray,

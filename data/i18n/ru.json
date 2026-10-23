@@ -368,6 +368,8 @@
  "settings.window_shadow": "Тень окна",
  "settings.screenshot_size": "Размер скриншота",
  "settings.screenshot_size_tip": "1× — пиксель в пиксель с макетом",
+ "settings.pointer_in_screenshots": "Курсор в скриншотах",
+ "settings.pointer_in_screenshots_tip": "Курсор попадает в снимок там, где был",
  "settings.self_timer": "Таймер",
  "settings.self_timer_tip": "Сколько «Таймер» отсчитывает, прежде чем снять экран",
  "settings.screen_pixels": "Пиксели экрана",

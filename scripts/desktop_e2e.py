@@ -378,7 +378,12 @@ def window_shot(t):
     kadr's shadow around it."""
     shots = t.out / "shots"
     before = set(shots.glob("*.png"))
-    win = next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None)
+    # A window of kadr's to take: the editor again (saving closed it).
+    env = dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(shots), OMARCHY_SCREENRECORD_DIR=str(t.out / "videos"))
+    t.start(BIN / f"kadr{EXE}", "edit", t.out / "shot.png", env=env)
+    win = wait_for(lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None), timeout=20)
+    time.sleep(1)
+    win = next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), win)
     if not t.note("the editor's window is there to take", win):
         return
     (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
@@ -403,6 +408,87 @@ def window_shot(t):
     want = [round(ww + 136), round(wh + 136)]
     near = size and all(abs(a - b) <= 8 for a, b in zip(size, want))
     t.note("the window is taken by itself", near and how == "by itself", size=size, expected=want, how=how)
+
+
+def png_pixels(path):
+    """An 8-bit RGB or RGBA PNG's size and its pixels as (r, g, b) rows,
+    without a library."""
+    import zlib
+    data = path.read_bytes()
+    at, idat = 8, b""
+    w = h = depth = kind = 0
+    while at < len(data):
+        n, tag = int.from_bytes(data[at:at + 4], "big"), data[at + 4:at + 8]
+        body = data[at + 8:at + 8 + n]
+        if tag == b"IHDR":
+            w, h, depth, kind = int.from_bytes(body[:4], "big"), int.from_bytes(body[4:8], "big"), body[8], body[9]
+        elif tag == b"IDAT":
+            idat += body
+        at += 12 + n
+    if depth != 8 or kind not in (2, 6):
+        return None
+    bpp = 4 if kind == 6 else 3
+    raw, stride, rows, prev = zlib.decompress(idat), w * bpp, [], bytearray(w * bpp)
+    for y in range(h):
+        f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - bpp] if i >= bpp else 0
+            b, c = prev[i], prev[i - bpp] if i >= bpp else 0
+            if f == 1:
+                line[i] = (line[i] + a) & 255
+            elif f == 2:
+                line[i] = (line[i] + b) & 255
+            elif f == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append([tuple(line[x * bpp:x * bpp + 3]) for x in range(w)])
+        prev = line
+    return w, h, rows
+
+
+def pointer_in_shots(t):
+    """The `shot_cursor` setting: the same fullscreen shot without and with
+    it, the pointer kept still; around the pointer only the second differs."""
+    import platform as plat
+    config = Path.home() / ("Library/Application Support/kadr" if plat.system() == "Darwin" else "AppData/Roaming/kadr")
+    if os.name == "nt" and os.environ.get("APPDATA"):
+        config = Path(os.environ["APPDATA"]) / "kadr"
+    settings = config / "settings.json"
+    old = settings.read_text(encoding="utf-8") if settings.exists() else None
+    shots = t.out / "shots"
+    sx, sy, sw, sh = screen()
+    # Over the desktop, away from the editor and the menu bar.
+    px, py = sx + sw - 120, sy + sh - 160
+    run(POINTER, "move", px, py)
+    taken = []
+    for on in (False, True):
+        current = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
+        current["shot_cursor"] = on
+        config.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps(current), encoding="utf-8")
+        before = set(shots.glob("*.png"))
+        run(BIN / f"kadr{EXE}", "shot", "fullscreen", check=False)
+        taken.append(wait_for(lambda: next(iter(sorted(set(shots.glob("*.png")) - before)), None), timeout=15))
+        time.sleep(0.5)
+    if old is None:
+        settings.unlink(missing_ok=True)
+    else:
+        settings.write_text(old, encoding="utf-8")
+    if not t.note("both shots are taken", all(taken)):
+        return
+    off, on = png_pixels(taken[0]), png_pixels(taken[1])
+    if not off or not on or off[:2] != on[:2]:
+        return t.note("the pointer is in the shot", False, sizes=[off and off[:2], on and on[:2]])
+    w, h, a = off
+    b = on[2]
+    # The shot is 1x: the pointer's logical position is its pixel.
+    x0, y0 = int(px - sx), int(py - sy)
+    near = sum(1 for y in range(max(0, y0 - 4), min(h, y0 + 30)) for x in range(max(0, x0 - 4), min(w, x0 + 24)) if sum(abs(p - q) for p, q in zip(a[y][x], b[y][x])) > 60)
+    far = sum(1 for y in range(0, min(h, 40)) for x in range(0, min(w, 40)) if a[y][x] != b[y][x])
+    t.note("the pointer is in the shot", near > 30 and far == 0, changed_near_pointer=near, changed_far_away=far)
 
 
 def all_screens(t):
@@ -468,6 +554,7 @@ def main():
                 serve.kill()
             window_shot(t)
             all_screens(t)
+            pointer_in_shots(t)
             record(t)
     if proc is not None and proc.poll() is None:
         proc.kill()

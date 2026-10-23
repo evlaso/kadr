@@ -81,8 +81,9 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     // On macOS, the overlay the tray keeps warm freezes the screen itself,
     // its ScreenCaptureKit warmed up; kadr's own grab below when it isn't
     // there or can't.
+    // (It takes no pointer: with the pointer wanted in shots, kadr grabs.)
     #[cfg(target_os = "macos")]
-    if std::env::var("KADR_PICKER").as_deref() != Ok("gpui") {
+    if std::env::var("KADR_PICKER").as_deref() != Ok("gpui") && !crate::settings::Settings::load().shot_cursor {
         let accent = cx.update(|cx| crate::ui::to_rgba(cx.theme().colors().text_accent));
         let screen = kadr_overlay::Screen { output: mon.name.clone(), logical: (mon.w as u32, mon.h as u32), scale: mon.scale, frozen: Arc::new(image::RgbaImage::new(1, 1)), windows: windows.clone(), previous, origin: (mon.x as f64, mon.y as f64) };
         let options = kadr_overlay::Options { snap, color, accent, free: t("picker.free").to_owned(), t: |k| crate::i18n::t(k).to_owned(), pointer: None };
@@ -106,7 +107,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
         }
     }
     let grab_from = std::time::Instant::now();
-    let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
+    let frozen = Arc::new(grab(&mon)?);
     let grab_ms = grab_from.elapsed().as_millis();
     // On Wayland, the overlay's own window: drawn on the CPU, on a thread
     // of its own (SPEC 3.8). GPUI's picker below where it can't show itself,
@@ -279,7 +280,7 @@ pub fn previous() -> Option<Picked> {
     };
     let mons = util::monitors();
     let mon = mons.iter().find(|m| m.name == name).or_else(|| mons.iter().find(|m| m.contains(area.0 + area.2 / 2, area.1 + area.3 / 2)))?.clone();
-    let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
+    let frozen = Arc::new(grab(&mon)?);
     Some(Picked { area, whole: false, window: false, window_id: None, mon, frozen })
 }
 
@@ -653,9 +654,42 @@ impl Render for Picker {
     }
 }
 
+/// The monitor frozen, with the pointer in it when the settings want it
+/// (`shot_cursor`): the compositor draws it on Linux; elsewhere the
+/// system's own cursor picture goes where the pointer is.
+pub fn grab(mon: &Mon) -> Option<image::RgbaImage> {
+    if !crate::settings::Settings::load().shot_cursor {
+        return crate::platform::grab_monitor(mon);
+    }
+    #[cfg(target_os = "linux")]
+    return crate::platform::grab_monitor_with_cursor(mon);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut image = crate::platform::grab_monitor(mon)?;
+        stamp_pointer(&mut image, mon);
+        Some(image)
+    }
+}
+
+/// The pointer drawn into a picture of `mon`, its arrow as tall as the
+/// system's own at that scale.
+#[cfg(not(target_os = "linux"))]
+fn stamp_pointer(image: &mut image::RgbaImage, mon: &Mon) {
+    /// The system arrow's height, in logical pixels.
+    const ARROW: f32 = 18.;
+    let Some((x, y)) = crate::platform::cursor_pos() else { return };
+    let shape = crate::platform::pointer_shape().unwrap_or("arrow");
+    let s = mon.scale as f32;
+    let at = ((x as f32 - mon.x as f32) * s, (y as f32 - mon.y as f32) * s);
+    let (w, h) = image.dimensions();
+    // A screen picture is opaque, so its straight colours are premultiplied ones.
+    let Some(mut pm) = tiny_skia::PixmapMut::from_bytes(&mut **image, w, h) else { return };
+    kadr_raster::cursors::draw(shape, ARROW * s, at, &mut pm);
+}
+
 /// The whole monitor under the pointer, frozen, without picking (a fullscreen shot).
 pub async fn whole_monitor() -> Option<Picked> {
     let mon = util::focused_monitor()?;
-    let frozen = Arc::new(crate::platform::grab_monitor(&mon)?);
+    let frozen = Arc::new(grab(&mon)?);
     Some(Picked { area: (mon.x, mon.y, mon.w, mon.h), whole: true, window: false, window_id: None, mon, frozen })
 }

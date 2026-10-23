@@ -125,6 +125,12 @@ impl Drop for CursorShapes {
     }
 }
 
+/// The shape the pointer has now, as a `cursors` name.
+pub fn pointer_shape() -> Option<&'static str> {
+    let shown = cursors::shown()?;
+    cursors::handles().into_iter().find(|(_, h)| *h == shown).map(|(name, _)| name)
+}
+
 /// The system's cursor for a shape, so the drawn one is the real one, only
 /// bigger: premultiplied RGBA with the arrow `arrow_height` pixels tall,
 /// and its hotspot.

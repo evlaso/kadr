@@ -368,6 +368,8 @@
  "settings.window_shadow": "Window shadow",
  "settings.screenshot_size": "Screenshot size",
  "settings.screenshot_size_tip": "1× matches the design pixel for pixel",
+ "settings.pointer_in_screenshots": "Pointer in screenshots",
+ "settings.pointer_in_screenshots_tip": "The pointer is taken where it was",
  "settings.self_timer": "Self-timer",
  "settings.self_timer_tip": "How long Timer counts down before it takes the screen",
  "settings.screen_pixels": "Screen pixels",

@@ -136,6 +136,11 @@ pub fn theme_cursor(shape: &str, arrow_height: f32) -> Option<(image::RgbaImage,
     cursors::snapshot().as_ref()?.0.picture(shape, arrow_height)
 }
 
+/// The shape the pointer has now, as a `cursors` name.
+pub fn pointer_shape() -> Option<&'static str> {
+    cursors::shown()
+}
+
 /// Takes the system's cursors once, best on the main thread at start.
 pub fn snapshot_cursors() {
     cursors::snapshot();
