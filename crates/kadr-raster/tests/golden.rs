@@ -192,6 +192,14 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
             doc([1, 2, 9, 10, 42, 99].iter().enumerate().map(|(i, &n)| shape(Kind::Counter(n), (150. + i as f32 * 52., 230.), (150. + i as f32 * 52., 230.), 36.)).collect()),
             none.clone(),
         ),
+        // kadr's own cursors (no theme in the tests): the studio's and the
+        // editor's stamps, fixed here whatever the machine's cursors are.
+        (
+            "cursors",
+            (480, 300),
+            doc(["arrow", "pointer", "text", "grab"].iter().enumerate().map(|(i, &n)| shape(Kind::Cursor(n), (130. + i as f32 * 80., 120.), (130. + i as f32 * 80., 120.), 44.)).collect()),
+            none.clone(),
+        ),
         ("blur", (480, 300), doc(vec![shape(Kind::Blur(Hide::Blur), (250., 140.), (450., 280.), 1.)]), none.clone()),
         ("pixelate", (480, 300), doc(vec![shape(Kind::Blur(Hide::Pixelate), (120., 35.), (420., 140.), 1.)]), none.clone()),
         ("spotlight", (480, 300), doc(vec![shape(Kind::Spotlight, (250., 140.), (450., 280.), 1.)]), none.clone()),

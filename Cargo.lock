@@ -3514,6 +3514,7 @@ dependencies = [
  "ab_glyph",
  "image",
  "kadr-core",
+ "resvg",
  "serde_json",
  "tiny-skia 0.12.0",
 ]

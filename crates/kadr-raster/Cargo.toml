@@ -11,4 +11,5 @@ kadr-core = { path = "../kadr-core" }
 image.workspace = true
 serde_json.workspace = true
 tiny-skia.workspace = true
+resvg.workspace = true
 ab_glyph.workspace = true

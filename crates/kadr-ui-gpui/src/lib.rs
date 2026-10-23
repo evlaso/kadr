@@ -55,9 +55,7 @@ pub fn prepare() {
     dev::log_to_stderr();
     platform::set_dirs();
     i18n::set(settings::Settings::load().language);
-    // The cursor stamps and the studio's pointer: the system's own (on
-    // macOS taken here, on the main thread, as AppKit likes).
-    platform::snapshot_cursors();
+    // The cursor stamps and the studio's pointer: the system's own.
     kadr_raster::cursors::set_theme(platform::theme_cursor);
 }
 
@@ -129,6 +127,9 @@ pub fn run(command: Command, listener: platform::ipc::Listener) {
     // kadr quits on its own once idle (below), not when the last overlay closes.
     application().with_assets(kit::Assets).with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
         kit::init(cx);
+        // macOS's cursors, taken on the main thread once the application is
+        // there (before it, AppKit has none to give).
+        platform::snapshot_cursors();
         menubar::init(cx);
         record::init(cx);
         storage::auto();
