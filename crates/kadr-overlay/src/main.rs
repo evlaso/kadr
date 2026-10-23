@@ -2,13 +2,25 @@
 //! and Windows (winit wants the main thread, which kadr's UI has). Reads
 //! what kadr wrote (`kadr_overlay::spec`), shows the overlay, prints one
 //! JSON line with what it ended in; exits 2 when it couldn't show itself.
+//!
+//! `kadr-overlay --serve SOCKET` (macOS): stays up, warm, and takes picks
+//! over the socket, a spec's path in, the outcome's line out; the tray
+//! keeps it running (`keep_warm`).
 
 fn main() {
     kadr_overlay::started();
     let Some(path) = std::env::args_os().nth(1) else {
-        eprintln!("usage: kadr-overlay SPEC.json");
+        eprintln!("usage: kadr-overlay SPEC.json | --serve SOCKET");
         std::process::exit(2);
     };
+    if path == "--serve" {
+        #[cfg(all(unix, not(target_os = "linux")))]
+        if let Some(socket) = std::env::args_os().nth(2) {
+            let _ = kadr_overlay::serve(std::path::Path::new(&socket));
+        }
+        eprintln!("kadr-overlay: --serve needs a socket, and macOS");
+        std::process::exit(2);
+    }
     let Some((screen, options, lang)) = kadr_overlay::spec::read(std::path::Path::new(&path)) else {
         eprintln!("kadr-overlay: can't read {}", std::path::Path::new(&path).display());
         std::process::exit(2);

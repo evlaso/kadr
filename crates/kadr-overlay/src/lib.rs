@@ -80,3 +80,11 @@ pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
     #[cfg(not(target_os = "linux"))]
     desktop::pick(screen, options)
 }
+
+/// Keeps the overlay ready (macOS: its event loop and AppKit started) and
+/// takes picks over `socket`, for as long as the process lives (`keep_warm`,
+/// SPEC 3.6). The program's `--serve`.
+#[cfg(all(unix, not(target_os = "linux")))]
+pub fn serve(socket: &std::path::Path) -> Result<(), ()> {
+    desktop::serve(socket)
+}

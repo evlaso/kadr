@@ -305,6 +305,35 @@ mod sni {
 #[cfg(target_os = "linux")]
 pub use sni::run;
 
+/// Where kadr finds the warm overlay (`kadr-overlay --serve`).
+pub fn overlay_socket() -> std::path::PathBuf {
+    kadr_core::dirs::runtime().join("kadr-overlay.sock")
+}
+
+/// The area overlay kept running beside the tray, warm, so a hotkey's pick
+/// shows at once (`keep_warm`, SPEC 3.6); started again if it ends.
+#[cfg(target_os = "macos")]
+fn keep_overlay_warm() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let overlay = exe.with_file_name("kadr-overlay");
+    if !overlay.exists() {
+        return;
+    }
+    std::thread::spawn(move || {
+        loop {
+            let started = std::time::Instant::now();
+            let ran = std::process::Command::new(&overlay).arg("--serve").arg(overlay_socket()).status();
+            // Not one that keeps failing at once: give up then.
+            if ran.is_err() || started.elapsed() < std::time::Duration::from_secs(2) {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                if started.elapsed() < std::time::Duration::from_secs(8) && ran.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+}
+
 /// The system's tray icon (tray-icon) and kadr's hotkeys (global-hotkey),
 /// both served by the system's event loop on the main thread.
 #[cfg(not(target_os = "linux"))]
@@ -367,6 +396,10 @@ mod desktop {
     /// Hold the hotkeys and the icon until the session ends.
     pub fn run() {
         let Some(_instance) = become_tray() else { return };
+        #[cfg(target_os = "macos")]
+        if kadr_core::settings::Settings::load().keep_warm {
+            super::keep_overlay_warm();
+        }
         #[cfg(target_os = "macos")]
         let app = {
             use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};

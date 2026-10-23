@@ -2,7 +2,9 @@
 //! the whole monitor, above everything (on macOS at the screen saver's
 //! level, over the menu bar and the Dock), drawn on the CPU through
 //! softbuffer. It runs in the `kadr-overlay` program, since winit wants the
-//! main thread, which the app's UI has.
+//! main thread, which the app's UI has: once per pick (`pick`), or kept
+//! running with its event loop warm, taking picks over a socket (`serve`,
+//! macOS), since starting AppKit takes most of a cold start there.
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -21,92 +23,210 @@ use crate::{Options, Screen};
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
-/// Shows the overlay and runs it to its end; Err when it couldn't show
-/// itself.
-pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
-    let mut builder = EventLoop::builder();
+/// Where a pick's outcome goes when it ends.
+type Reply = Box<dyn FnOnce(Option<Outcome>) + Send>;
+
+/// A pick handed to the running loop.
+pub(crate) struct Request {
+    pub screen: Screen,
+    pub options: Options,
+    pub reply: Reply,
+}
+
+fn event_loop() -> Result<EventLoop<Request>, ()> {
+    let mut builder = EventLoop::<Request>::with_user_event();
     #[cfg(target_os = "macos")]
     {
         use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
         // No Dock icon, and the keys come here at once.
         builder.with_activation_policy(ActivationPolicy::Accessory).with_activate_ignoring_other_apps(true);
     }
-    let event_loop = builder.build().map_err(drop)?;
-    let mut model = Model::new((screen.logical.0 as f32, screen.logical.1 as f32), screen.scale as f32);
-    model.windows = screen.windows.clone();
-    model.previous = screen.previous;
-    model.snap = options.snap;
-    model.color = options.color;
-    let mut app = App {
-        screen,
-        options,
-        frozen: Frozen::new(&screen.frozen),
-        model,
-        window: None,
-        surface: None,
-        mods: ModifiersState::empty(),
-        last_press: None,
-        shown_cursor: None,
-        outcome: None,
-        failed: false,
-        presented: false,
+    builder.build().map_err(drop)
+}
+
+/// Shows the overlay once and runs it to its end; Err when it couldn't
+/// show itself.
+pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
+    let event_loop = event_loop()?;
+    let done = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = done.clone();
+    let first = Request {
+        screen: Screen { output: screen.output.clone(), logical: screen.logical, scale: screen.scale, frozen: screen.frozen.clone(), windows: screen.windows.clone(), previous: screen.previous, origin: screen.origin },
+        options: Options { free: options.free.clone(), ..*options },
+        reply: Box::new(move |o| *sink.lock().unwrap() = Some(o)),
     };
+    let mut app = App { first: Some(first), session: None, once: true, failed: false };
     event_loop.run_app(&mut app).map_err(drop)?;
     if app.failed {
         return Err(());
     }
-    Ok(app.outcome.flatten())
+    Ok(done.lock().unwrap().take().flatten())
 }
 
-struct App<'a> {
-    screen: &'a Screen,
-    options: &'a Options,
+/// Keeps the overlay's event loop running and takes picks over `socket`:
+/// a line with a spec's path in (`spec::write`), the outcome's line back.
+#[cfg(unix)]
+pub fn serve(socket: &std::path::Path) -> Result<(), ()> {
+    use std::io::{BufRead, BufReader, Write};
+    let event_loop = event_loop()?;
+    let proxy = event_loop.create_proxy();
+    let _ = std::fs::remove_file(socket);
+    let listener = std::os::unix::net::UnixListener::bind(socket).map_err(drop)?;
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut line = String::new();
+            let Ok(mut reply) = stream.try_clone() else { continue };
+            if BufReader::new(stream).read_line(&mut line).is_err() {
+                continue;
+            }
+            let Some((screen, options, lang)) = crate::spec::read(std::path::Path::new(line.trim())) else {
+                let _ = writeln!(reply, "{}", serde_json::json!({ "error": "can't read the spec" }));
+                continue;
+            };
+            kadr_core::i18n::set(kadr_core::i18n::Lang::from_code(&lang));
+            let options = Options { free: kadr_core::i18n::t("picker.free").to_owned(), ..options };
+            let reply: Reply = Box::new(move |o| {
+                let _ = writeln!(reply, "{}", crate::spec::outcome_line(o));
+            });
+            if proxy.send_event(Request { screen, options, reply }).is_err() {
+                break;
+            }
+        }
+    });
+    let mut app = App { first: None, session: None, once: false, failed: false };
+    event_loop.run_app(&mut app).map_err(drop)
+}
+
+struct App {
+    /// The pick to show once the loop is up (a one-time run).
+    first: Option<Request>,
+    session: Option<Session>,
+    /// Ends the loop after the first pick.
+    once: bool,
+    failed: bool,
+}
+
+/// One pick on screen.
+struct Session {
+    screen: Screen,
+    options: Options,
     frozen: Frozen,
     model: Model,
-    window: Option<Rc<Window>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    window: Rc<Window>,
+    surface: softbuffer::Surface<Rc<Window>, Rc<Window>>,
     mods: ModifiersState,
     last_press: Option<(Instant, (f32, f32))>,
     shown_cursor: Option<Cursor>,
-    outcome: Option<Option<Outcome>>,
-    failed: bool,
     presented: bool,
+    reply: Option<Reply>,
+    /// When it was asked for, for its timing line.
+    asked: Instant,
 }
 
-impl App<'_> {
+impl App {
+    fn start(&mut self, el: &ActiveEventLoop, request: Request) {
+        if self.session.is_some() {
+            // One at a time: a second pick while one is up is cancelled.
+            return (request.reply)(None);
+        }
+        let asked = Instant::now();
+        let Request { screen, options, reply } = request;
+        let (ox, oy) = screen.origin;
+        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+        let mut attrs = Window::default_attributes()
+            .with_title("kadr-picker")
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_window_level(WindowLevel::AlwaysOnTop)
+            .with_position(LogicalPosition::new(ox, oy))
+            .with_inner_size(LogicalSize::new(screen.logical.0 as f64, screen.logical.1 as f64));
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::WindowAttributesExtWindows;
+            attrs = attrs.with_skip_taskbar(true);
+        }
+        let Ok(window) = el.create_window(attrs) else {
+            self.failed = true;
+            reply(None);
+            return if self.once { el.exit() } else {};
+        };
+        let window = Rc::new(window);
+        let window_ms = crate::since_start();
+        #[cfg(target_os = "macos")]
+        above_everything(&window);
+        let surface = softbuffer::Context::new(window.clone()).and_then(|ctx| softbuffer::Surface::new(&ctx, window.clone()));
+        let Ok(surface) = surface else {
+            self.failed = true;
+            reply(None);
+            return if self.once { el.exit() } else {};
+        };
+        eprintln!("kadr-overlay timing: window={window_ms}ms surface={}ms asked_to_window={}ms", crate::since_start(), asked.elapsed().as_millis());
+        window.focus_window();
+        let mut model = Model::new((screen.logical.0 as f32, screen.logical.1 as f32), screen.scale as f32);
+        model.windows = screen.windows.clone();
+        model.previous = screen.previous;
+        model.snap = options.snap;
+        model.color = options.color;
+        let frozen = Frozen::new(&screen.frozen);
+        self.session = Some(Session {
+            screen,
+            options,
+            frozen,
+            model,
+            window: window.clone(),
+            surface,
+            mods: ModifiersState::empty(),
+            last_press: None,
+            shown_cursor: None,
+            presented: false,
+            reply: Some(reply),
+            asked,
+        });
+        if let Some(s) = self.session.as_mut() {
+            s.update_cursor();
+        }
+        window.request_redraw();
+    }
+
     fn end(&mut self, outcome: Option<Outcome>, el: &ActiveEventLoop) {
-        if let Some(o) = outcome {
-            self.outcome = Some(match o {
-                Outcome::Done(None) => None,
-                o => Some(o),
-            });
+        let Some(o) = outcome else { return };
+        let o = match o {
+            Outcome::Done(None) => None,
+            o => Some(o),
+        };
+        // The window goes with the session.
+        if let Some(mut s) = self.session.take()
+            && let Some(reply) = s.reply.take()
+        {
+            reply(o);
+        }
+        if self.once {
             el.exit();
         }
     }
+}
 
+impl Session {
     fn update_cursor(&mut self) {
         let shape = self.model.cursor_shape();
         if self.shown_cursor == Some(shape) {
             return;
         }
-        if let Some(w) = &self.window {
-            w.set_cursor(match shape {
-                Cursor::Crosshair => CursorIcon::Crosshair,
-                Cursor::PointingHand => CursorIcon::Pointer,
-                Cursor::OpenHand => CursorIcon::Grab,
-                Cursor::ClosedHand => CursorIcon::Grabbing,
-                Cursor::Resize(e) if e == LEFT || e == RIGHT => CursorIcon::EwResize,
-                Cursor::Resize(e) if e == TOP || e == BOTTOM => CursorIcon::NsResize,
-                Cursor::Resize(e) if e == LEFT | TOP || e == RIGHT | BOTTOM => CursorIcon::NwseResize,
-                Cursor::Resize(_) => CursorIcon::NeswResize,
-            });
-            self.shown_cursor = Some(shape);
-        }
+        self.window.set_cursor(match shape {
+            Cursor::Crosshair => CursorIcon::Crosshair,
+            Cursor::PointingHand => CursorIcon::Pointer,
+            Cursor::OpenHand => CursorIcon::Grab,
+            Cursor::ClosedHand => CursorIcon::Grabbing,
+            Cursor::Resize(e) if e == LEFT || e == RIGHT => CursorIcon::EwResize,
+            Cursor::Resize(e) if e == TOP || e == BOTTOM => CursorIcon::NsResize,
+            Cursor::Resize(e) if e == LEFT | TOP || e == RIGHT | BOTTOM => CursorIcon::NwseResize,
+            Cursor::Resize(_) => CursorIcon::NeswResize,
+        });
+        self.shown_cursor = Some(shape);
     }
 
     fn draw(&mut self) {
-        let (Some(window), Some(surface)) = (&self.window, self.surface.as_mut()) else { return };
-        let size = window.inner_size();
+        let size = self.window.inner_size();
         let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else { return };
         // The window may come out a pixel off the monitor's mode: the frozen
         // screen follows it.
@@ -115,19 +235,19 @@ impl App<'_> {
             self.frozen = Frozen::new(&resized);
             self.model.scale = size.width as f32 / self.model.screen.0;
         }
-        if surface.resize(w, h).is_err() {
+        if self.surface.resize(w, h).is_err() {
             return;
         }
-        let Ok(mut buffer) = surface.buffer_mut() else { return };
+        let Ok(mut buffer) = self.surface.buffer_mut() else { return };
         // softbuffer's 0RGB words are B G R x in memory, as draw writes.
         let bytes = unsafe { std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 4) };
         let words = Words { keys: draw::keys(&self.model, self.options.t), free: self.options.free.clone() };
         draw::frame(bytes, &self.frozen, &self.model, self.options.accent, &words);
-        window.pre_present_notify();
+        self.window.pre_present_notify();
         let _ = buffer.present();
         if !self.presented {
             self.presented = true;
-            eprintln!("kadr-overlay timing: first_frame={}ms", crate::since_start());
+            eprintln!("kadr-overlay timing: first_frame={}ms asked_to_frame={}ms", crate::since_start(), self.asked.elapsed().as_millis());
         }
     }
 }
@@ -148,86 +268,56 @@ fn key_name(key: &Key) -> Option<String> {
     })
 }
 
-impl ApplicationHandler for App<'_> {
+impl ApplicationHandler<Request> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
+        if let Some(first) = self.first.take() {
+            self.start(el, first);
         }
-        let (ox, oy) = self.screen.origin;
-        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-        let mut attrs = Window::default_attributes()
-            .with_title("kadr-picker")
-            .with_decorations(false)
-            .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_position(LogicalPosition::new(ox, oy))
-            .with_inner_size(LogicalSize::new(self.screen.logical.0 as f64, self.screen.logical.1 as f64));
-        #[cfg(target_os = "windows")]
-        {
-            use winit::platform::windows::WindowAttributesExtWindows;
-            attrs = attrs.with_skip_taskbar(true);
-        }
-        let Ok(window) = el.create_window(attrs) else {
-            self.failed = true;
-            return el.exit();
-        };
-        let window = Rc::new(window);
-        let window_ms = crate::since_start();
-        #[cfg(target_os = "macos")]
-        above_everything(&window);
-        let surface = softbuffer::Context::new(window.clone()).and_then(|ctx| softbuffer::Surface::new(&ctx, window.clone()));
-        let Ok(surface) = surface else {
-            self.failed = true;
-            return el.exit();
-        };
-        eprintln!("kadr-overlay timing: window={window_ms}ms surface={}ms", crate::since_start());
-        window.focus_window();
-        self.window = Some(window.clone());
-        self.surface = Some(surface);
-        self.update_cursor();
-        window.request_redraw();
+    }
+
+    fn user_event(&mut self, el: &ActiveEventLoop, request: Request) {
+        self.start(el, request);
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let scale = self.window.as_ref().map_or(1., |w| w.scale_factor());
+        let Some(s) = self.session.as_mut() else { return };
+        let scale = s.window.scale_factor();
+        let mut outcome = None;
         match event {
-            WindowEvent::RedrawRequested => return self.draw(),
-            WindowEvent::CloseRequested => self.end(Some(Outcome::Done(None)), el),
-            WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
+            WindowEvent::RedrawRequested => return s.draw(),
+            WindowEvent::CloseRequested => outcome = Some(Outcome::Done(None)),
+            WindowEvent::ModifiersChanged(m) => s.mods = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 let p: LogicalPosition<f64> = PhysicalPosition::new(position.x, position.y).to_logical(scale);
-                self.model.motion((p.x as f32, p.y as f32), self.mods.shift_key());
+                s.model.motion((p.x as f32, p.y as f32), s.mods.shift_key());
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => match state {
                 ElementState::Pressed => {
-                    let p = self.model.cursor.unwrap_or_default();
+                    let p = s.model.cursor.unwrap_or_default();
                     let now = Instant::now();
-                    let double = self.last_press.is_some_and(|(at, q)| now - at < DOUBLE_CLICK && (q.0 - p.0).abs() < 4. && (q.1 - p.1).abs() < 4.);
-                    self.last_press = Some((now, p));
-                    self.model.press(p, if double { 2 } else { 1 });
+                    let double = s.last_press.is_some_and(|(at, q)| now - at < DOUBLE_CLICK && (q.0 - p.0).abs() < 4. && (q.1 - p.1).abs() < 4.);
+                    s.last_press = Some((now, p));
+                    s.model.press(p, if double { 2 } else { 1 });
                 }
-                ElementState::Released => {
-                    let outcome = self.model.release();
-                    self.end(outcome, el);
-                }
+                ElementState::Released => outcome = s.model.release(),
             },
-            WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Right, .. } => self.end(Some(Outcome::Done(None)), el),
+            WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Right, .. } => outcome = Some(Outcome::Done(None)),
             WindowEvent::KeyboardInput { event: KeyEvent { logical_key, state, repeat, .. }, .. } => {
                 if let Some(name) = key_name(&logical_key) {
                     if state == ElementState::Pressed {
-                        let outcome = self.model.key(&name, self.mods.shift_key(), self.mods.alt_key(), repeat);
-                        self.end(outcome, el);
+                        outcome = s.model.key(&name, s.mods.shift_key(), s.mods.alt_key(), repeat);
                     } else {
-                        self.model.key_up(&name);
+                        s.model.key_up(&name);
                     }
                 }
             }
             _ => return,
         }
-        self.update_cursor();
-        if let Some(w) = &self.window {
-            w.request_redraw();
+        if outcome.is_some() {
+            return self.end(outcome, el);
         }
+        s.update_cursor();
+        s.window.request_redraw();
     }
 }
 

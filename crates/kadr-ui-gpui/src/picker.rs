@@ -123,6 +123,11 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                 let spec = kadr_overlay::spec::write(&dir, &screen, &options, &lang).ok()?;
                 // Where the time goes before the overlay shows (KADR_DEV's log).
                 eprintln!("kadr overlay timing: grab={grab_ms}ms spec={}ms", spec_from.elapsed().as_millis());
+                // The warm one the tray keeps (macOS), else a new process.
+                #[cfg(unix)]
+                if let Some(outcome) = warm_overlay(&spec) {
+                    return Some(outcome);
+                }
                 let out = std::process::Command::new(&exe).arg(&spec).output().ok()?;
                 eprint!("{}", String::from_utf8_lossy(&out.stderr));
                 kadr_overlay::spec::parse_outcome(&String::from_utf8_lossy(&out.stdout))
@@ -165,6 +170,17 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     });
     let (rect, window) = rx.await.ok().flatten()?;
     to_picked(rect, window, mon, frozen)
+}
+
+/// The pick through the overlay the tray keeps warm, if it's there.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn warm_overlay(spec: &std::path::Path) -> Option<Option<kadr_overlay::Outcome>> {
+    use std::io::{BufRead, BufReader, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(kadr_tray::overlay_socket()).ok()?;
+    writeln!(stream, "{}", spec.display()).ok()?;
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).ok()?;
+    kadr_overlay::spec::parse_outcome(&line)
 }
 
 /// The kadr-overlay program beside kadr's own.

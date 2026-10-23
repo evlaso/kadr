@@ -267,19 +267,21 @@ def typing(t, screen, tool, ww, wh):
     key("escape")
 
 
-def overlay(t):
+def overlay(t, warm=False):
     """The area picker, kadr-overlay's own window on macOS and Windows:
     shown by `kadr shot region`, a box dragged with the real pointer, the
-    screenshot saved at that size."""
-    shots = t.out / "shots"
+    screenshot saved at that size. `warm`: through the overlay kept running
+    (`kadr-overlay --serve`, as the tray does on macOS)."""
+    label = " (warm)" if warm else ""
+    shots = t.out / ("shots-warm" if warm else "shots")
     shots.mkdir(exist_ok=True)
     t0 = time.monotonic()
     subprocess.Popen([str(BIN / f"kadr{EXE}"), "shot", "region"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     found = wait_for(lambda: next((w for w in json.loads(run(SHOT, "windows").stdout) if w["title"] == "kadr-picker"), None), timeout=10)
-    if not t.note("the overlay shows", found, ms=round((time.monotonic() - t0) * 1000), window=found and [found["x"], found["y"], found["w"], found["h"]]):
+    if not t.note("the overlay shows" + label, found, ms=round((time.monotonic() - t0) * 1000), window=found and [found["x"], found["y"], found["w"], found["h"]]):
         return
     time.sleep(0.5)
-    t.shot("overlay")
+    t.shot("overlay-warm" if warm else "overlay")
     sx, sy, sw, sh = screen()
     cx, cy = sx + sw / 2, sy + sh / 2
     run(POINTER, "drag", cx - 200, cy - 120, cx + 200, cy + 120)
@@ -289,17 +291,21 @@ def overlay(t):
         # The PNG's own size, from its header.
         head = saved.read_bytes()[16:24]
         size = [int.from_bytes(head[:4], "big"), int.from_bytes(head[4:], "big")]
-    t.note("the area is saved", saved and size and size[0] >= 390 and size[1] >= 230, size=size)
+    t.note("the area is saved" + label, saved and size and size[0] >= 390 and size[1] >= 230, size=size)
     # Where the time went: kadr's grab and files, the program's own steps,
     # in kadr's log once the overlay ended.
     time.sleep(0.3)
     timing = {}
-    for line in t.log.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "overlay timing:" in line:
-            for part in line.split(":", 1)[1].split():
-                k, _, v = part.partition("=")
-                timing[k] = v
-    t.note("the overlay's timings are logged", timing, **timing)
+    logs = [t.log] + ([t.out / "overlay-serve.log"] if warm else [])
+    for log in logs:
+        if not log.exists():
+            continue
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "overlay timing:" in line:
+                for part in line.split(":", 1)[1].split():
+                    k, _, v = part.partition("=")
+                    timing[k] = v
+    t.note("the overlay's timings are logged" + label, timing, **timing)
 
 
 def type_text(s):
@@ -331,6 +337,18 @@ def main():
         t.shot("saved")
         if shell == "gpui" and not LINUX:
             overlay(t)
+            if platform.system() == "Darwin":
+                # Again, warm: the overlay kept running on the tray's socket.
+                import tempfile
+                socket = Path(tempfile.gettempdir()) / "kadr-overlay.sock"
+                with open(t.out / "overlay-serve.log", "ab") as log:
+                    serve = subprocess.Popen([str(BIN / "kadr-overlay"), "--serve", str(socket)], stdout=log, stderr=log)
+                wait_for(lambda: socket.exists(), timeout=10)
+                time.sleep(1)
+                # Only this run's lines count.
+                t.log.write_text("")
+                overlay(t, warm=True)
+                serve.kill()
     if proc is not None and proc.poll() is None:
         proc.kill()
     outcome = t.finish()
