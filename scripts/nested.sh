@@ -28,9 +28,17 @@ start() {
   printf 'XDG_VIDEOS_DIR="%s"\nXDG_PICTURES_DIR="%s"\n' "$dir/home/videos" "$dir/home/shots" >"$dir/home/config/user-dirs.dirs"
 
   # In the real session: the nested window floats at the output's size on a
-  # special workspace, and keeps getting frames there.
-  hyprctl eval 'hl.window_rule({ match = { class = "^aquamarine$" }, float = true, size = "1920 1080", workspace = "special:kadr-e2e silent", render_unfocused = true })' >/dev/null 2>&1 \
-    || hyprctl keyword windowrule 'float,size 1920 1080,workspace special:kadr-e2e silent,renderunfocused,class:^(aquamarine)$' >/dev/null 2>&1 || true
+  # workspace of its own that's never shown, and keeps getting frames there
+  # at 60 a second (render_unfocused, which special workspaces seem to lose
+  # while one of the session's own, a scratchpad, is shown). The session's
+  # own rate for hidden windows is put back when this one stops.
+  hyprctl eval 'hl.window_rule({ match = { class = "^aquamarine$" }, float = true, size = "1920 1080", workspace = "name:kadr-e2e silent", render_unfocused = true })' >/dev/null 2>&1 \
+    || hyprctl keyword windowrule 'float,size 1920 1080,workspace name:kadr-e2e silent,renderunfocused,class:^(aquamarine)$' >/dev/null 2>&1 || true
+  hyprctl getoption misc:render_unfocused_fps 2>/dev/null | awk '/^int:/ {print $2}' >"$dir/fps.old"
+  # Where the real session is, for stop (run from inside the nested one).
+  printf '%s %s\n' "${XDG_RUNTIME_DIR:-}" "$HYPRLAND_INSTANCE_SIGNATURE" >"$dir/real.session"
+  hyprctl eval 'hl.config({ misc = { render_unfocused_fps = 60 } })' >/dev/null 2>&1 \
+    || hyprctl keyword misc:render_unfocused_fps 60 >/dev/null 2>&1 || true
 
   # A bus that starts no services: with the session's own config it would
   # start the desktop portal on demand, in the real session's environment
@@ -122,6 +130,15 @@ stop() {
       kill "${p#/proc/}" 2>/dev/null || true
     fi
   done
+  # The real session's rate for hidden windows, as it was.
+  local fps real_dir real_sig
+  fps=$(cat "$dir/fps.old" 2>/dev/null || true)
+  read -r real_dir real_sig <"$dir/real.session" 2>/dev/null || true
+  if [ -n "$fps" ] && [ -n "$real_sig" ]; then
+    local r="XDG_RUNTIME_DIR=$real_dir HYPRLAND_INSTANCE_SIGNATURE=$real_sig"
+    env $r hyprctl eval "hl.config({ misc = { render_unfocused_fps = $fps } })" >/dev/null 2>&1 \
+      || env $r hyprctl keyword misc:render_unfocused_fps "$fps" >/dev/null 2>&1 || true
+  fi
   for f in hyprland.pid dbus.pid; do
     [ -f "$dir/$f" ] && kill "$(cat "$dir/$f")" 2>/dev/null || true
   done
