@@ -232,7 +232,9 @@ mod sni {
         }
         let Some(_instance) = become_tray() else { return };
         let tray = Tray { icon: [22, 32, 48, 64].into_iter().filter_map(icon).collect() };
-        if let Err(e) = tray.spawn() {
+        // Started before the panel (autostart, or a session without one),
+        // the icon waits for it instead of giving up.
+        if let Err(e) = tray.assume_sni_available(true).spawn() {
             return eprintln!("kadr: tray icon: {e}");
         }
         loop {

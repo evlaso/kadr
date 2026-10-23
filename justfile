@@ -25,3 +25,8 @@ bench *args:
 # The crates' dependency rule (SPEC.ru.md section 3).
 deps:
     scripts/check-deps.sh
+
+# kadr end to end in a nested Hyprland of its own (scripts/nested.sh; needs a
+# running Hyprland). Each test starts its own session.
+e2e *args:
+    cargo test --release --test e2e -- --ignored --test-threads=1 {{args}}

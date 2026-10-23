@@ -97,6 +97,28 @@ What took the binary from 34.4 to 25.0 MB:
 
 The X11 backend costs about 14 KB, so it stays (best effort, per the spec).
 
+## In a nested Hyprland: the base from now on
+
+2026-10-23. The bench now runs kadr in a nested Hyprland of its own
+(`scripts/nested.sh`: 1920×1080 at scale 1, its own runtime folder and D-Bus
+bus), the same as the e2e tests, so the real session shows nothing and the
+installed kadr and its tray are left alone. Numbers there differ a little
+from the live session's, so `docs/perf.json` is this run's.
+
+| Metric | Budget | Nested |
+|---|---|---|
+| `kadr tray` after 5 min, RSS | ≤ 15 MB | 11.5 MB |
+| Editor with a 4K PNG, RSS | ≤ 250 MB | 233.7 MB |
+| Idle CPU, editor open | ≤ 0.5 % | 0.0 % |
+| Hotkey → overlay, warm / cold | ≤ 80 / 300 ms | 56.8 / 67.2 ms |
+| Edit → window | ≤ 400 ms | 295.3 ms |
+| Binary (dist) | ≤ 25 MB soft, 30 hard | 25.0 MB |
+| Incremental `--release` build | ≤ 20 s | 0.8 s |
+
+All within budget. The tray now waits for a panel that isn't there yet
+(`assume_sni_available`), which the nested session needs (it has none) and
+a login where kadr starts before the panel does too.
+
 ## Profiles: release for work, dist for shipping
 
 2026-10-23, the user's decision: `--release` has no whole-program pass and

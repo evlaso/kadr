@@ -4,11 +4,10 @@
 Writes target/bench.json, prints a table, and fails when a budget is broken;
 warns when a number is more than 15% worse than the base in docs/perf.json.
 
-It drives the real session: the area picker shows on the focused monitor for
-a moment (and is closed with Escape), an editor window opens and closes. Run
-it while not using the machine. Needs grim, wtype, magick, and kadr built
-with `cargo build --profile dist`, what's shipped (it is installed to
-~/.local/bin first).
+It runs kadr in a nested Hyprland of its own (scripts/nested.sh, the same as
+the e2e tests): nothing shows in the real session, and the kadr installed
+there, its tray included, is left alone. Needs a running Hyprland, wtype and
+magick; measures `cargo build --profile dist`, what's shipped.
 
   scripts/bench.py [--runs N] [--idle SECONDS] [--no-build] [--save-base]
 """
@@ -21,16 +20,11 @@ import socket
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "target/dist/kadr"
-INSTALLED = Path.home() / ".local/bin/kadr"
-RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
-SOCK = RUNTIME / "kadr.sock"
-HYPR = RUNTIME / "hypr" / os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "") / ".socket.sock"
 TICK = os.sysconf("SC_CLK_TCK")
 CARGO = shutil.which("cargo") or str(Path.home() / ".cargo/bin/cargo")
 
@@ -49,9 +43,30 @@ BUDGETS = {
 SOFT = {"binary_mb": 25}
 
 
+# The nested session's environment (scripts/nested.sh start), set in main.
+SESSION = {}
+
+
+def session_path(*parts):
+    return Path(SESSION["XDG_RUNTIME_DIR"], *parts)
+
+
+def start_session():
+    out = subprocess.run([str(ROOT / "scripts/nested.sh"), "start"], check=True, capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        if line.startswith("export ") and "=" in line:
+            k, v = line[len("export "):].split("=", 1)
+            SESSION[k] = v
+
+
+def stop_session():
+    if "KADR_E2E_DIR" in SESSION:
+        subprocess.run([str(ROOT / "scripts/nested.sh"), "stop", SESSION["KADR_E2E_DIR"]], check=False)
+
+
 def hypr(request):
     with socket.socket(socket.AF_UNIX) as s:
-        s.connect(str(HYPR))
+        s.connect(str(session_path("hypr", SESSION["HYPRLAND_INSTANCE_SIGNATURE"], ".socket.sock")))
         s.sendall(request.encode())
         out = b""
         while chunk := s.recv(65536):
@@ -64,7 +79,7 @@ def dev(*args):
     try:
         with socket.socket(socket.AF_UNIX) as s:
             s.settimeout(2)
-            s.connect(str(SOCK))
+            s.connect(str(session_path("kadr.sock")))
             s.sendall((json.dumps(["dev", *args]) + "\n").encode())
             line = s.makefile().readline()
         return json.loads(line) if line else None
@@ -73,13 +88,16 @@ def dev(*args):
 
 
 def kadr_pids(main_only=True):
-    """kadr processes; the main ones (not `kadr tray`) by default."""
+    """The session's kadr processes; the main ones (not `kadr tray`) by default."""
     pids = []
+    mark = f"XDG_RUNTIME_DIR={SESSION['XDG_RUNTIME_DIR']}".encode()
     for p in Path("/proc").iterdir():
         if not p.name.isdigit():
             continue
         try:
             argv = (p / "cmdline").read_bytes().split(b"\0")
+            if mark not in (p / "environ").read_bytes().split(b"\0"):
+                continue
         except OSError:
             continue
         if not argv or Path(argv[0].decode(errors="replace")).name != "kadr":
@@ -103,22 +121,31 @@ def cpu_ticks(pid):
 
 
 def stop_all():
-    subprocess.run(["pkill", "-x", "kadr"], check=False)
+    """End the session's kadr processes (the real session's are left be)."""
+    for pid in kadr_pids(main_only=False):
+        try:
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
     for _ in range(200):
         if not kadr_pids(main_only=False):
             break
         time.sleep(0.01)
     try:
-        SOCK.unlink()
+        session_path("kadr.sock").unlink()
     except FileNotFoundError:
         pass
 
 
+def session_env(dev_hooks=True):
+    env = dict(os.environ, **SESSION)
+    if not dev_hooks:
+        env.pop("KADR_DEV", None)
+    return env
+
+
 def start(*args, dev_hooks=True):
-    env = dict(os.environ)
-    if dev_hooks:
-        env["KADR_DEV"] = "1"
-    return subprocess.Popen([str(INSTALLED), *args], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return subprocess.Popen([str(BIN), *args], env=session_env(dev_hooks), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
 def wait_for(check, timeout=5.0, step=0.002):
@@ -151,20 +178,13 @@ def any_picker():
 
 
 def close_picker():
-    subprocess.run(["wtype", "-k", "Escape"], check=False)
+    subprocess.run(["wtype", "-k", "Escape"], env=session_env(), check=False)
     wait_for(lambda: any_picker() is None, timeout=3)
 
 
 def editor_ready():
     v = dev("state")
     return bool(v and v.get("ok") and (v["result"].get("view") or {}).get("image"))
-
-
-def close_windows():
-    """Close kadr's windows the way Hyprland would."""
-    for c in hypr("j/clients"):
-        if c.get("pid") in kadr_pids():
-            subprocess.run(["hyprctl", "eval", f'hl.dispatch(hl.dsp.window.close({{ window = "address:{c["address"]}" }}))'], capture_output=True, check=False)
 
 
 def measure_cold_overlay():
@@ -185,7 +205,7 @@ def measure_warm_overlay(image):
     main = start("edit", image)
     wait_for(editor_ready, timeout=10)
     t0 = time.monotonic()
-    subprocess.Popen([str(INSTALLED), "shot", "region"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen([str(BIN), "shot", "region"], env=session_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = wait_for(lambda: picker_up(main.pid))
     ms = (time.monotonic() - t0) * 1000 if ok else None
     close_picker()
@@ -254,11 +274,17 @@ def main():
 
     if not a.no_build:
         subprocess.run([CARGO, "build", "--profile", "dist"], cwd=ROOT, check=True)
-    stop_all()
-    shutil.copy2(BIN, INSTALLED)
+    start_session()
+    try:
+        result = measure_all(a)
+    finally:
+        stop_session()
+    report(a, result)
 
-    tmp = Path(tempfile.mkdtemp(prefix="kadr-bench-"))
-    image = str(tmp / "4k.png")
+
+def measure_all(a):
+    # Goes with the session's folder.
+    image = str(session_path("4k.png"))
     # A 4K screenshot-like picture (noise, so it doesn't compress to nothing).
     subprocess.run(["magick", "-size", "3840x2160", "plasma:fractal", "-seed", "7", image], check=True)
 
@@ -278,10 +304,10 @@ def main():
         # Working builds are --release; dist is the slow, shipped one.
         subprocess.run([CARGO, "build", "--release"], cwd=ROOT, check=True, capture_output=True)
         result["incremental_build_s"] = round(measure_build("release"), 1)
+    return result
 
-    # Leave the tray as it was before.
-    subprocess.Popen([str(INSTALLED), "tray"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
+def report(a, result):
     out = {"when": time.strftime("%Y-%m-%d %H:%M"), "commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip(), "tray_idle_s": a.idle, "runs": a.runs, "metrics": result}
     (ROOT / "target").mkdir(exist_ok=True)
     (ROOT / "target/bench.json").write_text(json.dumps(out, indent=2) + "\n")

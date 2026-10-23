@@ -1,0 +1,289 @@
+//! End to end: the real kadr binary in a nested Hyprland of its own
+//! (`scripts/nested.sh`), driven through its dev hooks and checked by what
+//! it writes and shows. `just e2e`; each test starts a session of its own.
+//!
+//! They're ignored in plain `cargo test` (they need a running Hyprland to
+//! nest in, and take seconds each).
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use image::RgbaImage;
+use serde_json::Value;
+
+const KADR: &str = env!("CARGO_BIN_EXE_kadr");
+
+fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// A nested Hyprland with kadr's folders, stopped when dropped.
+struct Session {
+    dir: PathBuf,
+    env: Vec<(String, String)>,
+}
+
+impl Session {
+    fn start() -> Session {
+        let out = Command::new(root().join("scripts/nested.sh")).arg("start").stderr(Stdio::inherit()).output().expect("scripts/nested.sh");
+        assert!(out.status.success(), "the nested session didn't start");
+        let env: Vec<(String, String)> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.strip_prefix("export ")?.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
+            .collect();
+        let dir = PathBuf::from(&env.iter().find(|(k, _)| k == "KADR_E2E_DIR").expect("KADR_E2E_DIR").1);
+        Session { dir, env }
+    }
+
+    fn var(&self, key: &str) -> PathBuf {
+        PathBuf::from(&self.env.iter().find(|(k, _)| k == key).unwrap_or_else(|| panic!("{key}")).1)
+    }
+
+    /// A command run inside the session.
+    fn cmd(&self, program: &str) -> Command {
+        let mut c = Command::new(program);
+        c.envs(self.env.iter().map(|(k, v)| (k, v)));
+        c.stdin(Stdio::null());
+        c
+    }
+
+    /// `kadr <args>` in the background (it stays to serve its windows).
+    fn spawn(&self, args: &[&str]) {
+        let log = std::fs::File::create(self.dir.join("kadr.log")).ok();
+        let mut c = self.cmd(KADR);
+        c.args(args).stdout(Stdio::null());
+        if let Some(log) = log {
+            c.stderr(log);
+        }
+        c.spawn().expect("kadr");
+    }
+
+    /// `kadr dev <args>`: the answer's result, or a panic with its error.
+    fn dev(&self, args: &[&str]) -> Value {
+        let out = self.cmd(KADR).arg("dev").args(args).output().expect("kadr dev");
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| panic!("kadr dev {args:?}: {}", String::from_utf8_lossy(&out.stderr)));
+        assert_eq!(v["ok"], true, "kadr dev {args:?}: {v}");
+        v["result"].clone()
+    }
+
+    /// The same, None while kadr isn't there yet or says no.
+    fn try_dev(&self, args: &[&str]) -> Option<Value> {
+        let out = self.cmd(KADR).arg("dev").args(args).output().ok()?;
+        let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+        (v["ok"] == true).then(|| v["result"].clone())
+    }
+
+    /// The window of this kind, once it's up.
+    fn window(&self, kind: &str) -> Value {
+        wait(Duration::from_secs(10), || self.try_dev(&["windows"])?.as_array()?.iter().find(|w| w["kind"] == kind).cloned()).unwrap_or_else(|| panic!("no {kind} window"))
+    }
+
+    /// The screen, or an area of it, as the compositor has it.
+    fn grab(&self, area: Option<(u32, u32, u32, u32)>) -> RgbaImage {
+        let path = self.dir.join("grab.png");
+        let mut c = self.cmd("grim");
+        if let Some((x, y, w, h)) = area {
+            c.args(["-g", &format!("{x},{y} {w}x{h}")]);
+        }
+        assert!(c.arg(&path).status().expect("grim").success(), "grim");
+        image::open(&path).expect("grab").to_rgba8()
+    }
+
+    /// kadr's main process (not the tray), the session's only one.
+    fn kadr_pids(&self) -> Vec<u32> {
+        let mut pids = Vec::new();
+        for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+            let Ok(env) = std::fs::read(entry.path().join("environ")) else { continue };
+            let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else { continue };
+            let ours = env.split(|&b| b == 0).any(|kv| kv == format!("XDG_RUNTIME_DIR={}", self.dir.display()).as_bytes());
+            let argv: Vec<&[u8]> = cmdline.split(|&b| b == 0).collect();
+            let kadr = argv.first().is_some_and(|a| a.ends_with(b"kadr")) && argv.get(1).is_none_or(|a| *a != b"tray" && *a != b"dev");
+            if ours && kadr {
+                pids.push(pid);
+            }
+        }
+        pids
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let _ = Command::new(root().join("scripts/nested.sh")).arg("stop").arg(&self.dir).status();
+    }
+}
+
+fn wait<T>(timeout: Duration, mut f: impl FnMut() -> Option<T>) -> Option<T> {
+    let end = Instant::now() + timeout;
+    loop {
+        if let Some(v) = f() {
+            return Some(v);
+        }
+        if Instant::now() > end {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// How alike two pictures are: the share of pixels within 8 of each other in
+/// every channel.
+fn alike(a: &RgbaImage, b: &RgbaImage) -> f64 {
+    assert_eq!(a.dimensions(), b.dimensions(), "sizes differ");
+    let same = a.pixels().zip(b.pixels()).filter(|(p, q)| (0..4).all(|i| (p.0[i] as i32 - q.0[i] as i32).abs() <= 8)).count();
+    same as f64 / (a.width() * a.height()) as f64
+}
+
+/// Mean brightness, 0..1.
+fn brightness(img: &RgbaImage) -> f64 {
+    img.pixels().map(|p| (p.0[0] as f64 + p.0[1] as f64 + p.0[2] as f64) / 765.).sum::<f64>() / (img.width() * img.height()) as f64
+}
+
+fn fixture(session: &Session, name: &str) -> PathBuf {
+    let path = session.dir.join(name);
+    std::fs::copy(root().join("tests/golden/cases/arrow/base.png"), &path).expect("fixture");
+    path
+}
+
+/// The newest file in a folder.
+fn newest(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir).ok()?.flatten().max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok()).map(|e| e.path())
+}
+
+/// Scenario 1: the hotkey's command brings the picker up in time, a drag
+/// picks an area, and the saved screenshot is that area of the screen.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn an_area_screenshot_is_what_was_on_screen() {
+    let s = Session::start();
+    // Something to take a picture of: a pinned picture in the middle.
+    let picture = fixture(&s, "pinned.png");
+    s.spawn(&["pin", picture.to_str().unwrap()]);
+    s.window("kadr-pin");
+    std::thread::sleep(Duration::from_millis(300));
+    let area = (760, 420, 400, 240);
+    let before = s.grab(Some(area));
+
+    let t0 = Instant::now();
+    s.spawn(&["shot", "region"]);
+    let picker = s.window("kadr-picker");
+    let shown = t0.elapsed();
+    assert!(shown < Duration::from_millis(300), "the picker took {shown:?}");
+
+    let id = picker["id"].to_string();
+    s.dev(&["drag", &format!("{},{}", area.0, area.1), &format!("{},{}", area.2, area.3), &id]);
+    let shots = s.var("OMARCHY_SCREENSHOT_DIR");
+    let saved = wait(Duration::from_secs(5), || newest(&shots).filter(|p| p.extension().is_some_and(|e| e == "png"))).expect("no screenshot saved");
+    std::thread::sleep(Duration::from_millis(200));
+    let shot = image::open(&saved).expect("the screenshot").to_rgba8();
+    let share = alike(&shot, &before);
+    assert!(share > 0.99, "the screenshot differs from the screen: {:.1}% alike", share * 100.);
+}
+
+/// Scenario 2: draw an arrow in the editor and save; the file is what the
+/// rasteriser makes of the drawing kept with it (the golden tests' layer).
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_editor_saves_what_the_rasteriser_draws() {
+    let s = Session::start();
+    let path = fixture(&s, "shot.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    s.dev(&["click", "tool-a"]);
+    s.dev(&["drag", "900,480", "160,90"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["shapes"].as_array().map(Vec::len), Some(1), "one arrow drawn: {state}");
+    assert_eq!(state["view"]["shapes"][0]["kind"], "arrow");
+    s.dev(&["key", "ctrl-s"]);
+
+    // Saved, with its drawing kept alongside for the next edit.
+    kadr_core::dirs::set(kadr_core::dirs::Dirs {
+        config: s.var("XDG_CONFIG_HOME").join("kadr"),
+        cache: s.var("XDG_CACHE_HOME").join("kadr"),
+        data: s.var("XDG_DATA_HOME").join("kadr"),
+        pictures: s.var("OMARCHY_SCREENSHOT_DIR"),
+        videos: s.dir.join("home/videos"),
+        runtime: s.dir.clone(),
+    });
+    let restored = wait(Duration::from_secs(5), || {
+        let bytes = std::fs::read(&path).ok()?;
+        kadr_core::project::load(&path, &bytes)
+    })
+    .expect("no drawing kept with the saved file");
+    let base = image::load_from_memory(&restored.base).expect("base").to_rgba8();
+    let expected = kadr_raster::render(&base, &restored.doc, &restored.frame).expect("render");
+    let saved = image::open(&path).expect("saved").to_rgba8();
+    let share = alike(&saved, &expected);
+    assert!(share > 0.999, "the saved file isn't the rasteriser's: {:.2}% alike", share * 100.);
+}
+
+/// Scenario 3, its studio half: a recording exported through the studio has
+/// the layout's size and the recording's length. (Recording itself isn't
+/// here: gpu-screen-recorder captures the real screen, not a nested one.)
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_studio_exports_a_recording() {
+    let s = Session::start();
+    let video = s.dir.join("home/videos/rec.mp4");
+    let made = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-t", "3", "-pix_fmt", "yuv420p"])
+        .arg(&video)
+        .status()
+        .expect("ffmpeg");
+    assert!(made.success());
+    s.spawn(&["studio", video.to_str().unwrap(), "--render"]);
+    let out = video.with_file_name("rec-studio.mp4");
+    let probe = wait(Duration::from_secs(60), || {
+        let o = Command::new("ffprobe").args(["-v", "error", "-show_entries", "stream=width,height:format=duration", "-of", "json"]).arg(&out).output().ok()?;
+        let v: Value = serde_json::from_slice(&o.stdout).ok()?;
+        // Only once it's whole: a duration means the file is finished.
+        v["format"]["duration"].as_str()?.parse::<f64>().ok().map(|d| (d, v))
+    })
+    .expect("no export");
+    let (duration, v) = probe;
+    assert!((duration - 3.).abs() < 0.2, "lasts {duration} s");
+    let (w, h) = (v["streams"][0]["width"].as_u64().unwrap_or(0), v["streams"][0]["height"].as_u64().unwrap_or(0));
+    assert!(w >= 1280 && h >= 720 && w % 2 == 0 && h % 2 == 0, "{w}×{h}");
+}
+
+/// Scenario 4: the theme switch in the settings changes the window from dark
+/// to light (by brightness: the system font's glyphs differ by machine).
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_settings_switch_theme() {
+    let s = Session::start();
+    s.spawn(&["settings"]);
+    let w = s.window("kadr-settings");
+    let id = w["id"].to_string();
+    let shot = |name: &str| {
+        std::thread::sleep(Duration::from_millis(300));
+        let path = s.dir.join(name);
+        s.dev(&["shot", path.to_str().unwrap(), &id]);
+        image::open(&path).expect("shot").to_rgba8()
+    };
+    s.dev(&["click", "theme-Dark", &id]);
+    let dark = brightness(&shot("dark.png"));
+    s.dev(&["click", "theme-Light", &id]);
+    let light = brightness(&shot("light.png"));
+    assert!(dark < 0.3 && light > 0.7, "dark {dark:.2}, light {light:.2}");
+}
+
+/// Scenario 5: a second `kadr edit` opens in the running kadr.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn one_kadr_serves_every_call() {
+    let s = Session::start();
+    let (a, b) = (fixture(&s, "a.png"), fixture(&s, "b.png"));
+    s.spawn(&["edit", a.to_str().unwrap()]);
+    s.window("kadr-editor");
+    s.spawn(&["edit", b.to_str().unwrap()]);
+    let two = wait(Duration::from_secs(5), || {
+        let n = s.try_dev(&["windows"])?.as_array()?.iter().filter(|w| w["kind"] == "kadr-editor").count();
+        (n == 2).then_some(())
+    });
+    assert!(two.is_some(), "the second editor didn't open");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(s.kadr_pids().len(), 1, "more than one kadr: {:?}", s.kadr_pids());
+}
