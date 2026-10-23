@@ -249,7 +249,8 @@ and at the window being on screen.
 **2026-10-23: kadr stays on GPUI CE** (the user's call after these runs and
 a hand on the editor). iced met rules 1 and 2 and is the fallback should GPUI
 CE stall; Tauri failed rule 1. Per §9.4 the spike is removed: branches
-`spike/iced` (last at 07ecd12) and `spike/tauri` (4a8b070) are deleted, the numbers above and
-`scripts/spike.py` stay to measure a candidate again. The GPUI app keeps
+`spike/iced` (last at 07ecd12) and `spike/tauri` (4a8b070) are deleted, the numbers above stay
+(the spike's script, `scripts/spike.py`, went in the repository's clean-up;
+it's in the history). The GPUI app keeps
 what the spike asked of it: the view-models in `kadr-ui` and the desktop
 e2e on macOS and Windows.

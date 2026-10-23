@@ -1,12 +1,14 @@
 name: desktop-e2e
 
 # The pointer e2e test on the real macOS and Windows desktops: kadr's editor
-# (and, on branch spike/iced, the iced spike's) opened, a box drawn with a
-# real pointer, Ctrl+S, the file checked; screenshots of each step are kept
-# as artifacts. By hand only (Actions → desktop-e2e → Run workflow, on main
-# or spike/iced): macOS and Windows minutes cost more on a private repository.
+# opened, a box drawn with a real pointer, text typed with the system's keys,
+# a pick from the system's menu, Ctrl+S, an area taken through the overlay;
+# screenshots of each step are kept as artifacts. By hand (Actions →
+# desktop-e2e → Run workflow) and on a release tag.
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 jobs:
   e2e:
@@ -26,8 +28,6 @@ jobs:
       - name: Build kadr and the test tools
         run: |
           cargo build --release --locked -p kadr -p kadr-testkit -p kadr-overlay
-          # The spike with wgpu, tiny-skia as its fallback, saying which drew.
-          if [ -d crates/kadr-ui-iced ]; then cargo build --release --locked -p kadr-ui-iced --features info; fi
 
       # Synthetic input and screen capture need the user's consent on macOS.
       # The runner has no one to give it: try granting it to the shell and the
@@ -37,7 +37,7 @@ jobs:
         continue-on-error: true
         run: |
           for db in "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "/Library/Application Support/com.apple.TCC/TCC.db"; do
-            for client in /bin/bash /usr/bin/python3 "$PWD/target/release/kadr-pointer" "$PWD/target/release/kadr-shot" "$PWD/target/release/kadr" "$PWD/target/release/kadr-iced"; do
+            for client in /bin/bash /usr/bin/python3 "$PWD/target/release/kadr-pointer" "$PWD/target/release/kadr-shot" "$PWD/target/release/kadr" "$PWD/target/release/kadr-overlay"; do
               for service in kTCCServiceAccessibility kTCCServicePostEvent kTCCServiceScreenCapture; do
                 sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('$service', '$client', 1, 2, 4, 1, 0, 'UNUSED', 0, $(date +%s));" || true
               done
@@ -52,12 +52,6 @@ jobs:
         continue-on-error: true
         run: $(command -v python3 || command -v python) scripts/desktop_e2e.py gpui
 
-      - name: Pointer e2e, iced spike
-        id: iced
-        if: hashFiles('crates/kadr-ui-iced/Cargo.toml') != ''
-        continue-on-error: true
-        run: $(command -v python3 || command -v python) scripts/desktop_e2e.py iced
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -69,7 +63,7 @@ jobs:
           $(command -v python3 || command -v python) - <<'EOF'
           import json, os, pathlib, sys
           rows, failed = [], False
-          shells = ["gpui"] + (["iced"] if pathlib.Path("crates/kadr-ui-iced").exists() else [])
+          shells = ["gpui"]
           for shell in shells:
               r = next(pathlib.Path("target/desktop-e2e").glob(f"*-{shell}/result.json"), None)
               v = json.loads(r.read_text(encoding="utf-8")) if r else {"shell": shell, "outcome": "failed", "gpu_error": "no result.json: the script itself broke"}

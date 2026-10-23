@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """The pointer e2e test on macOS and Windows, where there's no nested
 Hyprland: open the editor on the real desktop, click the box tool where it
-is, drag a box out on the picture, Ctrl+S, and check the file changed. With a
-real pointer and keyboard (kadr-pointer, enigo) and screenshots on the way
-(kadr-shot, xcap), saved to target/desktop-e2e/<system>-<shell>/ for the CI's
-artifacts.
+is, drag a box out on the picture, type with the system's text keys, pick
+from the system's menu, Ctrl+S, and take an area through the overlay. With
+a real pointer and keyboard (kadr-pointer, enigo) and screenshots on the
+way (kadr-shot, xcap), saved to target/desktop-e2e/<system>-gpui/ for the
+CI's artifacts. kadr is found and driven through its dev hooks (KADR_DEV=1).
 
-  scripts/desktop_e2e.py gpui|iced
+  scripts/desktop_e2e.py
 
-gpui is kadr itself, found and driven through its dev hooks (KADR_DEV=1);
-iced is the phase 2 spike (branch spike/iced), found by its window title.
-Needs `cargo build --release -p kadr -p kadr-testkit` (and
-`-p kadr-ui-iced --features info`, which reports its renderer).
+Needs `cargo build --release -p kadr -p kadr-testkit -p kadr-overlay`.
 
 The outcome in result.json is `passed`, `failed`, or `gpu_unavailable`: the
 shell's log (app.log) shows it couldn't get a GPU to draw with, which says
 the runner has none, not that the framework failed; that one exits 0 too.
 `renderer` says what really drew: GPUI's adapter (a software one is WARP on
-Windows), or iced's wgpu backend or its tiny-skia fallback.
+Windows).
 On Linux it runs too, inside `scripts/nested.sh`'s session (grim and wtype
 stand in for kadr-shot and the keyboard), to try the script itself.
 """
@@ -40,8 +38,7 @@ LINUX = platform.system() == "Linux"
 
 # What a shell's log says when it got no GPU to draw with: GPUI on Metal,
 # Direct3D 11 (it tries the DXGI adapters, WARP among them when Windows lists
-# it, with no WARP device of its own) and wgpu; iced when wgpu and tiny-skia
-# both failed.
+# it, with no WARP device of its own) and wgpu.
 GPU_ERRORS = [
     "failed to initialize a gpu context",
     "unable to access a compatible graphics device",
@@ -304,56 +301,11 @@ def type_text(s):
         run(POINTER, "type-hex", s.encode().hex())
 
 
-def iced(t, work):
-    """The iced spike: found by its window's title; its toolbar is at fixed
-    places from the window's top left (it has no dev hooks)."""
-    exe = BIN / f"kadr-iced{EXE}"
-    if not exe.exists():
-        t.note("the iced spike is built", False, hint="it lives on branch spike/iced")
-        return None
-    proc = t.start(exe, "edit", work)
-
-    def windows():
-        if LINUX:
-            clients = json.loads(run("hyprctl", "-j", "clients").stdout)
-            return [{"title": c["title"], "x": c["at"][0], "y": c["at"][1], "w": c["size"][0], "h": c["size"][1]} for c in clients]
-        return json.loads(run(SHOT, "windows").stdout)
-
-    def window():
-        return next((w for w in windows() if w["title"] == "kadr-iced editor"), None)
-
-    win = wait_for(lambda: proc.poll() is None and window())
-    if not t.note("the editor opens with its picture", win):
-        return proc
-    # The spike says what draws it (wgpu, or tiny-skia when wgpu failed).
-    line = wait_for(lambda: next((l for l in t.log.read_text(errors="replace").splitlines() if l.startswith("kadr-iced renderer:")), None), timeout=5)
-    if line:
-        fields = dict(f.split("=", 1) for f in line.split(":", 1)[1].split("\t") if "=" in f)
-        backend = fields.get("backend", "")
-        t.renderer = {"framework": "iced", "renderer": "tiny-skia" if backend == "tiny-skia" else "wgpu", "backend": backend, "adapter": fields.get("adapter")}
-    time.sleep(1)
-    t.shot("opened")
-    # Again now that it's settled: the spike fits itself to a small screen.
-    time.sleep(0.5)
-    win = window() or win
-    fits(t, win["x"], win["y"], win["w"], win["h"])
-    click = (win["x"] + 105, win["y"] + 24)
-    run(POINTER, "click", *click)
-    # The chosen tool's button turns the accent blue: look inside its
-    # padding, clear of the label.
-    colour = wait_for(lambda: (lambda c: c if c[2] - c[0] > 60 else None)(pixel(win["x"] + 86, win["y"] + 14)), timeout=5)
-    t.note("the box tool is picked", colour, click=click, colour=list(pixel(win["x"] + 86, win["y"] + 14)))
-    cx, cy = win["x"] + win["w"] / 2, win["y"] + win["h"] / 2
-    run(POINTER, "drag", cx - 100, cy - 60, cx + 100, cy + 60)
-    t.shot("drawn")
-    return proc
-
-
 def main():
     # UTF-8 out whatever the console's code page (cp1252 on Windows can't
     # print "мир").
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    shell = sys.argv[1] if len(sys.argv) > 1 else "gpui"
+    shell = "gpui"
     if LINUX:
         # The runners' screen, 1024x768, on the nested session's output.
         run("hyprctl", "eval", 'hl.monitor({ output = "WAYLAND-1", mode = "1024x768@60", position = "0x0", scale = 1 })')
@@ -362,7 +314,7 @@ def main():
     work = t.out / "shot.png"
     shutil.copy(ROOT / "tests/golden/cases/arrow/base.png", work)
     before = work.read_bytes()
-    proc = (gpui if shell == "gpui" else iced)(t, work)
+    proc = gpui(t, work)
     if proc is not None and all(s["ok"] for s in t.steps):
         key("ctrl+s")
         t.note("Ctrl+S saves a changed file", wait_for(lambda: work.read_bytes() != before, timeout=10))
