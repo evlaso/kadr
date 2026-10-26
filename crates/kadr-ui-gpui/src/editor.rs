@@ -682,6 +682,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
         monitor: Some(mon.clone()),
     };
     let build = move |window: &mut Window, cx: &mut App| {
+        crate::dev::mark("editor:build");
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
@@ -729,6 +730,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 })
                 .detach();
             }
+            crate::dev::mark("editor:fields");
             let mut editor = Editor {
                 path,
                 card_on_close: card,
@@ -814,8 +816,10 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 size,
                 focus,
             };
+            crate::dev::mark("editor:made");
             // The sizes of a reopened turned picture.
             editor.sync_geometry();
+            crate::dev::mark("editor:fitted");
             editor
         })
     };

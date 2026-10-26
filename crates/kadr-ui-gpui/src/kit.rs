@@ -377,7 +377,9 @@ pub fn open_window<V: Render + 'static>(
         window.set_window_title("kadr");
         crate::dev::mark("window");
         window.on_next_frame(|_, _| crate::dev::mark("first_frame"));
-        build(window, cx)
+        let view = build(window, cx);
+        crate::dev::mark("built");
+        view
     }) {
         Ok(handle) => {
             crate::dev::name_window(handle.into(), app_id);
