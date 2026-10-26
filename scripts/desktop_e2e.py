@@ -506,7 +506,9 @@ def pointer_in_shots(t):
     # The shot is 1x: the pointer's logical position is its pixel.
     x0, y0 = int(px - sx), int(py - sy)
     near = sum(1 for y in range(max(0, y0 - 4), min(h, y0 + 30)) for x in range(max(0, x0 - 4), min(w, x0 + 24)) if sum(abs(p - q) for p, q in zip(a[y][x], b[y][x])) > 60)
-    far = sum(1 for y in range(0, min(h, 40)) for x in range(0, min(w, 40)) if a[y][x] != b[y][x])
+    # Beside it, clear of the cursor and of anything else that moves (the
+    # screen's corners have the clock, the taskbar, the menu bar).
+    far = sum(1 for y in range(max(0, y0 - 4), min(h, y0 + 30)) for x in range(max(0, x0 - 90), max(0, x0 - 50)) if a[y][x] != b[y][x])
     t.note("the pointer is in the shot", near > 30 and far == 0, changed_near_pointer=near, changed_far_away=far)
 
 
