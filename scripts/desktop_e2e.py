@@ -166,7 +166,11 @@ def pixel(x, y):
 
 def dev(*args):
     r = run(BIN / f"kadr{EXE}", "dev", *args, check=False, timeout=10)
-    v = json.loads(r.stdout)
+    try:
+        v = json.loads(r.stdout)
+    except ValueError:
+        # No kadr answered.
+        return None
     return v["result"] if v.get("ok") else None
 
 
@@ -385,6 +389,10 @@ def record(t):
     # A steady frame rate, like gpu-screen-recorder's on Linux, even with
     # nothing moving on screen: at least 15 frames a second.
     t.note("the recording has a steady frame rate", frames and frames >= 15 * length, frames=frames, fps=frames and round(frames / length, 1))
+    # kadr still takes commands once the recording is finished (a card for
+    # it on screen keeps it running).
+    time.sleep(2)
+    t.note("kadr answers after a recording", dev("windows") is not None)
 
 
 def record_through_bar(t):
@@ -406,9 +414,16 @@ def record_through_bar(t):
         bar = wait_for(find_bar, timeout=4)
         if bar:
             break
-    if not t.note("the recording bar opens", bar, windows=None if bar else [w["kind"] for w in dev("windows") or []] or dev("windows")):
+    if not bar:
+        # What kadr is doing instead: its windows if it answers, and where
+        # its threads are (macOS's sample).
+        windows = dev("windows")
         t.shot("no-record-bar")
+        if sys.platform == "darwin":
+            run("sample", "kadr", "3", "-file", t.out / "kadr-sample.txt", check=False, timeout=30)
+        t.note("the recording bar opens", False, answers=windows is not None, windows=[w["kind"] for w in windows or []])
         return
+    t.note("the recording bar opens", True)
     time.sleep(0.5)
     t.shot("record-bar")
     clicked = dev("click", "record", "--window", str(bar["id"]))
