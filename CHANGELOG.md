@@ -17,5 +17,5 @@ The first public build. Linux (Hyprland) is the one kadr is used on every day; t
 - macOS and Windows: the editor, the studio, screenshots, the area picker, the tray icon and global hotkeys. Recording and picking windows aren't there yet.
 - A check for new releases: once a day the tray looks, and a card links to the new release's page. Nothing is downloaded; it can be turned off in Settings.
 
-[Unreleased]: https://github.com/vlasmn/kadr/compare/v0.3.0-alpha.1...HEAD
-[0.3.0-alpha.1]: https://github.com/vlasmn/kadr/releases/tag/v0.3.0-alpha.1
+[Unreleased]: https://github.com/evlaso/kadr/compare/v0.3.0-alpha.1...HEAD
+[0.3.0-alpha.1]: https://github.com/evlaso/kadr/releases/tag/v0.3.0-alpha.1

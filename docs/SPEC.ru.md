@@ -15,7 +15,7 @@ desktop-e2e на macOS и Windows (на Windows — на WARP без видео�
 |---|---|
 | Имя продукта | kadr |
 | Лицензия | MIT, `Copyright (c) 2026 Evgeniy Vlasov` |
-| Репозиторий | `github.com/vlasmn/kadr` (публичный); при переносе — организация `kadr-sh` |
+| Репозиторий | `github.com/evlaso/kadr` (публичный); при переносе — организация `kadr-sh` |
 | Домен | `kadr.sh`; сайт — GitHub Pages; релизы и апдейтер — `https://kadr.sh/releases` → GitHub Releases |
 | Bundle id | `sh.kadr.app` (macOS), `sh.kadr.Kadr` (desktop entry / Flatpak), тот же корень в winget |
 | AUR | `kadr-sh` (из тарбола), `kadr-sh-bin`, `kadr-sh-git`; `provides=('kadr') conflicts=('kadr')` — имя `kadr` занято другим проектом, бинарник `/usr/bin/kadr` конфликтует |

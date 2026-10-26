@@ -4,7 +4,7 @@
 
 ![Редактор: стрелка, рамка и подпись на скриншоте, фон — градиент](images/editor.png)
 
-**Статус:** работает на Linux (Wayland, Hyprland). macOS и Windows собираются и проходят сквозной тест в CI (редактор, ввод текста, системные меню, оверлей выбора области), но живьём на них ещё никто не работал, а запись и выбор окон там пока не перенесены. Первый пре-релиз — [0.3.0-alpha.1](https://github.com/vlasmn/kadr/releases); очень ждём тестеров на macOS и Windows.
+**Статус:** работает на Linux (Wayland, Hyprland). macOS и Windows собираются и проходят сквозной тест в CI (редактор, ввод текста, системные меню, оверлей выбора области), но живьём на них ещё никто не работал, а запись и выбор окон там пока не перенесены. Первый пре-релиз — [0.3.0-alpha.1](https://github.com/evlaso/kadr/releases); очень ждём тестеров на macOS и Windows.
 
 [Read in English](../README.md)
 
@@ -41,7 +41,7 @@
 
 ## Установка
 
-В [Releases](https://github.com/vlasmn/kadr/releases) лежат сборки для трёх систем: `.tar.xz` для Linux (с `INSTALL.md` внутри), `Kadr.app` в `.dmg` для macOS (Apple silicon и Intel) и портативный `.zip` для Windows. Они пока не подписаны: на macOS после копирования приложения один раз выполните `xattr -dr com.apple.quarantine /Applications/Kadr.app`. Homebrew, winget и AUR появятся позже. Ещё kadr можно собрать из исходников, нужен Rust 1.95 или новее.
+В [Releases](https://github.com/evlaso/kadr/releases) лежат сборки для трёх систем: `.tar.xz` для Linux (с `INSTALL.md` внутри), `Kadr.app` в `.dmg` для macOS (Apple silicon и Intel) и портативный `.zip` для Windows. Они пока не подписаны: на macOS после копирования приложения один раз выполните `xattr -dr com.apple.quarantine /Applications/Kadr.app`. Homebrew, winget и AUR появятся позже. Ещё kadr можно собрать из исходников, нужен Rust 1.95 или новее.
 
 ### Linux (Hyprland)
 
@@ -72,7 +72,7 @@ o.launch_on_start("kadr-tray")
 cargo build --profile dist -p kadr -p kadr-tray -p kadr-overlay
 ```
 
-Глобальные хоткеи там держит трей, поэтому `kadr-tray` нужно запускать при входе в систему. Неподписанные сборки прикладываются к запущенным вручную прогонам в [Actions](https://github.com/vlasmn/kadr/actions); на macOS перед первым запуском такой сборки нужно `xattr -d com.apple.quarantine kadr kadr-tray kadr-overlay`.
+Глобальные хоткеи там держит трей, поэтому `kadr-tray` нужно запускать при входе в систему. Неподписанные сборки прикладываются к запущенным вручную прогонам в [Actions](https://github.com/evlaso/kadr/actions); на macOS перед первым запуском такой сборки нужно `xattr -d com.apple.quarantine kadr kadr-tray kadr-overlay`.
 
 ## Хоткеи
 

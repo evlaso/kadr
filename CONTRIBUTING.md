@@ -57,5 +57,5 @@ tests; screenshots for anything you can see.
 
 ## Reporting
 
-Bugs and ideas: [issues](https://github.com/vlasmn/kadr/issues) (say your
+Bugs and ideas: [issues](https://github.com/evlaso/kadr/issues) (say your
 system and kadr's version). Security problems: see [SECURITY.md](SECURITY.md).

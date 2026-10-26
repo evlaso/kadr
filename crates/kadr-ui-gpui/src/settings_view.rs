@@ -426,8 +426,8 @@ impl SettingsView {
                         .text_color(cx.theme().colors().text_accent)
                         .cursor_pointer()
                         .hover(|d| d.underline())
-                        .child("github.com/vlasmn/kadr")
-                        .on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/vlasmn/kadr")))
+                        .child("github.com/evlaso/kadr")
+                        .on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/evlaso/kadr")))
                         .into_any_element(),
                 ),
                 row(t("settings.settings_folder"),

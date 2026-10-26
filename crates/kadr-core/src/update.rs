@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 /// Where the newest release is described (kadr.sh's `releases/latest.json`
 /// once the domain is up; the gh-pages branch until then).
-pub const LATEST_URL: &str = "https://raw.githubusercontent.com/vlasmn/kadr/gh-pages/releases/latest.json";
+pub const LATEST_URL: &str = "https://raw.githubusercontent.com/evlaso/kadr/gh-pages/releases/latest.json";
 
 /// This build's version.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");

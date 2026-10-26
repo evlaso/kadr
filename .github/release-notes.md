@@ -25,6 +25,6 @@ Then grant Screen Recording (System Settings → Privacy & Security) when it ask
 
 ## Testers wanted
 
-kadr on macOS and Windows has only run on CI's machines. If you try it there, please [open an issue](https://github.com/vlasmn/kadr/issues/new) with your system and version and what worked and what didn't; a screenshot helps. Reports from other Linux desktops are welcome too.
+kadr on macOS and Windows has only run on CI's machines. If you try it there, please [open an issue](https://github.com/evlaso/kadr/issues/new) with your system and version and what worked and what didn't; a screenshot helps. Reports from other Linux desktops are welcome too.
 
-По-русски: [что нового](https://github.com/vlasmn/kadr/blob/v{version}/docs/CHANGELOG.ru.md) и [README](https://github.com/vlasmn/kadr/blob/v{version}/docs/README.ru.md).
+По-русски: [что нового](https://github.com/evlaso/kadr/blob/v{version}/docs/CHANGELOG.ru.md) и [README](https://github.com/evlaso/kadr/blob/v{version}/docs/README.ru.md).

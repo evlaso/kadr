@@ -17,5 +17,5 @@
 - macOS и Windows: редактор, студия, скриншоты, выбор области, значок в трее и глобальные хоткеи. Записи и выбора окон там пока нет.
 - Проверка новых версий: раз в день трей смотрит, не вышел ли релиз, и показывает карточку со ссылкой на его страницу. Ничего не скачивается; отключается в настройках.
 
-[Unreleased]: https://github.com/vlasmn/kadr/compare/v0.3.0-alpha.1...HEAD
-[0.3.0-alpha.1]: https://github.com/vlasmn/kadr/releases/tag/v0.3.0-alpha.1
+[Unreleased]: https://github.com/evlaso/kadr/compare/v0.3.0-alpha.1...HEAD
+[0.3.0-alpha.1]: https://github.com/evlaso/kadr/releases/tag/v0.3.0-alpha.1

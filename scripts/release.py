@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-REPO = "https://github.com/vlasmn/kadr"
+REPO = "https://github.com/evlaso/kadr"
 # Each platform's file in latest.json, by how its name ends.
 PLATFORMS = {"linux-x86_64": "-x86_64-linux.tar.xz", "macos-universal": "-macos-universal.dmg", "windows-x86_64": "-x86_64-windows.zip"}
 
