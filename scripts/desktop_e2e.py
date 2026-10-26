@@ -394,8 +394,15 @@ def record_through_bar(t):
     pointer's log; kadr has to be alive and the MP4 whole after."""
     videos = t.out / "videos"
     before = set(videos.glob("*.mp4"))
-    run(BIN / f"kadr{EXE}", "record", "area", "100,100 640x360", check=False)
-    bar = wait_for(lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-panel"), None), timeout=10)
+    # Asked again while the last recording is still being finished (its
+    # sound evened out by ffmpeg), which kadr waits out.
+    find_bar = lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-panel"), None)
+    bar = None
+    for _ in range(6):
+        run(BIN / f"kadr{EXE}", "record", "area", "100,100 640x360", check=False)
+        bar = wait_for(find_bar, timeout=4)
+        if bar:
+            break
     if not t.note("the recording bar opens", bar):
         return
     time.sleep(0.5)

@@ -903,7 +903,9 @@ async fn finalize(file: &Path, system: bool, mic: bool) {
 }
 
 fn refresh_omarchy_indicator() {
-    util::spawn(&["omarchy-shell", "-q", "omarchy.indicators", "refresh"]);
+    if cfg!(target_os = "linux") {
+        util::spawn(&["omarchy-shell", "-q", "omarchy.indicators", "refresh"]);
+    }
 }
 
 fn log_tail() -> String {
