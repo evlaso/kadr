@@ -406,7 +406,8 @@ def record_through_bar(t):
         bar = wait_for(find_bar, timeout=4)
         if bar:
             break
-    if not t.note("the recording bar opens", bar):
+    if not t.note("the recording bar opens", bar, windows=None if bar else [w["kind"] for w in dev("windows") or []] or dev("windows")):
+        t.shot("no-record-bar")
         return
     time.sleep(0.5)
     t.shot("record-bar")
