@@ -159,6 +159,17 @@ enum State {
     Recording(Session),
 }
 
+impl State {
+    fn name(&self) -> &'static str {
+        match self {
+            State::Idle => "idle",
+            State::Panel(_) => "the bar is open",
+            State::Busy => "busy",
+            State::Recording(_) => "recording",
+        }
+    }
+}
+
 struct Session {
     /// Which recording this is, to tell its end from a later one's.
     id: u64,
@@ -273,10 +284,13 @@ pub fn command_previous(cx: &mut App) {
 
 fn open_panel(target: Target, cx: &mut App) {
     recorder(cx).update(cx, |rec, cx| {
-        if matches!(rec.state, State::Idle)
-            && let Some(handle) = panel::open(target, cx)
-        {
-            rec.state = State::Panel(handle);
+        if !matches!(rec.state, State::Idle) {
+            eprintln!("kadr: no recording bar: {}", rec.state.name());
+            return;
+        }
+        match panel::open(target, cx) {
+            Some(handle) => rec.state = State::Panel(handle),
+            None => eprintln!("kadr: no recording bar: no monitor there or no window"),
         }
     });
 }
@@ -458,6 +472,7 @@ impl Recorder {
             return;
         }
         let State::Recording(mut s) = std::mem::replace(&mut self.state, State::Busy) else { unreachable!() };
+        eprintln!("kadr: recording ended");
         for w in s.windows.drain(..) {
             let _ = w.update(cx, |_, window, _| window.remove_window());
         }
@@ -488,6 +503,7 @@ impl Recorder {
             // starting over in the same area.
             let again = s.restart.then(|| (s.target.clone(), s.opts.clone()));
             drop(s);
+            eprintln!("kadr: recording finished");
             let _ = this.update(cx, |rec, cx| {
                 rec.state = State::Idle;
                 if let Some((target, opts)) = again {
