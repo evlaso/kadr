@@ -51,12 +51,14 @@ use kadr_core::cli::Command;
 /// What every run needs before anything else: kadr's folders, its language,
 /// the user's cursor theme, the dev hooks' bookkeeping.
 pub fn prepare() {
+    dev::mark("main");
     dev::track();
     dev::log_to_stderr();
     platform::set_dirs();
     i18n::set(settings::Settings::load().language);
     // The cursor stamps and the studio's pointer: the system's own.
     kadr_raster::cursors::set_theme(platform::theme_cursor);
+    dev::mark("prepared");
 }
 
 /// Run `kadr <args>` inside this instance (the capture bar's modes, and
@@ -126,17 +128,25 @@ pub fn run(command: Command, listener: platform::ipc::Listener) {
     listen(listener, tx);
 
     // kadr quits on its own once idle (below), not when the last overlay closes.
+    dev::mark("listening");
     application().with_assets(kit::Assets).with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
+        dev::mark("app");
         kit::init(cx);
+        dev::mark("kit");
         // macOS's cursors, taken on the main thread once the application is
         // there (before it, AppKit has none to give).
         platform::snapshot_cursors();
+        dev::mark("cursors");
         menubar::init(cx);
         record::init(cx);
+        dev::mark("menus");
         storage::auto();
+        dev::mark("storage");
         platform::ensure_desktop();
         kadr_tray::ensure();
+        dev::mark("tray");
         run_command(command, cx);
+        dev::mark("command");
 
         cx.spawn(async move |cx| {
             while let Some((args, reply)) = rx.next().await {

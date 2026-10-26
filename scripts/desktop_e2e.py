@@ -175,9 +175,16 @@ def gpui(t, work):
     which give real screen positions on macOS and Windows."""
     # KADR_DEV also puts GPUI's log (the GPU it took) on stderr.
     # Screenshots land in the test's folder (the overlay step below).
+    t0 = time.monotonic()
     proc = t.start(BIN / f"kadr{EXE}", "edit", work, env=dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(t.out / "shots"), OMARCHY_SCREENRECORD_DIR=str(t.out / "videos")))
     win = wait_for(lambda: proc.poll() is None and next((w for w in dev("windows") or [] if w["kind"] == "kadr-editor"), None))
-    if not t.note("the editor opens", win):
+    # A cold start: the process to the editor's window, and kadr's own
+    # steps ("kadr start: step=ms" in its log).
+    opened = round((time.monotonic() - t0) * 1000)
+    time.sleep(0.3)
+    log = t.log.read_text(encoding="utf-8", errors="replace").replace("\0", "") if t.log.exists() else ""
+    steps = {k: v for line in log.splitlines() if line.startswith("kadr start: ") for k, _, v in [line[12:].partition("=")]}
+    if not t.note("the editor opens", win, ms=opened, **steps):
         return proc
     t.note("the picture loads", wait_for(lambda: (dev("state") or {}).get("view", {}).get("image")))
     time.sleep(1)

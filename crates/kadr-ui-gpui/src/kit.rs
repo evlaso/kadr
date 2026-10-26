@@ -369,11 +369,14 @@ pub fn open_window<V: Render + 'static>(
         window_min_size: Some(gpui::size(px(min.0), px(min.1))),
         ..Default::default()
     };
+    crate::dev::mark("opening");
     match cx.open_window(options, |window, cx| {
         window.set_rem_size(px(REM));
         // Named in the system's window lists (and so kept in the overlay's
         // windows to snap to, while kadr's untitled overlays and cards aren't).
         window.set_window_title("kadr");
+        crate::dev::mark("window");
+        window.on_next_frame(|_, _| crate::dev::mark("first_frame"));
         build(window, cx)
     }) {
         Ok(handle) => {

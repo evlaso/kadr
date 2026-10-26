@@ -188,6 +188,21 @@ fn rss_mb() -> Option<f64> {
     Some((kb / 1024. * 10.).round() / 10.)
 }
 
+/// When kadr started (`prepare`, first thing in `main`).
+static STARTED: OnceLock<std::time::Instant> = OnceLock::new();
+
+/// A step of kadr's start, timed from `prepare`, in KADR_DEV's log:
+/// "kadr start: kit=41ms". Only the first of each name counts.
+pub fn mark(step: &str) {
+    let at = STARTED.get_or_init(std::time::Instant::now).elapsed().as_millis();
+    static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap();
+    if on() && !seen.iter().any(|s| s == step) {
+        seen.push(step.to_owned());
+        eprintln!("kadr start: {step}={at}ms");
+    }
+}
+
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("KADR_DEV").is_some_and(|v| v != "0"))
