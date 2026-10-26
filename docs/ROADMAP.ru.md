@@ -97,7 +97,7 @@ L — Linux (Wayland, Hyprland), M — macOS, W — Windows. ✅ на M/W — о
 | Настройки: куда сохранять, имя файла по шаблону, формат, буфер, звук, после снимка что делать | CS | 🟡 | 🟡 | 🟡 | формата нет |
 | Автообновление с экраном «Что нового» (§12) | CS | 🟡 | 🟡 | 🟡 | только проверка и карточка |
 | Права на macOS: понятный онбординг запроса записи экрана и accessibility | CS | — | ⬜ | — |  |
-| Упаковка: dmg (подпись), msi/winget, AUR, Flatpak, Homebrew | CS | 🟡 | 🟡 | 🟡 | L: tar.xz; M: dmg без подписи; W: zip |
+| Упаковка: dmg (подпись), msi/winget, AUR, Flatpak, Homebrew | CS | 🟡 | 🟡 | 🟡 | L: tar.xz; M: dmg без подписи; W: установщик (Inno Setup, без админа) и portable .exe, без подписи; winget нет |
 
 ## 6. Запись (ориентир: R, CS, OS)
 
