@@ -65,6 +65,27 @@ pub enum WindowControls {
 }
 
 /// "Not on this system yet", shown once as a notification.
+/// Notes a crash in `log`: a Rust panic with where it happened and the
+/// stack, and on Windows a crash in native code too (a driver, a codec),
+/// which leaves nothing at all otherwise.
+pub fn crash_log(log: PathBuf) {
+    if let Some(dir) = log.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let previous = std::panic::take_hook();
+    let path = log.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current().name().unwrap_or("?").to_owned();
+        let note = format!("kadr {} panicked on thread {thread}: {info}\n{}\n", env!("CARGO_PKG_VERSION"), std::backtrace::Backtrace::force_capture());
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, note.as_bytes()));
+        previous(info);
+    }));
+    #[cfg(windows)]
+    imp::crash_log(log);
+    #[cfg(not(windows))]
+    let _ = log;
+}
+
 /// How long ago the system made this process, in ms: with the time kadr
 /// itself counts from `main`, what the loader and a virus scan took first.
 pub fn process_age_ms() -> Option<u64> {

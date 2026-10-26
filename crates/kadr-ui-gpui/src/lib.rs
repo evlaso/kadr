@@ -55,6 +55,7 @@ pub fn prepare() {
     dev::track();
     dev::log_to_stderr();
     platform::set_dirs();
+    platform::crash_log(util::cache_dir().join("crash.log"));
     i18n::set(settings::Settings::load().language);
     // The cursor stamps and the studio's pointer: the system's own.
     kadr_raster::cursors::set_theme(platform::theme_cursor);

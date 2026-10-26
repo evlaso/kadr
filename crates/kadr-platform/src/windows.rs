@@ -357,6 +357,38 @@ mod cursors {
     }
 }
 
+/// Where a crash outside Rust's panics leaves its note (`crash_log`).
+static CRASH_LOG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Notes a crash in native code (a driver, the encoder) in `log`: the
+/// exception's code, its address and the module it's in.
+pub(crate) fn crash_log(log: PathBuf) {
+    use windows::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter;
+    let _ = CRASH_LOG.set(log);
+    unsafe { SetUnhandledExceptionFilter(Some(crashed)) };
+}
+
+unsafe extern "system" fn crashed(info: *const windows::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS) -> i32 {
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::System::LibraryLoader::{GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, GetModuleFileNameW, GetModuleHandleExW};
+    // SAFETY: the system hands the exception's record; only read here.
+    unsafe {
+        if let (Some(log), Some(record)) = (CRASH_LOG.get(), info.as_ref().and_then(|i| i.ExceptionRecord.as_ref())) {
+            let at = record.ExceptionAddress;
+            let mut module = HMODULE::default();
+            let mut name = [0u16; 260];
+            let found = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, windows::core::PCWSTR(at as *const u16), &mut module).is_ok();
+            let len = if found { GetModuleFileNameW(Some(module), &mut name) as usize } else { 0 };
+            let path = String::from_utf16_lossy(&name[..len]);
+            let file = path.rsplit('\\').next().unwrap_or("?");
+            let note = format!("kadr {} crashed: exception {:#010x} at {:?} in {} (+{:#x})\n", env!("CARGO_PKG_VERSION"), record.ExceptionCode.0 as u32, at, file, at as usize - module.0 as usize);
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log).and_then(|mut f| std::io::Write::write_all(&mut f, note.as_bytes()));
+        }
+    }
+    // EXCEPTION_CONTINUE_SEARCH: the system ends the process as before.
+    0
+}
+
 /// Takes the system's frame off a borderless overlay. GPUI makes its pop-ups
 /// plain overlapped windows, which get a caption and a border, so DWM drew an
 /// outline and a shadow round the whole window, mostly transparent (the

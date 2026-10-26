@@ -387,6 +387,43 @@ def record(t):
     t.note("the recording has a steady frame rate", frames and frames >= 15 * length, frames=frames, fps=frames and round(frames / length, 1))
 
 
+def record_through_bar(t):
+    """A recording as a person makes one: `kadr record area` opens the
+    recording bar, its Record button (clicked through the dev hooks) starts
+    the countdown and the recording, with the frame, the controls and the
+    pointer's log; kadr has to be alive and the MP4 whole after."""
+    videos = t.out / "videos"
+    before = set(videos.glob("*.mp4"))
+    run(BIN / f"kadr{EXE}", "record", "area", "100,100 640x360", check=False)
+    bar = wait_for(lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-panel"), None), timeout=10)
+    if not t.note("the recording bar opens", bar):
+        return
+    time.sleep(0.5)
+    t.shot("record-bar")
+    clicked = dev("click", "record", "--window", str(bar["id"]))
+    if not t.note("Record is clicked", clicked):
+        return
+    # The countdown first (3 s by default).
+    file = wait_for(lambda: next(iter(set(videos.glob("*.mp4")) - before), None), timeout=20)
+    if not t.note("the bar's recording starts", file):
+        return
+    time.sleep(3)
+    t.shot("recording-area")
+    alive = dev("windows") is not None
+    run(BIN / f"kadr{EXE}", "record", "stop", check=False)
+    length = wait_for(lambda: mp4_duration(file), timeout=20)
+    t.note("kadr is alive while recording", alive)
+    t.note("the area's recording is saved", length and 1 <= length <= 8, seconds=length and round(length, 2), size=file.stat().st_size if file.exists() else None)
+
+
+def crashes(t):
+    """kadr's crash notes (crash.log), kept with the test's: none expected."""
+    log = caches() / "crash.log"
+    if log.exists():
+        shutil.copy(log, t.out / "crash.log")
+    t.note("kadr didn't crash", not log.exists(), crash=log.read_text(errors="replace")[:2000] if log.exists() else None)
+
+
 def png_size(path):
     head = path.read_bytes()[16:24]
     return [int.from_bytes(head[:4], "big"), int.from_bytes(head[4:], "big")]
@@ -620,6 +657,8 @@ def main():
             all_screens(t)
             pointer_in_shots(t)
             record(t)
+            record_through_bar(t)
+            crashes(t)
     if proc is not None and proc.poll() is None:
         proc.kill()
     outcome = t.finish()
