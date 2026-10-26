@@ -43,10 +43,27 @@ pub fn copy_files(paths: &[&Path]) {
     clipboard(move |set| set.file_list(&paths));
 }
 
+/// A system notification, sent off the caller's thread: it may wait for
+/// the system.
 pub fn notify(title: &str, body: &str) {
-    if let Err(e) = notify_rust::Notification::new().summary(title).body(body).show() {
-        eprintln!("kadr: {title}: {body} ({e})");
-    }
+    eprintln!("kadr: notification: {title}: {body}");
+    let (title, body) = (title.to_owned(), body.to_owned());
+    std::thread::spawn(move || {
+        #[cfg(target_os = "macos")]
+        {
+            // Left to itself, notify-rust looks its sender up by name with
+            // AppleScript, and a name that isn't an app ("use_default") makes
+            // macOS ask where the app is, in a dialog that never comes back.
+            static APP: std::sync::Once = std::sync::Once::new();
+            APP.call_once(|| {
+                let own = objc2_foundation::NSBundle::mainBundle().bundleIdentifier().map(|id| id.to_string());
+                let _ = notify_rust::set_application(own.as_deref().unwrap_or("com.apple.Finder"));
+            });
+        }
+        if let Err(e) = notify_rust::Notification::new().summary(&title).body(&body).show() {
+            eprintln!("kadr: {title}: {body} ({e})");
+        }
+    });
 }
 
 /// To the system's trash; deleted outright if there is none.

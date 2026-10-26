@@ -39,7 +39,7 @@ objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
 # The system's cursors, for the studio and the editor's stamps.
 objc2-app-kit = { version = "0.3.2", features = ["NSCursor", "NSImage", "NSGraphicsContext", "objc2-core-graphics"] }
-objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSArray", "NSDictionary", "NSError", "NSString", "NSURL", "NSValue", "NSObject"] }
+objc2-foundation = { version = "0.3.2", features = ["NSBundle", "NSGeometry", "NSArray", "NSDictionary", "NSError", "NSString", "NSURL", "NSValue", "NSObject"] }
 # Recording (record/sck.rs): ScreenCaptureKit's stream into an AVAssetWriter.
 block2 = "0.6"
 dispatch2 = "0.3"
