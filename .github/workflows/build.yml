@@ -9,9 +9,10 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A newer push makes older builds of the same branch pointless.
+# A newer push makes older builds of the same branch pointless; a build
+# started by hand (all three systems) isn't cancelled by a push.
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
