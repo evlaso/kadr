@@ -3,7 +3,7 @@
 | | Status |
 |---|---|
 | **Linux** (Wayland, Hyprland) | Everything works; used every day. |
-| **macOS** (Apple silicon and Intel) | The editor, the studio, screenshots, the area picker, the tray and hotkeys pass the end-to-end test on CI. Not tried on a real Mac yet; no recording or window picking. |
+| **macOS** (Apple silicon and Intel) | The editor, the studio, screenshots and window shots, the area picker, recording, the tray and hotkeys pass the end-to-end test on CI. Not tried on a real Mac yet. The microphone is the default one; recording cards and the studio need `ffmpeg`. |
 | **Windows** (x86_64) | As on macOS. |
 
 ## Files

@@ -4,7 +4,7 @@ members = ["crates/*"]
 # Shared versions, so every crate builds against the same ones.
 # The same for every crate (vendor/gpui_linux keeps GPUI CE's own, Apache-2.0).
 [workspace.package]
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 license = "MIT"
 
 [workspace.dependencies]
