@@ -703,6 +703,11 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                     }
                     cx.notify();
                 });
+                let icons = cx.background_executor().spawn(async { cursors::STAMPS.iter().filter_map(|&name| Some((name, cursor_image(name, cursors::height_for(name, 44.))?))).collect::<Vec<_>>() }).await;
+                let _ = this.update(cx, |editor: &mut Editor, cx| {
+                    editor.cursor_icons = icons;
+                    cx.notify();
+                });
                 let walls = studio_editor::wallpaper_thumbs().await;
                 let _ = this.update(cx, |editor: &mut Editor, cx| {
                     editor.walls = walls;
@@ -777,7 +782,9 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 text_style: TextStyle::Plain,
                 cursor_kind: cursors::STAMPS[0],
                 // Their squares fill 22px slots at twice the pixels.
-                cursor_icons: cursors::STAMPS.iter().filter_map(|&name| Some((name, cursor_image(name, cursors::height_for(name, 44.))?))).collect(),
+                // Drawn after the window shows (below): the system's cursor
+                // pictures take a while the first time on Windows.
+                cursor_icons: Vec::new(),
                 cursor_images: Default::default(),
                 patches: HashMap::new(),
                 pictures: Default::default(),
