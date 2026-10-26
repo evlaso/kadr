@@ -191,15 +191,31 @@ fn rss_mb() -> Option<f64> {
 /// When kadr started (`prepare`, first thing in `main`).
 static STARTED: OnceLock<std::time::Instant> = OnceLock::new();
 
-/// A step of kadr's start, timed from `prepare`, in KADR_DEV's log:
-/// "kadr start: kit=41ms". Only the first of each name counts.
+/// A step of kadr's start, timed from `prepare`: "kadr start: kit=41ms" in
+/// KADR_DEV's log, and always in `cache_dir()/start.log`, which keeps the
+/// last start (with how long the system took before `main`) for a slow
+/// start on someone's machine. Only the first of each name counts.
 pub fn mark(step: &str) {
     let at = STARTED.get_or_init(std::time::Instant::now).elapsed().as_millis();
-    static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    static SEEN: std::sync::Mutex<Vec<(String, u128)>> = std::sync::Mutex::new(Vec::new());
     let mut seen = SEEN.lock().unwrap();
-    if on() && !seen.iter().any(|s| s == step) {
-        seen.push(step.to_owned());
+    if seen.iter().any(|(s, _)| s == step) {
+        return;
+    }
+    seen.push((step.to_owned(), at));
+    if on() {
         eprintln!("kadr start: {step}={at}ms");
+    }
+    // Folders are set in `prepare`, after the first step.
+    if seen.len() > 1 {
+        static HEAD: OnceLock<String> = OnceLock::new();
+        let head = HEAD.get_or_init(|| {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let before = crate::platform::process_age_ms().map(|ms| ms.saturating_sub(at as u64));
+            format!("kadr {} {}\nbefore_main={}\n", kadr_core::update::CURRENT, args.join(" "), before.map_or("?".into(), |ms| format!("{ms}ms")))
+        });
+        let steps: String = seen.iter().map(|(s, ms)| format!("{s}={ms}ms\n")).collect();
+        let _ = std::fs::write(crate::util::cache_dir().join("start.log"), format!("{head}{steps}"));
     }
 }
 

@@ -357,6 +357,28 @@ mod cursors {
     }
 }
 
+/// Takes the system's frame off a borderless overlay. GPUI makes its pop-ups
+/// plain overlapped windows, which get a caption and a border, so DWM drew an
+/// outline and a shadow round the whole window, mostly transparent (the
+/// cards' window is as tall as their stack).
+pub(crate) fn bare_window(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_POPUP, WS_THICKFRAME,
+    };
+    let h = HWND(hwnd as *mut _);
+    unsafe {
+        let style = GetWindowLongPtrW(h, GWL_STYLE) as u32;
+        SetWindowLongPtrW(h, GWL_STYLE, ((style & !(WS_CAPTION.0 | WS_THICKFRAME.0)) | WS_POPUP.0) as isize);
+        let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let none = DWMWA_COLOR_NONE;
+        let _ = DwmSetWindowAttribute(h, DWMWA_BORDER_COLOR, &none as *const u32 as *const _, 4);
+        let square = DWMWCP_DONOTROUND;
+        let _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as *const _, 4);
+    }
+}
+
 /// Windows' corner radius in logical pixels, for window shots (Windows 11).
 pub fn window_rounding() -> f32 {
     8.

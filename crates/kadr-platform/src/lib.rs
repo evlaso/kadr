@@ -65,6 +65,43 @@ pub enum WindowControls {
 }
 
 /// "Not on this system yet", shown once as a notification.
+/// How long ago the system made this process, in ms: with the time kadr
+/// itself counts from `main`, what the loader and a virus scan took first.
+pub fn process_age_ms() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        // Field 22 of /proc/self/stat, in clock ticks since boot (100 a second).
+        let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+        let ticks: f64 = stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()?;
+        let uptime: f64 = std::fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
+        Some(((uptime - ticks / 100.) * 1000.).max(0.) as u64)
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+        let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+        let (mut made, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        unsafe { GetProcessTimes(GetCurrentProcess(), &mut made, &mut exited, &mut kernel, &mut user) }.ok()?;
+        let now = unsafe { GetSystemTimeAsFileTime() };
+        Some(ticks(now).saturating_sub(ticks(made)) / 10_000)
+    }
+    #[cfg(target_os = "macos")]
+    None
+}
+
+/// Takes the system's frame off an overlay window, where the system gives
+/// a borderless window one anyway (Windows: an outline and a shadow).
+pub fn bare_window(window: raw_window_handle::RawWindowHandle) {
+    #[cfg(windows)]
+    if let raw_window_handle::RawWindowHandle::Win32(h) = window {
+        imp::bare_window(h.hwnd.get());
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 pub fn unsupported(what: &str) {
     notify("kadr", &kadr_core::tr!("app.linux_only_for_now", what));

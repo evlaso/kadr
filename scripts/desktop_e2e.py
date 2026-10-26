@@ -184,6 +184,10 @@ def gpui(t, work):
     time.sleep(0.3)
     log = t.log.read_text(encoding="utf-8", errors="replace").replace("\0", "") if t.log.exists() else ""
     steps = {k: v for line in log.splitlines() if line.startswith("kadr start: ") for k, _, v in [line[12:].partition("=")]}
+    # What the system took before kadr's main (the loader, a virus scan).
+    start_log = caches() / "start.log"
+    if start_log.exists():
+        steps.update(line.split("=", 1) for line in start_log.read_text().splitlines() if line.startswith("before_main="))
     if not t.note("the editor opens", win, ms=opened, **steps):
         return proc
     t.note("the picture loads", wait_for(lambda: (dev("state") or {}).get("view", {}).get("image")))
@@ -318,6 +322,11 @@ def overlay(t, warm=False):
     t.note("the overlay's timings are logged" + label, timing, **timing)
 
 
+def caches():
+    """kadr's cache folder on macOS and Windows."""
+    return Path(os.environ.get("LOCALAPPDATA", "")) / "kadr/cache" if os.name == "nt" else Path.home() / "Library/Caches/kadr"
+
+
 def mp4_duration(path):
     """Seconds from an MP4's movie header (moov/mvhd), None while it has none
     (still being written)."""
@@ -369,9 +378,8 @@ def record(t):
     run(BIN / f"kadr{EXE}", "record", "stop", check=False)
     length = wait_for(lambda: mp4_duration(file), timeout=20)
     # The recorder's own log beside the test's, whatever came of it.
-    caches = Path(os.environ.get("LOCALAPPDATA", "")) / "kadr/cache" if os.name == "nt" else Path.home() / "Library/Caches/kadr"
-    if (caches / "record.log").exists():
-        shutil.copy(caches / "record.log", t.out / "record.log")
+    if (caches() / "record.log").exists():
+        shutil.copy(caches() / "record.log", t.out / "record.log")
     frames = length and mp4_frames(file)
     t.note("the recording is saved", length and 2 <= length <= 8, seconds=length and round(length, 2), size=file.stat().st_size if file.exists() else None)
     # A steady frame rate, like gpu-screen-recorder's on Linux, even with
