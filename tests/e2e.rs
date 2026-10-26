@@ -218,13 +218,11 @@ fn an_area_screenshot_is_what_was_on_screen() {
     assert_eq!(paths, [saved.to_str().unwrap()], "the card is the screenshot's");
 }
 
-/// A clicked window is taken by itself: a picture pinned over it (a layer
-/// above every window) isn't in the shot, and kadr's shadow is around it.
-#[test]
-#[ignore = "e2e: just e2e"]
-fn a_window_is_taken_by_itself() {
-    let s = Session::start();
-    let picture = fixture(&s, "window.png");
+/// The editor's window on screen, its place and size, under a magenta
+/// picture pinned over it; then `kadr shot windows` clicked on it. The shot
+/// and the window's size.
+fn shoot_covered_editor(s: &Session) -> (RgbaImage, (i64, i64), PathBuf) {
+    let picture = fixture(s, "window.png");
     s.spawn(&["edit", picture.to_str().unwrap()]);
     s.window("kadr-editor");
     std::thread::sleep(Duration::from_millis(500));
@@ -239,7 +237,6 @@ fn a_window_is_taken_by_itself() {
     s.spawn(&["pin", cover.to_str().unwrap()]);
     s.window("kadr-pin");
     std::thread::sleep(Duration::from_millis(300));
-    let magenta = |img: &RgbaImage| img.pixels().filter(|p| p[0] > 240 && p[1] < 20 && p[2] > 240).count();
     let on_screen = magenta(&s.grab(Some((x as u32, y as u32, w as u32, h as u32))));
     assert!(on_screen > 10_000, "the cover isn't over the window ({on_screen} magenta pixels there)");
 
@@ -257,12 +254,76 @@ fn a_window_is_taken_by_itself() {
     let shots = s.var("OMARCHY_SCREENSHOT_DIR");
     let saved = wait(Duration::from_secs(5), || newest(&shots).filter(|p| p.extension().is_some_and(|e| e == "png"))).expect("no screenshot saved");
     std::thread::sleep(Duration::from_millis(200));
-    let shot = image::open(&saved).expect("the screenshot").to_rgba8();
+    (image::open(&saved).expect("the screenshot").to_rgba8(), (w, h), saved)
+}
+
+fn magenta(img: &RgbaImage) -> usize {
+    img.pixels().filter(|p| p[0] > 240 && p[1] < 20 && p[2] > 240).count()
+}
+
+/// A clicked window is taken by itself: a picture pinned over it (a layer
+/// above every window) isn't in the shot, and kadr's shadow is around it.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_window_is_taken_by_itself() {
+    let s = Session::start();
+    let (shot, (w, h), _) = shoot_covered_editor(&s);
     // The window and kadr's shadow margin, 68 pixels each side at 1x.
     let (sw, sh) = shot.dimensions();
     assert!((sw as i64 - (w + 136)).abs() <= 4 && (sh as i64 - (h + 136)).abs() <= 4, "{sw}x{sh} for a {w}x{h} window");
     let left = magenta(&shot);
     assert!(left < 100, "what covers the window is in the shot ({left} magenta pixels)");
+}
+
+/// With a look saved in the editor chosen for window shots, the window goes
+/// on its background (opaque all round, the margin the look's) and the
+/// editor opens the shot with that background still to change.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_window_goes_on_the_saved_background() {
+    let s = Session::start();
+    let config = s.var("XDG_CONFIG_HOME").join("kadr");
+    std::fs::create_dir_all(&config).expect("config");
+    let look = serde_json::json!({ "backdrop": { "gradient": 0 }, "padding": 0.06, "radius": 0.012, "shadow": 0.5, "aspect": 0 });
+    std::fs::write(config.join("editor-presets.json"), serde_json::json!([{ "name": "Ocean", "look": look }]).to_string()).expect("presets");
+    let settings = config.join("settings.json");
+    let before = std::fs::read_to_string(&settings).ok();
+    let mut v: Value = before.as_deref().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_else(|| serde_json::json!({}));
+    v["window_backdrop"] = "Ocean".into();
+    std::fs::write(&settings, v.to_string()).expect("settings");
+    // The other tests' window shots stay as they were.
+    struct Restore(PathBuf, Option<String>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            match &self.1 {
+                Some(t) => drop(std::fs::write(&self.0, t)),
+                None => drop(std::fs::remove_file(&self.0)),
+            }
+        }
+    }
+    let _restore = Restore(settings, before);
+
+    let (shot, (w, h), saved) = shoot_covered_editor(&s);
+    let (sw, sh) = shot.dimensions();
+    // A margin of 6% of the longer side each side.
+    let pad = (w.max(h) as f64 * 0.06).round() as i64;
+    assert!((sw as i64 - (w + 2 * pad)).abs() <= 6 && (sh as i64 - (h + 2 * pad)).abs() <= 6, "{sw}x{sh} for a {w}x{h} window with a {pad} margin");
+    let corners = [(0, 0), (sw - 1, 0), (0, sh - 1), (sw - 1, sh - 1)];
+    assert!(corners.iter().all(|&(x, y)| shot.get_pixel(x, y)[3] == 255), "the background isn't opaque in the corners");
+    assert!(magenta(&shot) < 100, "what covers the window is in the shot");
+    // The editor opens it on that background, the window as its picture.
+    s.spawn(&["edit", saved.to_str().unwrap()]);
+    let framed = wait(Duration::from_secs(5), || {
+        let windows = s.try_dev(&["windows"])?;
+        windows.as_array()?.iter().filter(|w| w["kind"] == "kadr-editor").find_map(|w| {
+            let state = s.try_dev(&["state", &w["id"].to_string()])?;
+            (state["view"]["frame"]["backdrop"]["gradient"] == 0).then_some(state)
+        })
+    });
+    let state = framed.expect("the editor didn't open the shot on its background");
+    let image = &state["view"]["image"];
+    let near = |v: &Value, n: i64| v.as_i64().is_some_and(|v| (v - n).abs() <= 4);
+    assert!(near(&image[0], w) && near(&image[1], h), "the editor's picture is {image}, not the {w}x{h} window");
 }
 
 /// A screen grab that never answers (`KADR_DEV_STALL=grab`) ends in a card

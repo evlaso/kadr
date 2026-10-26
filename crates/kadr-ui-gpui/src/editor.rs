@@ -4303,7 +4303,8 @@ fn opaque_bounds(img: &RgbaImage) -> Option<crop::Rect> {
 
 
 
-fn frame_presets() -> Vec<(String, serde_json::Value)> {
+/// The background looks saved in the editor, by name.
+pub fn frame_presets() -> Vec<(String, serde_json::Value)> {
     let saved = std::fs::read_to_string(util::config_dir().join("editor-presets.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
     saved.as_ref().and_then(|v| v.as_array()).into_iter().flatten().filter_map(|p| Some((p["name"].as_str()?.to_owned(), p["look"].clone()))).collect()
 }

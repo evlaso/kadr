@@ -69,6 +69,9 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
     // A clicked window gets its rounded corners and a soft shadow on a
     // transparent background, like a macOS window shot.
     let shadow = (picked.window && window_shadow()).then(|| (crate::platform::window_rounding(), picked.mon.scale));
+    // Or on the background of a look saved in the editor, which the editor
+    // opens it with, still to change.
+    let backdrop = picked.window.then(|| window_backdrop(&settings)).flatten();
     let (scale, logical) = (picked.mon.scale, settings.logical_size);
     // Encoding a big PNG takes a moment; keep the UI free.
     // On a thread of its own, within a limit: taking a window by itself
@@ -81,6 +84,9 @@ async fn take(mode: &str, settings: &Settings, cx: &mut AsyncApp) -> Option<Path
             eprintln!("kadr: window shot {}", if alone.is_some() { "by itself" } else { "cut from the screen" });
         }
         let image = alone.unwrap_or_else(|| picked.crop());
+        if let Some(frame) = backdrop {
+            return save_on_backdrop(image, &frame, scale, logical, &target);
+        }
         let image = match shadow {
             Some((rounding, scale)) => with_shadow(&image, rounding, scale),
             None => image,
@@ -145,19 +151,53 @@ fn side_by_side(shots: &[(Mon, image::RgbaImage)]) -> Option<(image::RgbaImage, 
     Some((out, scale))
 }
 
-/// Save a screenshot taken in screen pixels at `scale`: scaled down to 1×
-/// with `logical`, and with its density in the PNG either way.
-pub fn save_png(image: impl Into<image::DynamicImage>, scale: f64, logical: bool, path: &std::path::Path) -> image::ImageResult<()> {
-    let image: image::DynamicImage = image.into();
-    let (image, density) = if logical && (scale - 1.).abs() > 1e-3 {
+/// A screenshot taken in screen pixels at `scale`, scaled down to 1× with
+/// `logical`, and the density its PNG gets.
+fn sized(image: image::DynamicImage, scale: f64, logical: bool) -> (image::DynamicImage, f64) {
+    if logical && (scale - 1.).abs() > 1e-3 {
         let size = |n: u32| ((n as f64 / scale).round() as u32).max(1);
         (image.resize_exact(size(image.width()), size(image.height()), image::imageops::FilterType::Lanczos3), 1.)
     } else {
         (image, if logical { 1. } else { scale })
-    };
+    }
+}
+
+fn encode(image: &image::DynamicImage) -> image::ImageResult<Vec<u8>> {
     let mut png = Vec::new();
     image.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
-    std::fs::write(path, cards::with_density(png, density)).map_err(image::ImageError::IoError)
+    Ok(png)
+}
+
+/// Save a screenshot taken in screen pixels at `scale`: scaled down to 1×
+/// with `logical`, and with its density in the PNG either way.
+pub fn save_png(image: impl Into<image::DynamicImage>, scale: f64, logical: bool, path: &std::path::Path) -> image::ImageResult<()> {
+    let (image, density) = sized(image.into(), scale, logical);
+    std::fs::write(path, cards::with_density(encode(&image)?, density)).map_err(image::ImageError::IoError)
+}
+
+/// The look window shots are put on (`Settings::window_backdrop`), if it's
+/// still among the editor's.
+fn window_backdrop(settings: &Settings) -> Option<kadr_core::document::Frame> {
+    let name = settings.window_backdrop.as_deref()?;
+    let (_, look) = crate::editor::frame_presets().into_iter().find(|(n, _)| n == name)?;
+    Some(kadr_core::document::Frame::from_json(&look))
+}
+
+/// A window shot on `frame`'s background, drawn as the editor saves one,
+/// with the window kept as the project's picture so the editor opens it
+/// with the background still to change.
+fn save_on_backdrop(image: image::RgbaImage, frame: &kadr_core::document::Frame, scale: f64, logical: bool, path: &std::path::Path) -> image::ImageResult<()> {
+    let (base, density) = sized(image.into(), scale, logical);
+    let base = base.to_rgba8();
+    let doc = kadr_core::document::Doc::default();
+    let rendered = kadr_raster::render_png(&base, &doc, frame).ok_or_else(|| image::ImageError::IoError(std::io::Error::other("render")))?;
+    let output = cards::with_density(rendered, density);
+    std::fs::write(path, &output).map_err(image::ImageError::IoError)?;
+    let base_png = || encode(&image::DynamicImage::ImageRgba8(base.clone())).map_err(std::io::Error::other);
+    if let Err(e) = kadr_core::project::save(path, &output, base_png, &doc, frame) {
+        eprintln!("kadr: the window shot's project wasn't kept: {e}");
+    }
+    Ok(())
 }
 
 /// Window shots get a shadow (the `window_shadow` setting, on by default).

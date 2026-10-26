@@ -512,5 +512,8 @@
  "trim.trimming_video": "Trimming the video",
  "update.available": "kadr {} is out",
  "update.whats_new_on_release_page": "What's new and the downloads are on the release page.",
- "update.release_page": "Release page"
+ "update.release_page": "Release page",
+ "settings.no_background": "None",
+ "settings.window_background": "Window background",
+ "settings.window_background_tip": "A captured window goes on a background saved in the editor"
 }

@@ -36,9 +36,9 @@ pub struct SettingsView {
     /// Installed OCR languages, e.g. "rus+eng".
     languages: String,
     downloading: bool,
-    /// The language dropdown is open.
-    languages_open: bool,
-    languages_menu: crate::ui::MenuBounds,
+    /// The dropdown that's open (where kadr draws them), by its id.
+    open_menu: Option<&'static str>,
+    menu_bounds: crate::ui::MenuBounds,
     /// Space kadr's captures take, measured when the window opens.
     usage: storage::Usage,
     scroll: gpui::ScrollHandle,
@@ -69,14 +69,14 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { vm: SettingsVm::new(Settings::load(), hotkeys::load()), languages: ocr::languages(), downloading: false, languages_open: false, languages_menu: Default::default(), usage: storage::usage(&Settings::load()), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
+            SettingsView { vm: SettingsVm::new(Settings::load(), hotkeys::load()), languages: ocr::languages(), downloading: false, open_menu: None, menu_bounds: Default::default(), usage: storage::usage(&Settings::load()), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
         })
     });
 }
 
 impl SettingsView {
     fn set_language(&mut self, lang: crate::i18n::Lang, cx: &mut Context<Self>) {
-        self.languages_open = false;
+        self.open_menu = None;
         self.vm.settings.language = lang;
         self.vm.settings.save();
         crate::i18n::set(lang);
@@ -84,13 +84,15 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// The language as a dropdown: there will be more than fit in a row.
-    fn render_languages(&self, cx: &mut Context<Self>) -> AnyElement {
-        let current = self.vm.settings.language;
-        let menu = self.languages_open.then(|| {
+    /// A choice among more than fit in a row of chips: the system's menu
+    /// where it has one, else kadr's own under the button.
+    fn dropdown(&self, id: &'static str, entries: Vec<String>, selected: usize, pick: fn(&mut Self, usize, &mut Context<Self>), cx: &mut Context<Self>) -> AnyElement {
+        let open = self.open_menu == Some(id);
+        let current = entries.get(selected).cloned().unwrap_or_default();
+        let menu = open.then(|| {
             gpui::deferred(
                 v_flex()
-                    .id("languages")
+                    .id(SharedString::from(format!("{id}-menu")))
                     .occlude()
                     .absolute()
                     .top(px(30.))
@@ -99,47 +101,69 @@ impl SettingsView {
                     .p_1()
                     .gap_0p5()
                     .elevation_3(cx)
-                    .children(crate::i18n::Lang::ALL.into_iter().map(|lang| {
+                    .children(entries.iter().enumerate().map(|(i, label)| {
                         h_flex()
-                            .id(SharedString::from(format!("lang-{}", lang.code())))
+                            .id(SharedString::from(format!("{id}-{i}")))
                             .gap_2()
                             .px_2()
                             .py_1()
                             .rounded(crate::ui::rems_from_px(6.))
                             .cursor_pointer()
                             .hover(|d| d.bg(cx.theme().colors().element_hover))
-                            .child(Icon::new(IconName::Check).size(IconSize::Small).color(if lang == current { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
-                            .child(Label::new(lang.name()))
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_language(lang, cx)))
+                            .child(Icon::new(IconName::Check).size(IconSize::Small).color(if i == selected { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
+                            .child(Label::new(label.clone()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_menu = None;
+                                pick(this, i, cx);
+                                cx.notify();
+                            }))
                     }))
-                    .child(crate::ui::track_bounds(&self.languages_menu)),
+                    .child(crate::ui::track_bounds(&self.menu_bounds)),
             )
         });
         div()
             .relative()
-            .on_mouse_down_out(cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| {
-                if this.languages_open && !this.languages_menu.get().contains(&e.position) {
-                    this.languages_open = false;
+            .on_mouse_down_out(cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                if this.open_menu == Some(id) && !this.menu_bounds.get().contains(&e.position) {
+                    this.open_menu = None;
                     cx.notify();
                 }
             }))
             .child(
-                ButtonLike::new("language")
+                ButtonLike::new(id)
                     .style(ButtonStyle::Filled)
-                    .toggle_state(self.languages_open)
-                    .child(h_flex().gap_1p5().px_2().child(Label::new(current.name()).size(LabelSize::Small)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                    .toggle_state(open)
+                    .child(h_flex().gap_1p5().px_2().child(Label::new(current).size(LabelSize::Small)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
                     .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
-                        let langs = crate::i18n::Lang::ALL;
-                        let items = langs.iter().map(|&lang| kadr_platform::menu::Item::new(lang.name(), lang == current)).collect();
-                        if crate::ui::native_menu(window, cx, e.position(), items, move |this: &mut SettingsView, i, _, cx| this.set_language(langs[i], cx)) {
+                        let items = entries.iter().enumerate().map(|(i, label)| kadr_platform::menu::Item::new(label.clone(), i == selected)).collect();
+                        if crate::ui::native_menu(window, cx, e.position(), items, move |this: &mut SettingsView, i, _, cx| pick(this, i, cx)) {
                             return;
                         }
-                        this.languages_open = !this.languages_open;
+                        this.open_menu = if this.open_menu == Some(id) { None } else { Some(id) };
                         cx.notify();
                     })),
             )
             .children(menu)
             .into_any_element()
+    }
+
+    /// The language: there will be more than fit in a row.
+    fn render_languages(&self, cx: &mut Context<Self>) -> AnyElement {
+        let langs = crate::i18n::Lang::ALL;
+        let current = langs.iter().position(|&l| l == self.vm.settings.language).unwrap_or(0);
+        self.dropdown("language", langs.iter().map(|l| l.name().to_owned()).collect(), current, |this, i, cx| this.set_language(crate::i18n::Lang::ALL[i], cx), cx)
+    }
+
+    /// The background window shots are put on: none, or a look saved in
+    /// the editor.
+    fn render_window_backdrop(&self, cx: &mut Context<Self>) -> AnyElement {
+        let names: Vec<String> = crate::editor::frame_presets().into_iter().map(|(name, _)| name).collect();
+        let selected = self.vm.settings.window_backdrop.as_ref().and_then(|n| names.iter().position(|m| m == n)).map_or(0, |i| i + 1);
+        let entries = std::iter::once(t("settings.no_background").to_owned()).chain(names).collect();
+        self.dropdown("window-backdrop", entries, selected, |this, i, cx| {
+            let name = (i > 0).then(|| crate::editor::frame_presets().into_iter().nth(i - 1).map(|(n, _)| n)).flatten();
+            this.update(cx, |s| s.window_backdrop = name);
+        }, cx)
     }
 
     fn update(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Settings)) {
@@ -322,6 +346,7 @@ impl SettingsView {
                     row(t("settings.screenshots_folder"), t("settings.by_default_same_as_omarchys"), folder(cx, s.screenshot_dir(), s.screenshot_dir.is_some(), true)),
                     self.render_name(crate::storage::Capture::Screenshot, "png", cx),
                     row(t("settings.window_shadow"), t("settings.window_captures_keep_shadow"), switch("shadow", s.window_shadow, cx, |s, on| s.window_shadow = on)),
+                    row(t("settings.window_background"), t("settings.window_background_tip"), self.render_window_backdrop(cx)),
                     row(
                         t("settings.screenshot_size"),
                         t("settings.screenshot_size_tip"),

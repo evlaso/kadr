@@ -64,6 +64,9 @@ pub struct Settings {
     pub name_template: String,
     /// Window captures keep the window's shadow on a transparent background.
     pub window_shadow: bool,
+    /// The editor's saved look (by name) window captures are put on, with
+    /// its background, margin and shadow; None keeps them as they are.
+    pub window_backdrop: Option<String>,
     /// Screenshots are scaled down to logical pixels (1×), so a pixel of the
     /// picture is a pixel of the design; off keeps every screen pixel.
     pub logical_size: bool,
@@ -117,6 +120,7 @@ impl Default for Settings {
             after_video: After { card: true, copy: true, save: true, edit: false, pin: false },
             name_template: crate::storage::DEFAULT_NAME.into(),
             window_shadow: true,
+            window_backdrop: None,
             logical_size: true,
             timer_seconds: 3,
             shot_cursor: false,
@@ -161,6 +165,7 @@ impl Settings {
             after_video: After::load(&v["after_video"], After { card: bool_or("show_card", d.after_video.card), ..d.after_video }),
             name_template: v["name_template"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or(&d.name_template).to_owned(),
             window_shadow: bool_or("window_shadow", d.window_shadow),
+            window_backdrop: v["window_backdrop"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
             logical_size: bool_or("logical_size", d.logical_size),
             shot_cursor: bool_or("shot_cursor", d.shot_cursor),
             timer_seconds: Some(num_or("timer_seconds", d.timer_seconds as u64) as u32).filter(|n| TIMER_SECONDS.contains(n)).unwrap_or(d.timer_seconds),
@@ -196,6 +201,7 @@ impl Settings {
             "after_video": self.after_video.json(),
             "name_template": self.name_template,
             "window_shadow": self.window_shadow,
+            "window_backdrop": self.window_backdrop,
             "logical_size": self.logical_size,
             "timer_seconds": self.timer_seconds,
             "shot_cursor": self.shot_cursor,

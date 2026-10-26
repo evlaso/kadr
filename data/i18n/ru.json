@@ -512,5 +512,8 @@
  "trim.trimming_video": "Обрезаю видео",
  "update.available": "Вышел kadr {}",
  "update.whats_new_on_release_page": "Что нового и файлы для загрузки — на странице релиза.",
- "update.release_page": "Страница релиза"
+ "update.release_page": "Страница релиза",
+ "settings.no_background": "Без фона",
+ "settings.window_background": "Фон снимка окна",
+ "settings.window_background_tip": "Снимок окна — на фоне, сохранённом в редакторе"
 }
