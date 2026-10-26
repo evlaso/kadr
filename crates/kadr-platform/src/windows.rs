@@ -124,6 +124,31 @@ impl Drop for CursorShapes {
     }
 }
 
+/// The running kadr's mark: a named mutex it holds for as long as it runs.
+const INSTANCE: windows::core::PCWSTR = windows::core::w!("Local\\kadr-instance");
+
+/// Marks this process as the running kadr (after binding its socket).
+pub(crate) fn mark_instance() {
+    use windows::Win32::System::Threading::CreateMutexW;
+    // SAFETY: a named mutex; its handle is never closed, so it lasts as
+    // long as the process.
+    let _ = unsafe { CreateMutexW(None, false, INSTANCE) };
+}
+
+/// Whether a kadr marked itself running.
+pub(crate) fn instance_running() -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
+    // SAFETY: opening a named mutex only to see that it's there.
+    match unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, INSTANCE) } {
+        Ok(handle) => {
+            let _ = unsafe { CloseHandle(handle) };
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// The windows on screen, topmost first (the order EnumWindows walks the
 /// z-order in): visible, not minimized or cloaked, not kadr's overlay or
 /// its untitled cards; each with its handle and its frame (the DWM's,

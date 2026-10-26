@@ -104,10 +104,16 @@ pub mod ipc {
         #[cfg(unix)]
         return Stream::connect(path()).ok();
         // Windows retries a refused localhost connection for about two
-        // seconds before giving up, which was most of a cold start: a
-        // running kadr answers well within the limit.
+        // seconds before giving up, which was most of a cold start: only
+        // knock where the running kadr's named mutex says one is there, and
+        // not for long (it answers well within the limit).
         #[cfg(windows)]
-        return Stream::connect_timeout(&ADDRESS.parse().ok()?, std::time::Duration::from_millis(150)).ok();
+        {
+            if !super::imp::instance_running() {
+                return None;
+            }
+            Stream::connect_timeout(&ADDRESS.parse().ok()?, std::time::Duration::from_millis(150)).ok()
+        }
     }
 
     /// Become the running instance; a stale socket from a crash is replaced.
@@ -118,7 +124,11 @@ pub mod ipc {
             Listener::bind(path())
         }
         #[cfg(windows)]
-        Listener::bind(ADDRESS)
+        {
+            let listener = Listener::bind(ADDRESS)?;
+            super::imp::mark_instance();
+            Ok(listener)
+        }
     }
 
     /// Stop taking new commands before quitting.
