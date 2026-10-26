@@ -233,6 +233,36 @@ mod sni {
 
     struct Tray {
         icon: Vec<Icon>,
+        /// Where the named icon is, if it could be written.
+        theme: Option<String>,
+    }
+
+    /// The icon's name: "-symbolic" asks the panel to paint it in its own
+    /// text colour, so it shows on any bar, light or dark.
+    const NAME: &str = "kadr-tray-symbolic";
+
+    /// The viewfinder as a symbolic SVG, the drawing `pixmap` makes, in
+    /// kadr's data folder: loose and in a theme's layout, for hosts that
+    /// look either way. Its folder, for the icon theme path.
+    fn write_svg() -> Option<String> {
+        let (m, arm, s) = (24. * 0.14, 24. * 0.24, 24.);
+        let corners: String = [(m, m, 1., 1.), (s - m, m, -1., 1.), (s - m, s - m, -1., -1.), (m, s - m, 1., -1.)]
+            .iter()
+            .map(|&(x, y, dx, dy): &(f32, f32, f32, f32)| format!("M{x:.2} {:.2}L{x:.2} {y:.2}L{:.2} {y:.2}", y + dy * arm, x + dx * arm))
+            .collect();
+        let svg = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\"><path d=\"{corners}\" fill=\"none\" stroke=\"#bebebe\" stroke-width=\"2.16\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><circle cx=\"12\" cy=\"12\" r=\"2.64\" fill=\"#bebebe\"/></svg>\n"
+        );
+        let root = kadr_core::dirs::data().join("icons");
+        let themed = root.join("hicolor/scalable/apps");
+        std::fs::create_dir_all(&themed).ok()?;
+        for dir in [&root, &themed] {
+            let file = dir.join(format!("{NAME}.svg"));
+            if std::fs::read_to_string(&file).ok().as_deref() != Some(&svg) {
+                std::fs::write(&file, &svg).ok()?;
+            }
+        }
+        Some(root.to_string_lossy().into_owned())
     }
 
     impl ksni::Tray for Tray {
@@ -244,6 +274,15 @@ mod sni {
             "kadr".into()
         }
 
+        fn icon_name(&self) -> String {
+            if self.theme.is_some() { NAME.into() } else { String::new() }
+        }
+
+        fn icon_theme_path(&self) -> String {
+            self.theme.clone().unwrap_or_default()
+        }
+
+        /// For hosts that don't look icons up by name.
         fn icon_pixmap(&self) -> Vec<Icon> {
             self.icon.clone()
         }
@@ -291,7 +330,7 @@ mod sni {
         }
         let Some(_instance) = become_tray() else { return };
         super::watch_for_updates();
-        let tray = Tray { icon: [22, 32, 48, 64].into_iter().filter_map(icon).collect() };
+        let tray = Tray { icon: [22, 32, 48, 64].into_iter().filter_map(icon).collect(), theme: write_svg() };
         // Started before the panel (autostart, or a session without one),
         // the icon waits for it instead of giving up.
         if let Err(e) = tray.assume_sni_available(true).spawn() {
