@@ -1,21 +1,21 @@
 {
-  "version": "0.3.0-alpha.1",
-  "date": "2026-10-23",
-  "notes_url": "https://github.com/vlasmn/kadr/releases/tag/v0.3.0-alpha.1",
+  "version": "0.3.0-alpha.2",
+  "date": "2026-10-26",
+  "notes_url": "https://github.com/evlaso/kadr/releases/tag/v0.3.0-alpha.2",
   "platforms": {
     "linux-x86_64": {
-      "url": "https://github.com/vlasmn/kadr/releases/download/v0.3.0-alpha.1/kadr-0.3.0-alpha.1-x86_64-linux.tar.xz",
-      "sha256": "0a201b7a40ecfabe6472ce2e428091aaf72f3d6d5a365b678f7d55461b0f4e3f",
+      "url": "https://github.com/evlaso/kadr/releases/download/v0.3.0-alpha.2/kadr-0.3.0-alpha.2-x86_64-linux.tar.xz",
+      "sha256": "06049a9c92f195d563e6b085d8095f9fd7bfd5b3c34befe844c7f4b21df8dab9",
       "sig": ""
     },
     "macos-universal": {
-      "url": "https://github.com/vlasmn/kadr/releases/download/v0.3.0-alpha.1/kadr-0.3.0-alpha.1-macos-universal.dmg",
-      "sha256": "e44510adeb199bad80e0022a48a2202f85f108f2f08b031884df10c91aadb6fb",
+      "url": "https://github.com/evlaso/kadr/releases/download/v0.3.0-alpha.2/kadr-0.3.0-alpha.2-macos-universal.dmg",
+      "sha256": "7420ed9991c2b3234b3eb4ba718fe8edc2a31b6f6b925e453f8d1ab38659b0ca",
       "sig": ""
     },
     "windows-x86_64": {
-      "url": "https://github.com/vlasmn/kadr/releases/download/v0.3.0-alpha.1/kadr-0.3.0-alpha.1-x86_64-windows.zip",
-      "sha256": "75f09edb9aa13a7fb35b5b3e808e610be1c22c2b61255b09a979a8d8bcfdcfe3",
+      "url": "https://github.com/evlaso/kadr/releases/download/v0.3.0-alpha.2/kadr-0.3.0-alpha.2-x86_64-windows-setup.exe",
+      "sha256": "f91abce2b14da8274a4992c5d96f79f67987d5d323d87b86127605aa560e2cd8",
       "sig": ""
     }
   }
