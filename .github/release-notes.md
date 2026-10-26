@@ -10,7 +10,8 @@
 
 - `kadr-{version}-x86_64-linux.tar.xz`: `kadr`, `kadr-tray` and the Hyprland hook. Needs `gpu-screen-recorder`, `ffmpeg`, `tesseract`, `grim` and `wl-clipboard`; `INSTALL.md` inside says where things go.
 - `kadr-{version}-macos-universal.dmg`: `Kadr.app`, for Apple silicon and Intel. Drag it to Applications; it lives in the menu bar.
-- `kadr-{version}-x86_64-windows.zip`: portable, nothing to install. Start `kadr-tray.exe`.
+- `kadr-{version}-x86_64-windows-setup.exe`: the installer, for your user only (no administrator): the Start menu, the tray at login, `.kadr` files; uninstall in Settings → Apps.
+- `kadr-{version}-x86_64-windows-portable.exe`: kadr as one file, nothing to install; it starts its own tray.
 - A `.sha256` beside each file: `sha256sum -c <file>.sha256` (on macOS `shasum -a 256 -c`).
 
 ## macOS: the first start

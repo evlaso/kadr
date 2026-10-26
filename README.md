@@ -41,7 +41,7 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 
 ## Install
 
-[Releases](https://github.com/evlaso/kadr/releases) has builds for the three systems: a `.tar.xz` for Linux (with an `INSTALL.md`), `Kadr.app` in a `.dmg` for macOS (Apple silicon and Intel) and a portable `.zip` for Windows. They aren't signed yet: on macOS run `xattr -dr com.apple.quarantine /Applications/Kadr.app` once after copying the app. Homebrew, winget and the AUR come later. kadr can also be built from source, which needs Rust 1.95 or newer.
+[Releases](https://github.com/evlaso/kadr/releases) has builds for the three systems: a `.tar.xz` for Linux (with an `INSTALL.md`), `Kadr.app` in a `.dmg` for macOS (Apple silicon and Intel) and an installer or a portable `.exe` for Windows. They aren't signed yet: on macOS run `xattr -dr com.apple.quarantine /Applications/Kadr.app` once after copying the app. Homebrew, winget and the AUR come later. kadr can also be built from source, which needs Rust 1.95 or newer.
 
 ### Linux (Hyprland)
 

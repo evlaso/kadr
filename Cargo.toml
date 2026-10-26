@@ -30,6 +30,15 @@ kadr-tray = { path = "crates/kadr-tray" }
 kadr-ui-gpui = { path = "crates/kadr-ui-gpui" }
 serde_json.workspace = true
 
+# `kadr overlay`: the area overlay as kadr itself, for a portable kadr
+# that's one file (Linux has it as a thread of kadr).
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+kadr-overlay = { path = "crates/kadr-overlay" }
+
+# kadr.exe's icon and version (build.rs).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.34"
+
 [dev-dependencies]
 # The e2e tests compare what kadr saved with what the rasteriser draws.
 image.workspace = true

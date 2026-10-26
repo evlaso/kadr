@@ -41,7 +41,7 @@
 
 ## Установка
 
-В [Releases](https://github.com/evlaso/kadr/releases) лежат сборки для трёх систем: `.tar.xz` для Linux (с `INSTALL.md` внутри), `Kadr.app` в `.dmg` для macOS (Apple silicon и Intel) и портативный `.zip` для Windows. Они пока не подписаны: на macOS после копирования приложения один раз выполните `xattr -dr com.apple.quarantine /Applications/Kadr.app`. Homebrew, winget и AUR появятся позже. Ещё kadr можно собрать из исходников, нужен Rust 1.95 или новее.
+В [Releases](https://github.com/evlaso/kadr/releases) лежат сборки для трёх систем: `.tar.xz` для Linux (с `INSTALL.md` внутри), `Kadr.app` в `.dmg` для macOS (Apple silicon и Intel) и установщик или портативный `.exe` для Windows. Они пока не подписаны: на macOS после копирования приложения один раз выполните `xattr -dr com.apple.quarantine /Applications/Kadr.app`. Homebrew, winget и AUR появятся позже. Ещё kadr можно собрать из исходников, нужен Rust 1.95 или новее.
 
 ### Linux (Hyprland)
 

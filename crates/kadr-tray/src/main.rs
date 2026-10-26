@@ -1,3 +1,6 @@
+// A window app on Windows: no console opens with it.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 //! `kadr-tray`: kadr's tray icon and, on macOS and Windows, its global
 //! hotkeys, without the rest of kadr loaded (`kadr tray` does the same).
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# A release's archive for Linux or Windows (SPEC 12.2), from the dist build
+# A release's files for Linux (an archive) or Windows (an installer and a
+# portable kadr.exe) (SPEC 12.2), from the dist build
 # (`cargo build --profile dist -p kadr -p kadr-tray -p kadr-overlay`), with a
 # .sha256 beside it. macOS has its own: scripts/bundle-macos.sh.
 #
@@ -44,13 +45,16 @@ EOF
     tar -C "$stage" -cJf "$out/$file" "$name"
     ;;
 windows)
-    name="kadr-$version-x86_64-windows"
-    dir="$stage/$name"
-    mkdir -p "$dir"
-    cp "$root/target/dist/kadr.exe" "$root/target/dist/kadr-tray.exe" "$root/target/dist/kadr-overlay.exe" "$dir/"
-    cp "$root/LICENSE" "$root/README.md" "$root/CHANGELOG.md" "$dir/"
-    file="$name.zip"
-    (cd "$stage" && 7z a -tzip -bso0 "$out/$file" "$name")
+    # An installer and a portable kadr.exe, no archive: the portable one is
+    # its own tray (`kadr tray`) and area overlay (`kadr overlay`).
+    dist=$root/target/dist
+    portable="kadr-$version-x86_64-windows-portable.exe"
+    cp "$dist/kadr.exe" "$out/$portable"
+    iscc=$(command -v iscc || command -v ISCC || echo "/c/Program Files (x86)/Inno Setup 6/ISCC.exe")
+    # Git Bash would turn /D… into paths.
+    MSYS2_ARG_CONV_EXCL='*' "$iscc" /Q "/DVersion=$version" "/DSource=$(cygpath -w "$dist")" "/DOut=$(cygpath -w "$out")" "$(cygpath -w "$root/packaging/windows/kadr.iss")"
+    file="kadr-$version-x86_64-windows-setup.exe"
+    (cd "$out" && sha256sum "$portable" >"$portable.sha256")
     ;;
 *)
     echo "usage: $0 linux|windows VERSION OUT_DIR" >&2

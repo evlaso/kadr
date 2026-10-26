@@ -1,3 +1,7 @@
+// A window app on Windows: no console opens with it (one it's started from
+// gets its output, `platform::attach_console`).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 //! The `kadr` program: its command line. Checks what it's asked, hands it
 //! to a kadr that's already running (one instance takes every command),
 //! else becomes that kadr and starts the UI (`kadr-ui-gpui`).
@@ -32,6 +36,13 @@ fn dev_client(args: &[String]) -> ! {
 }
 
 fn main() {
+    kadr_platform::attach_console();
+    // The area overlay as kadr itself, where it's one file (portable on
+    // Windows) with no kadr-overlay beside it.
+    #[cfg(not(target_os = "linux"))]
+    if std::env::args_os().nth(1).is_some_and(|a| a == "overlay") {
+        kadr_overlay::program(std::env::args_os().skip(2).collect());
+    }
     kadr_ui_gpui::prepare();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {

@@ -57,5 +57,5 @@ windows = { version = "0.62", features = [
     "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture",
     "Win32_Media_MediaFoundation", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_Security",
     # Where a crash happened (crash_log).
-    "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader",
+    "Win32_System_Diagnostics_Debug", "Win32_System_Console", "Win32_System_Kernel", "Win32_System_LibraryLoader",
 ] }

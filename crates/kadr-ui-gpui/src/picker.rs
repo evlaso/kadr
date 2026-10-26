@@ -157,7 +157,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
     // program beside kadr (winit wants the main thread, which GPUI has).
     #[cfg(not(target_os = "linux"))]
     if std::env::var("KADR_PICKER").as_deref() != Ok("gpui")
-        && let Some(exe) = overlay_exe()
+        && let Some((exe, prefix)) = overlay_exe()
     {
         let accent = cx.update(|cx| crate::ui::to_rgba(cx.theme().colors().text_accent));
         let screen = kadr_overlay::Screen { output: mon.name.clone(), logical: (mon.w as u32, mon.h as u32), scale: mon.scale, frozen: frozen.clone(), windows: windows.clone(), previous, origin: (mon.x as f64, mon.y as f64) };
@@ -176,7 +176,7 @@ pub async fn pick(snap: bool, color: bool, cx: &mut AsyncApp) -> Option<Picked> 
                 if let Some(outcome) = warm_overlay(&spec).and_then(|l| kadr_overlay::spec::parse_outcome(&l)) {
                     return Some(outcome);
                 }
-                let out = std::process::Command::new(&exe).arg(&spec).output().ok()?;
+                let out = std::process::Command::new(&exe).args(prefix).arg(&spec).output().ok()?;
                 eprint!("{}", String::from_utf8_lossy(&out.stderr));
                 kadr_overlay::spec::parse_outcome(&String::from_utf8_lossy(&out.stdout))
             };
@@ -232,11 +232,14 @@ fn warm_overlay(spec: &std::path::Path) -> Option<String> {
     Some(line)
 }
 
-/// The kadr-overlay program beside kadr's own.
+/// The kadr-overlay program beside kadr's own, else kadr itself as it
+/// (`kadr overlay`, a portable kadr that's one file), with the arguments
+/// that go before the spec.
 #[cfg(not(target_os = "linux"))]
-fn overlay_exe() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?.with_file_name(if cfg!(windows) { "kadr-overlay.exe" } else { "kadr-overlay" });
-    exe.exists().then_some(exe)
+fn overlay_exe() -> Option<(std::path::PathBuf, &'static [&'static str])> {
+    let own = std::env::current_exe().ok()?;
+    let beside = own.with_file_name(if cfg!(windows) { "kadr-overlay.exe" } else { "kadr-overlay" });
+    Some(if beside.exists() { (beside, &[]) } else { (own, &["overlay"]) })
 }
 
 /// What the overlay ended in, as what the app takes: an area, or the

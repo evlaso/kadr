@@ -357,6 +357,17 @@ mod cursors {
     }
 }
 
+pub(crate) fn attach_console() {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
+    // SAFETY: plain calls; a handle given by the parent (a pipe) is left be.
+    unsafe {
+        if GetStdHandle(STD_OUTPUT_HANDLE).is_ok_and(|h| !h.is_invalid() && !h.0.is_null()) {
+            return;
+        }
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 /// Where a crash outside Rust's panics leaves its note (`crash_log`).
 static CRASH_LOG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -421,11 +432,13 @@ pub fn install_desktop() -> std::io::Result<()> {
     Err(std::io::Error::other("not on this system yet"))
 }
 
-/// `kadr tray` holds the hotkeys: the Run key starts it at login, through a
-/// headless console so no window shows. Written again only when kadr moved.
+/// The tray holds the hotkeys: the Run key starts it at login (window apps
+/// both, so no console shows). Written again only when kadr moved.
 pub fn ensure_desktop() {
     let Ok(exe) = std::env::current_exe() else { return };
-    let command = format!("conhost.exe --headless \"{}\" tray", exe.display());
+    // kadr-tray where it's installed beside kadr: a lighter process.
+    let tray = exe.with_file_name("kadr-tray.exe");
+    let command = if tray.exists() { format!("\"{}\"", tray.display()) } else { format!("\"{}\" tray", exe.display()) };
     let marker = config_dir().join("autostart");
     if std::fs::read_to_string(&marker).ok().as_deref() == Some(command.as_str()) {
         return;

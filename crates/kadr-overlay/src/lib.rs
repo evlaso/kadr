@@ -90,3 +90,40 @@ pub fn pick(screen: &Screen, options: &Options) -> Result<Option<Outcome>, ()> {
 pub fn serve(socket: &std::path::Path) -> Result<(), ()> {
     desktop::serve(socket)
 }
+
+/// The `kadr-overlay` program with its arguments (`kadr overlay …` runs it
+/// too, for a kadr that's one file): see main.rs.
+pub fn program(args: Vec<std::ffi::OsString>) -> ! {
+    started();
+    let Some(path) = args.first().cloned() else {
+        eprintln!("usage: kadr-overlay SPEC.json | --serve SOCKET");
+        std::process::exit(2);
+    };
+    if path == "--serve" {
+        #[cfg(all(unix, not(target_os = "linux")))]
+        if let Some(socket) = args.get(1) {
+            let _ = serve(std::path::Path::new(&socket));
+        }
+        eprintln!("kadr-overlay: --serve needs a socket, and macOS");
+        std::process::exit(2);
+    }
+    let Some((screen, options, lang)) = spec::read(std::path::Path::new(&path)) else {
+        eprintln!("kadr-overlay: can't read {}", std::path::Path::new(&path).display());
+        std::process::exit(2);
+    };
+    let read_ms = since_start();
+    kadr_core::i18n::set(kadr_core::i18n::Lang::from_code(&lang));
+    eprintln!("kadr-overlay timing: read={read_ms}ms");
+    // The words were read before the language was set.
+    let options = Options { free: kadr_core::i18n::t("picker.free").to_owned(), ..options };
+    match pick(&screen, &options) {
+        Ok(outcome) => {
+            println!("{}", spec::outcome_line(outcome));
+            std::process::exit(0);
+        }
+        Err(()) => {
+            eprintln!("kadr-overlay: couldn't show the overlay here");
+            std::process::exit(2);
+        }
+    }
+}

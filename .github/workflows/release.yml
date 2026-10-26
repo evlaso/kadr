@@ -54,6 +54,10 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev \
             libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxcb-xinput-dev \
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev libfontconfig-dev
+      - name: Inno Setup (Windows)
+        if: matrix.system == 'windows'
+        run: |
+          [[ -x "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]] || choco install innosetup -y --no-progress
       - name: Build and pack (Linux, Windows)
         if: matrix.system != 'macos'
         run: |

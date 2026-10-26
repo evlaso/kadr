@@ -86,6 +86,14 @@ pub fn crash_log(log: PathBuf) {
     let _ = log;
 }
 
+/// On Windows, where kadr is a window app with no console of its own, its
+/// output goes to the console it was started from, if any (`kadr --help`
+/// in a terminal). Pipes it was given are kept.
+pub fn attach_console() {
+    #[cfg(windows)]
+    imp::attach_console();
+}
+
 /// How long ago the system made this process, in ms: with the time kadr
 /// itself counts from `main`, what the loader and a virus scan took first.
 pub fn process_age_ms() -> Option<u64> {
