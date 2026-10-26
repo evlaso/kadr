@@ -103,8 +103,11 @@ pub mod ipc {
     pub fn connect() -> Option<Stream> {
         #[cfg(unix)]
         return Stream::connect(path()).ok();
+        // Windows retries a refused localhost connection for about two
+        // seconds before giving up, which was most of a cold start: a
+        // running kadr answers well within the limit.
         #[cfg(windows)]
-        return Stream::connect(ADDRESS).ok();
+        return Stream::connect_timeout(&ADDRESS.parse().ok()?, std::time::Duration::from_millis(150)).ok();
     }
 
     /// Become the running instance; a stale socket from a crash is replaced.
