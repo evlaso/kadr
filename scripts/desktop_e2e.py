@@ -420,7 +420,9 @@ def record_through_bar(t):
         windows = dev("windows")
         t.shot("no-record-bar")
         if sys.platform == "darwin":
-            run("sample", "kadr", "3", "-file", t.out / "kadr-sample.txt", check=False, timeout=30)
+            pids = (run("pgrep", "-x", "kadr", check=False).stdout or "").split()
+            for pid in pids:
+                run("sample", pid, "2", "-mayDie", "-file", t.out / f"kadr-sample-{pid}.txt", check=False, timeout=180)
         t.note("the recording bar opens", False, answers=windows is not None, windows=[w["kind"] for w in windows or []])
         return
     t.note("the recording bar opens", True)
