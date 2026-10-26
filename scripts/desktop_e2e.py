@@ -395,11 +395,14 @@ def record_through_bar(t):
     videos = t.out / "videos"
     before = set(videos.glob("*.mp4"))
     # Asked again while the last recording is still being finished (its
-    # sound evened out by ffmpeg), which kadr waits out.
+    # sound evened out by ffmpeg), which kadr waits out. kadr may have quit
+    # since, with nothing on screen: then this one becomes it, with the
+    # dev hooks and the test's folders.
+    env = dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(t.out / "shots"), OMARCHY_SCREENRECORD_DIR=str(videos))
     find_bar = lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-panel"), None)
     bar = None
     for _ in range(6):
-        run(BIN / f"kadr{EXE}", "record", "area", "100,100 640x360", check=False)
+        t.start(BIN / f"kadr{EXE}", "record", "area", "100,100 640x360", env=env)
         bar = wait_for(find_bar, timeout=4)
         if bar:
             break
