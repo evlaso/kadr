@@ -36,6 +36,7 @@ mod job;
 mod kit;
 mod menubar;
 mod ocr;
+mod update;
 mod util;
 mod webcam;
 
@@ -94,6 +95,7 @@ fn run_command(command: Command, cx: &mut App) {
         Command::Settings => settings_view::open(cx),
         Command::Capture => launcher::toggle(cx),
         Command::UpdateAvailable(version, page) => cards::show_update(version, page, cx),
+        Command::Update => update::check_now(cx),
     }
 }
 
@@ -148,6 +150,8 @@ pub fn run(command: Command, listener: platform::ipc::Listener) {
         dev::mark("tray");
         run_command(command, cx);
         dev::mark("command");
+        // Up and taking commands: a version just put in has proved itself.
+        cx.background_executor().spawn(async { kadr_platform::update::settled() }).detach();
 
         cx.spawn(async move |cx| {
             while let Some((args, reply)) = rx.next().await {

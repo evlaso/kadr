@@ -77,6 +77,14 @@ impl<T> CardsVm<T> {
         self.cards.retain(|c| c.id != id);
     }
 
+    /// Card `id` has work going on again (an update downloading): it stays.
+    pub fn work(&mut self, id: usize) {
+        if let Some(card) = self.get_mut(id) {
+            card.working = true;
+            card.deadline = None;
+        }
+    }
+
     /// The job behind card `id` is done: it shows `path` from now on, and
     /// goes away in time like any other.
     pub fn complete(&mut self, id: usize, path: PathBuf, now: Instant) -> bool {

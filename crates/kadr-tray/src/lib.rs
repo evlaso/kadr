@@ -139,6 +139,19 @@ pub fn stop() {
     }
 }
 
+/// Stop the running tray and start `argv` instead (the new version's, after
+/// an update: this program's own path may now be the old one's).
+pub fn restart_as(argv: &[OsString]) {
+    stop();
+    for _ in 0..200 {
+        if !running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    platform::spawn(argv);
+}
+
 /// Start it over, to pick up the settings and hotkeys. Waits a little for the
 /// old one to go, or the new one would find it and quit.
 pub fn restart() {
@@ -349,16 +362,19 @@ pub use sni::run;
 /// when the last look is over an hour old, then once a day; a newer one
 /// gets kadr's card, once. Off in the settings (`check_updates`).
 fn watch_for_updates() {
-    use kadr_core::update::{CURRENT, LATEST_URL, Latest, State};
+    use kadr_core::update::{CURRENT, Channel, LATEST_URL, Latest, State};
     std::thread::spawn(|| {
         let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let mut at_start = true;
         loop {
             let mut state = State::load();
-            if kadr_core::settings::Settings::load().check_updates && state.due(now(), at_start) {
+            let settings = kadr_core::settings::Settings::load();
+            if settings.check_updates && state.due(now(), at_start) {
                 if let Some(latest) = platform::fetch(LATEST_URL).and_then(|b| Latest::parse(&b)) {
-                    if state.found(&latest, now(), CURRENT) {
-                        kadr(&["update-available", &latest.version, &latest.notes_url]);
+                    if let Some(release) = latest.on(Channel::chosen(settings.update_channel))
+                        && state.found(release, now(), CURRENT)
+                    {
+                        kadr(&["update-available", &release.version, &release.notes_url]);
                     }
                     state.save();
                 }

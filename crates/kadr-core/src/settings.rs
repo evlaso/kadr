@@ -85,6 +85,9 @@ pub struct Settings {
     pub keep_warm: bool,
     /// The tray looks for a newer release (`update`) and kadr shows a card.
     pub check_updates: bool,
+    /// Which releases it looks for; None follows this build (a pre-release
+    /// is on Beta).
+    pub update_channel: Option<crate::update::Channel>,
     pub max_cards: usize,
     /// None keeps the XDG videos folder.
     pub video_dir: Option<PathBuf>,
@@ -129,6 +132,7 @@ impl Default for Settings {
             tray: true,
             keep_warm: cfg!(target_os = "macos"),
             check_updates: true,
+            update_channel: None,
             max_cards: 4,
             video_dir: None,
             fps: 0,
@@ -174,6 +178,7 @@ impl Settings {
             tray: bool_or("tray", d.tray),
             keep_warm: bool_or("keep_warm", d.keep_warm),
             check_updates: bool_or("check_updates", d.check_updates),
+            update_channel: v["update_channel"].as_str().and_then(crate::update::Channel::from_key),
             max_cards: (num_or("max_cards", d.max_cards as u64) as usize).clamp(1, 8),
             video_dir: dir("video_dir"),
             fps: num_or("fps", d.fps as u64) as u32,
@@ -210,6 +215,7 @@ impl Settings {
             "tray": self.tray,
             "keep_warm": self.keep_warm,
             "check_updates": self.check_updates,
+            "update_channel": self.update_channel.map(crate::update::Channel::key),
             "max_cards": self.max_cards,
             "video_dir": dir(&self.video_dir),
             "fps": self.fps,

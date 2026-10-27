@@ -14,6 +14,7 @@ use crate::settings::{CARD_SECONDS, FPS, TIMER_SECONDS, MAX_CARDS, QUALITIES, Se
 use crate::studio::{PADDINGS, ZOOMS};
 use crate::{hotkeys, ocr, palette, storage, util};
 use crate::i18n::t;
+use kadr_core::update::Channel;
 use kadr_ui::settings::{Effect, SettingsVm, Tab};
 
 /// A section's icon in the list.
@@ -323,6 +324,10 @@ impl SettingsView {
                     }),
                 ),
                 row(t("settings.check_for_updates"), t("settings.tray_looks_for_new_release"), switch("check-updates", s.check_updates, cx, |s, on| s.check_updates = on)),
+                row(t("settings.update_channel"),
+                    t("settings.update_channel_tip"),
+                    chips(cx, "channel", vec![t("settings.channel_stable").into(), t("settings.channel_beta").into()], Channel::ALL.iter().position(|&c| c == Channel::chosen(s.update_channel)), |s, i| s.update_channel = Some(Channel::ALL[i])),
+                ),
                 heading(t("settings.thumbnails")),
                 row(t("settings.thumbnail_goes_away_after"),
                     t("settings.stays_while_pointer_over"),
@@ -442,7 +447,14 @@ impl SettingsView {
                 ),
             ],
             Tab::About => vec![
-                row("kadr", t("settings.screenshots_screen_recording"), Label::new(tr!("settings.version", env!("CARGO_PKG_VERSION"))).color(Color::Muted).into_any_element()),
+                row("kadr",
+                    t("settings.screenshots_screen_recording"),
+                    h_flex()
+                        .gap_3()
+                        .child(Label::new(tr!("settings.version", env!("CARGO_PKG_VERSION"))).color(Color::Muted))
+                        .child(Button::new("check-now", t("settings.check_now")).style(ButtonStyle::Subtle).on_click(|_, _, cx| crate::update::check_now(cx)))
+                        .into_any_element(),
+                ),
                 row(t("settings.interface"), t("settings.interface_details"), Label::new("GPUI CE").color(Color::Muted).into_any_element()),
                 row(t("settings.source_code"),
                     "",

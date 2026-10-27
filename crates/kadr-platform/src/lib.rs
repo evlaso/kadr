@@ -26,6 +26,7 @@ pub mod record;
 #[cfg(target_os = "linux")]
 mod toplevel;
 pub mod style;
+pub mod update;
 
 #[cfg(not(target_os = "linux"))]
 mod desktop;

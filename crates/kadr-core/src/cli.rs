@@ -29,6 +29,7 @@ Usage:
   kadr gif <video>                               save a recording as GIF (720px, 15 fps)
   kadr history                                   history of screenshots and recordings
   kadr settings                                  settings
+  kadr update                                    look for a newer release now
   kadr tray                                      tray icon (for autostart)
   kadr dev <command>                             test hooks of a kadr started with KADR_DEV=1
                                                  (windows, dump, find, click, drag, key, type, state, shot, mem)
@@ -75,6 +76,8 @@ pub enum Command {
     /// A newer release is out (its version and page): from the tray's
     /// check, not listed in the usage.
     UpdateAvailable(String, String),
+    /// Look for a newer release now.
+    Update,
 }
 
 impl Command {
@@ -119,6 +122,7 @@ impl Command {
             Some("history") => Ok(Command::History),
             Some("settings") => Ok(Command::Settings),
             Some("capture") => Ok(Command::Capture),
+            Some("update") => Ok(Command::Update),
             Some("update-available") => match (args.get(1), args.get(2)) {
                 (Some(version), Some(page)) => Ok(Command::UpdateAvailable(version.clone(), page.clone())),
                 _ => Err(crate::tr!("cli.unknown_command", "update-available")),

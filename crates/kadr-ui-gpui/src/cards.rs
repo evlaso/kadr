@@ -64,11 +64,23 @@ struct Thumb {
     blurred: Arc<Image>,
 }
 
-/// A card that says something: its title, its text, and its link's label.
+/// A card that says something: its title, its text, its link's label, and
+/// the button for what it offers (an update) with how far that has got.
 struct Notice {
     title: String,
     body: String,
     link_label: &'static str,
+    action: Option<Action>,
+    progress: Option<f32>,
+}
+
+/// What a notice card's main button does.
+#[derive(Clone)]
+pub(crate) enum Action {
+    /// Download and put in this version.
+    Update(String),
+    /// Run the downloaded installer (kadr closes for it).
+    Install(PathBuf),
 }
 
 /// What a card shows, beside what `kadr_ui::cards` keeps of it.
@@ -195,16 +207,45 @@ pub fn show_text(text: Option<String>, link: Option<String>, cx: &mut App) {
     add(PathBuf::new(), CardView { image: None, text: Some(text), link, job: None, height: THUMB_MAX, video: None, notice: None }, cx);
 }
 
-/// A newer release is out (the tray's check): a card with its page.
+/// A newer release is out (the tray's check, or Check now): a card with
+/// its page, and Update where kadr puts its own files in (not a package
+/// manager's: the card says which updates it).
 pub fn show_update(version: String, page: String, cx: &mut App) {
-    let notice = Notice { title: tr!("update.available", version), body: t("update.whats_new_on_release_page").into(), link_label: t("update.release_page") };
-    add(PathBuf::new(), CardView { image: None, text: Some(Some(String::new())), link: Some(page), job: None, height: THUMB_MAX, video: None, notice: Some(notice) }, cx);
+    use kadr_platform::update::Install;
+    let (body, action) = match kadr_platform::update::install() {
+        Install::Own(_) => (t("update.whats_new_on_release_page").to_owned(), Some(Action::Update(version.clone()))),
+        Install::Managed(manager) => (tr!("update.through", manager), None),
+        Install::Built => (t("update.whats_new_on_release_page").to_owned(), None),
+    };
+    show_notice(tr!("update.available", version), body, Some(page), action, cx);
+}
+
+/// A card that says something, with a link and a button maybe; its id.
+pub(crate) fn show_notice(title: String, body: String, link: Option<String>, action: Option<Action>, cx: &mut App) -> usize {
+    let link_label = if link.is_some() { t("update.release_page") } else { "" };
+    let notice = Notice { title, body, link_label, action, progress: None };
+    add(PathBuf::new(), CardView { image: None, text: Some(Some(String::new())), link, job: None, height: THUMB_MAX, video: None, notice: Some(notice) }, cx)
+}
+
+/// Notice card `id` says something new: `progress` while work goes on (the
+/// card stays), then the outcome, with its button if any.
+pub(crate) fn update_notice(id: usize, title: String, body: String, action: Option<Action>, progress: Option<f32>, cx: &mut App) {
+    with_stack(cx, |stack| {
+        if progress.is_some() {
+            stack.vm.work(id);
+        } else if stack.vm.cards.iter().any(|c| c.id == id && c.working) {
+            stack.vm.complete(id, PathBuf::new(), Instant::now());
+        }
+        if let Some(n) = stack.vm.get_mut(id).and_then(|c| c.view.notice.as_mut()) {
+            (n.title, n.body, n.action, n.progress) = (title, body, action, progress);
+        }
+    });
 }
 
 /// Something went wrong where nothing else would say so (a capture that
 /// timed out): a card with what and why.
 pub fn show_error(title: &str, body: &str, cx: &mut App) {
-    let notice = Notice { title: title.into(), body: body.into(), link_label: "" };
+    let notice = Notice { title: title.into(), body: body.into(), link_label: "", action: None, progress: None };
     add(PathBuf::new(), CardView { image: None, text: Some(Some(String::new())), link: None, job: None, height: THUMB_MAX, video: None, notice: Some(notice) }, cx);
 }
 
@@ -676,6 +717,15 @@ impl CardStack {
         };
         let copy = text.filter(|_| notice.is_none()).map(|t| t.to_owned());
         let link_label = notice.map_or(t("ocr.open_link"), |n| n.link_label);
+        let progress = notice.and_then(|n| n.progress);
+        let accent = colors.text_accent;
+        let action = notice.and_then(|n| n.action.clone()).filter(|_| progress.is_none()).map(|a| {
+            let label = match a {
+                Action::Update(_) => t("update.install"),
+                Action::Install(_) => t("update.install_now"),
+            };
+            (a, label)
+        });
         let link = card.view.link.clone();
         let hover = div()
             .absolute()
@@ -701,7 +751,29 @@ impl CardStack {
                         })),
                 )
             })
-            .when_some(link.clone(), |d, link| {
+            .when_some(action, |d, (action, label)| {
+                d.child(
+                    div()
+                        .id(("action", id))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(accent)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.92))
+                        .w(px(CARD_WIDTH - 2. * INSET))
+                        .h(px(PILL_H))
+                        .child(Label::new(label).size(LabelSize::XSmall).color(Color::Custom(gpui::white())))
+                        .when(crate::dev::on(), |d| d.child(crate::dev::probe(&("action", id).into(), "button", label.to_owned(), false, false)))
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            let action = action.clone();
+                            cx.defer(move |cx| crate::update::act(id, action, cx));
+                        })),
+                )
+            })
+            .when_some(link.clone().filter(|_| progress.is_none()), |d, link| {
                 d.child(
                     pill(div().id(("link", id)))
                         .w(px(CARD_WIDTH - 2. * INSET))
@@ -752,7 +824,8 @@ impl CardStack {
                             .child(div().flex_1().child(Label::new(title).size(LabelSize::Small)))
                             .when_some(chars, |row, n| row.child(Label::new(tr!("ocr.chars", n)).size(LabelSize::XSmall).color(Color::Muted))),
                     )
-                    .child(div().flex_1().min_h_0().overflow_hidden().text_xs().text_color(colors.text_muted).child(body)),
+                    .child(div().flex_1().min_h_0().overflow_hidden().text_xs().text_color(colors.text_muted).child(body))
+                    .when_some(progress, |d, p| d.child(div().pb_1().child(crate::ui::ProgressBar::new(("progress", id), p, 1., cx)))),
             )
             // Text that doesn't fit fades out instead of being cut.
             .child(div().absolute().left_0().right_0().bottom_0().h(px(36.)).rounded_b(px(RADIUS)).bg(gpui::linear_gradient(180., gpui::linear_color_stop(clear, 0.), gpui::linear_color_stop(surface, 0.9))))
@@ -774,7 +847,7 @@ impl CardStack {
             .vm
             .cards
             .iter()
-            .map(|c| serde_json::json!({ "id": c.id, "path": c.path.display().to_string(), "working": c.working, "hovered": c.hovered, "text": c.view.text, "notice": c.view.notice.as_ref().map(|n| &n.title) }))
+            .map(|c| serde_json::json!({ "id": c.id, "path": c.path.display().to_string(), "working": c.working, "hovered": c.hovered, "text": c.view.text, "notice": c.view.notice.as_ref().map(|n| &n.title), "body": c.view.notice.as_ref().map(|n| &n.body) }))
             .collect();
         serde_json::json!({ "cards": cards, "hidden": self.hidden })
     }

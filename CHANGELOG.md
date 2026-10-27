@@ -4,6 +4,12 @@ What changed in each kadr release, for the people who use it. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Updating from kadr itself: the update card's Update button downloads the release, checks it against the release key's signature and puts it in place of the installed files, and the tray starts again on it. On Windows the installer runs quietly; the portable kadr.exe swaps itself. A version that fails to start three times in a row is replaced by the previous one. Packages from pacman or Homebrew are left to their manager.
+- Update channels in Settings → General: Stable gets finished versions only, Beta gets alpha, beta and release-candidate versions as well. A pre-release build is on Beta until you change it.
+- Check now in Settings → About, and `kadr update` on the command line.
+
 ## [0.3.0-alpha.2] - 2026-10-26
 
 Recording and window shots come to macOS and Windows, and Windows gets an installer. Both systems still pass only CI's tests; nobody has run them on a real machine yet.

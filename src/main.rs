@@ -84,5 +84,17 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // A version just put in that keeps failing to start: the old one is
+    // back, and takes this command instead.
+    if let Some(old) = kadr_platform::update::started() {
+        drop(listener);
+        kadr_platform::ipc::close();
+        // Its tray too: the old one is back beside it.
+        kadr_tray::restart();
+        let mut argv = vec![old.into_os_string()];
+        argv.extend(resolved.iter().map(Into::into));
+        kadr_platform::spawn(&argv);
+        return;
+    }
     kadr_ui_gpui::run(command, listener);
 }

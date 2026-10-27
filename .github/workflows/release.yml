@@ -1,9 +1,10 @@
 name: release
 
 # A tag v<version> on main (SPEC 12.2): the dist build on each system, its
-# archive with a .sha256, a GitHub release (a pre-release for 0.3.0-alpha.1
-# and the like) whose body is the version's CHANGELOG section, and
-# releases/latest.json on the gh-pages branch for the tray's update check.
+# files with a .sha256 and a minisign signature, a GitHub release (a
+# pre-release for 0.3.0-alpha.1 and the like) whose body is the version's
+# CHANGELOG section, and releases/latest.json on the gh-pages branch with
+# each update channel's newest release, for the tray's update check.
 # By hand, it builds and packs without publishing, to try the job.
 on:
   push:
@@ -88,13 +89,38 @@ jobs:
         with:
           path: files
           merge-multiple: true
+      - name: Sign
+        # Every file signed with the release key (minisign), which kadr
+        # checks before it installs an update; without the secret the
+        # release goes out unsigned, and kadr only shows its page.
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+        run: |
+          if [[ -z $MINISIGN_KEY ]]; then
+            echo "::warning::no MINISIGN_KEY secret: the release is unsigned and kadr won't install it by itself"
+            exit 0
+          fi
+          sudo apt-get install -y minisign
+          key=$(mktemp)
+          printf '%s\n' "$MINISIGN_KEY" > "$key"
+          version=${GITHUB_REF_NAME#v}
+          for f in files/kadr-*; do
+            [[ $f == *.sha256 ]] && continue
+            minisign -S -s "$key" -m "$f" -t "kadr $version $(basename "$f")"
+          done
+          rm -f "$key"
+          # The key kadr is built with is the one that signed.
+          public=$(sed -n 's/^pub const PUBLIC_KEY: &str = "\(.*\)";/\1/p' crates/kadr-core/src/update.rs)
+          for f in files/kadr-*.minisig; do minisign -V -P "$public" -m "${f%.minisig}"; done
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=${GITHUB_REF_NAME#v}
           scripts/release.py notes "$version" > notes.md
-          scripts/release.py latest "$version" files > latest.json
+          # The other channel's release stays as it was.
+          git fetch --depth 1 origin gh-pages && git show FETCH_HEAD:releases/latest.json > previous.json || true
+          scripts/release.py latest "$version" files previous.json > latest.json
           prerelease=$([[ $version == *-* ]] && echo --prerelease || true)
           gh release create "$GITHUB_REF_NAME" files/* --title "kadr $version" --notes-file notes.md $prerelease --verify-tag
       - name: latest.json on gh-pages
