@@ -65,6 +65,7 @@ pub fn open(cx: &mut App) {
         let _ = window.update(cx, |_, window, _| window.activate());
         return;
     }
+    crate::update::forget(cx);
     let mon = util::focused_monitor();
     kit::open_window(cx, "kadr-settings", mon.as_ref(), (820. * kit::SCALE, 560. * kit::SCALE), (640., 420.), |window, cx| {
         cx.new(|cx| {
@@ -447,14 +448,10 @@ impl SettingsView {
                 ),
             ],
             Tab::About => vec![
-                row("kadr",
-                    t("settings.screenshots_screen_recording"),
-                    h_flex()
-                        .gap_3()
-                        .child(Label::new(tr!("settings.version", env!("CARGO_PKG_VERSION"))).color(Color::Muted))
-                        .child(Button::new("check-now", t("settings.check_now")).style(ButtonStyle::Subtle).on_click(|_, _, cx| crate::update::check_now(cx)))
-                        .into_any_element(),
-                ),
+                {
+                    let (about, control) = update_row(cx);
+                    row("kadr", &about, control)
+                },
                 row(t("settings.interface"), t("settings.interface_details"), Label::new("GPUI CE").color(Color::Muted).into_any_element()),
                 row(t("settings.source_code"),
                     "",
@@ -538,6 +535,41 @@ fn heading(title: &str) -> (String, AnyElement) {
 /// Title and description on the left, the control on the right; in a
 /// narrow window, where the text would be squeezed into a sliver, the
 /// control goes under it, still at the right.
+/// The About row's line under "kadr" and what's at its right: the version
+/// and Check now, then how the check and the update go (`update::Status`).
+fn update_row(cx: &App) -> (String, AnyElement) {
+    use crate::update::{self, Out, Status};
+    use kadr_platform::update::Install;
+    let version = Label::new(tr!("settings.version", env!("CARGO_PKG_VERSION"))).color(Color::Muted);
+    let check = |label: &str| Button::new("check-now", label.to_owned()).style(ButtonStyle::Subtle).on_click(|_, _, cx| update::check_here(cx));
+    let page = |url: String| Button::new("release-page", t("update.release_page")).style(ButtonStyle::Subtle).on_click(move |_, _, _| util::open_file(std::path::Path::new(&url)));
+    let right = h_flex().gap_3();
+    let (about, right) = match update::status(cx) {
+        Status::Idle => (t("settings.screenshots_screen_recording").to_owned(), right.child(version).child(check(t("settings.check_now")))),
+        Status::Checking => (t("settings.screenshots_screen_recording").to_owned(), right.child(version).child(Label::new(t("update.checking")).color(Color::Muted))),
+        Status::UpToDate => (tr!("update.on_channel", update::channel_name()), right.child(version).child(Label::new(t("update.newest")).color(Color::Muted))),
+        Status::Found { version: new, page: url } => {
+            let out = tr!("update.available", new);
+            match kadr_platform::update::install() {
+                Install::Own(_) => (out, right.child(page(url)).child(Button::new("update-now", t("update.install")).style(ButtonStyle::Accent).on_click(move |_, _, cx| update::download(Out::Settings, new.clone(), cx)))),
+                Install::Managed(manager) => (format!("{out}. {}", tr!("update.through", manager)), right.child(page(url))),
+                Install::Built => (out, right.child(page(url))),
+            }
+        }
+        Status::Downloading { version: new, progress } => (
+            tr!("update.downloading", new),
+            right.child(div().w(gpui::rems(8.)).child(crate::ui::ProgressBar::new("update-progress", progress, 1., cx))).child(div().w(gpui::rems(2.5)).child(Label::new(format!("{}%", (progress * 100.).round() as u32)).color(Color::Muted))),
+        ),
+        Status::Installed(new) => (format!("{}. {}", tr!("update.installed", new), t("update.installed_body")), right.child(version)),
+        Status::Ready { version: new, setup } => (
+            format!("{}. {}", tr!("update.ready", new), t("update.ready_body")),
+            right.child(Button::new("install-now", t("update.install_now")).style(ButtonStyle::Accent).on_click(move |_, _, cx| update::install(&setup, cx))),
+        ),
+        Status::Failed(why) => (format!("{}: {}", t("update.failed"), why.replace('\n', " ")), right.child(version).child(check(t("update.try_again")))),
+    };
+    (about, right.into_any_element())
+}
+
 fn row(title: &str, description: &str, control: AnyElement) -> (String, AnyElement) {
     let el = h_flex()
         .w_full()
