@@ -328,7 +328,9 @@ pub fn open_layer<V: Render + 'static>(
     match cx.open_window(options, |window, cx| {
         window.set_rem_size(px(REM));
         if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
-            crate::platform::bare_window(handle.as_raw());
+            let scale = window.scale_factor() as f64;
+            let (w, h) = (f32::from(bounds.size.width) as f64, f32::from(bounds.size.height) as f64);
+            crate::platform::bare_window(handle.as_raw(), (w * scale, h * scale));
         }
         build(window, cx)
     }) {

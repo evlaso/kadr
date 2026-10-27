@@ -122,14 +122,15 @@ pub fn process_age_ms() -> Option<u64> {
 }
 
 /// Takes the system's frame off an overlay window, where the system gives
-/// a borderless window one anyway (Windows: an outline and a shadow).
-pub fn bare_window(window: raw_window_handle::RawWindowHandle) {
+/// a borderless window one anyway (Windows: an outline and a shadow), and
+/// leaves it `size` (in the screen's pixels) where it was asked for.
+pub fn bare_window(window: raw_window_handle::RawWindowHandle, size: (f64, f64)) {
     #[cfg(windows)]
     if let raw_window_handle::RawWindowHandle::Win32(h) = window {
-        imp::bare_window(h.hwnd.get());
+        imp::bare_window(h.hwnd.get(), size);
     }
     #[cfg(not(windows))]
-    let _ = window;
+    let _ = (window, size);
 }
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
