@@ -405,16 +405,27 @@ unsafe extern "system" fn crashed(info: *const windows::Win32::System::Diagnosti
 /// outline and a shadow round the whole window, mostly transparent (the
 /// cards' window is as tall as their stack).
 pub(crate) fn bare_window(hwnd: isize) {
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
     use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_POPUP, WS_THICKFRAME,
+        GWL_STYLE, GetClientRect, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_POPUP, WS_THICKFRAME,
     };
     let h = HWND(hwnd as *mut _);
     unsafe {
+        // GPUI made it an ordinary window, its frame around the size asked
+        // for: the window goes where that inside was, or the frame's room
+        // stays in it (a 2 px overlay came out 20 wide).
+        let (mut inside, mut at) = (RECT::default(), POINT::default());
+        let placed = GetClientRect(h, &mut inside).is_ok() && ClientToScreen(h, &mut at).as_bool();
         let style = GetWindowLongPtrW(h, GWL_STYLE) as u32;
         SetWindowLongPtrW(h, GWL_STYLE, ((style & !(WS_CAPTION.0 | WS_THICKFRAME.0)) | WS_POPUP.0) as isize);
-        let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = if placed {
+            SetWindowPos(h, None, at.x, at.y, inside.right - inside.left, inside.bottom - inside.top, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE)
+        } else {
+            use windows::Win32::UI::WindowsAndMessaging::{SWP_NOMOVE, SWP_NOSIZE};
+            SetWindowPos(h, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+        };
         let none = DWMWA_COLOR_NONE;
         let _ = DwmSetWindowAttribute(h, DWMWA_BORDER_COLOR, &none as *const u32 as *const _, 4);
         let square = DWMWCP_DONOTROUND;
