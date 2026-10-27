@@ -8,7 +8,8 @@ What changed in each kadr release, for the people who use it. The format follows
 
 - Updating from kadr itself: the update card's Update button downloads the release, checks it against the release key's signature and puts it in place of the installed files, and the tray starts again on it. On Windows the installer runs quietly; the portable kadr.exe swaps itself. A version that fails to start three times in a row is replaced by the previous one. Packages from pacman or Homebrew are left to their manager.
 - Update channels in Settings → General: Stable gets finished versions only, Beta gets alpha, beta and release-candidate versions as well. A pre-release build is on Beta until you change it.
-- Check now in Settings → About, and `kadr update` on the command line.
+- Check now in Settings → About, which says right there whether there's a newer version, and updates from the same row; `kadr update` on the command line shows it on a card.
+- Scrolling screenshots on macOS and Windows, and sideways: scroll the area to the right (a timeline, a wide table) and kadr stitches it into one wide picture.
 
 ## [0.3.0-alpha.2] - 2026-10-26
 

@@ -320,6 +320,14 @@ pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     grim(mon, false)
 }
 
+/// An area of the screen in the monitors' logical layout, as it is now, at
+/// its monitor's pixels (grim, PPM to stdout).
+pub fn grab_area(x: i32, y: i32, w: i32, h: i32) -> Option<image::RgbImage> {
+    let out = std::process::Command::new("grim").args(["-g", &format!("{x},{y} {w}x{h}"), "-t", "ppm", "-"]).output().ok()?;
+    out.status.success().then_some(())?;
+    image::load_from_memory_with_format(&out.stdout, image::ImageFormat::Pnm).ok().map(|i| i.to_rgb8())
+}
+
 /// The monitor with the pointer in it, as the compositor draws it.
 pub fn grab_monitor_with_cursor(mon: &Mon) -> Option<image::RgbaImage> {
     grim(mon, true)

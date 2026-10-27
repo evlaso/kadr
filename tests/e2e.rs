@@ -218,6 +218,53 @@ fn an_area_screenshot_is_what_was_on_screen() {
     assert_eq!(paths, [saved.to_str().unwrap()], "the card is the screenshot's");
 }
 
+/// A scrolling screenshot: a terminal's numbered lines, scrolled by the
+/// wheel under the bar, come out as one picture longer than the area, ending
+/// with what the area shows at the end. Needs foot to have something to
+/// scroll; skipped without it.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_scrolled_area_is_stitched() {
+    if Command::new("foot").arg("--version").output().is_err() {
+        eprintln!("no foot: skipped");
+        return;
+    }
+    let s = Session::start();
+    let lines = "for i in $(seq 1 300); do printf '%04d %s\\n' $i \"$(printf '%.0s#' $(seq 1 $((i % 50 + 1))))\"; done; sleep 600";
+    s.cmd("foot").args(["sh", "-c", lines]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("foot");
+    let up = || {
+        let out = s.cmd("hyprctl").args(["-j", "clients"]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).contains("\"foot\"").then_some(())
+    };
+    wait(Duration::from_secs(5), up).expect("no terminal");
+    std::thread::sleep(Duration::from_millis(500));
+    let area = (200, 150, 1400, 700);
+    s.pointer(&["move", "900", "500"]);
+    s.pointer(&["scroll", "0", "-200"]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    s.spawn(&["shot", "scroll", "200,150 1400x700"]);
+    s.window("kadr-scroll");
+    std::thread::sleep(Duration::from_millis(500));
+    for _ in 0..8 {
+        s.pointer(&["scroll", "0", "3"]);
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    let end = s.grab(Some(area));
+    // The same hotkey again finishes.
+    assert!(s.cmd(KADR).args(["shot", "scroll"]).status().expect("kadr").success());
+    let shots = s.var("OMARCHY_SCREENSHOT_DIR");
+    let saved = wait(Duration::from_secs(5), || newest(&shots).filter(|p| p.extension().is_some_and(|e| e == "png"))).expect("no screenshot saved");
+    std::thread::sleep(Duration::from_millis(200));
+    let shot = image::open(&saved).expect("the screenshot").to_rgba8();
+    assert_eq!(shot.width(), area.2, "as wide as the area");
+    assert!(shot.height() > area.3 * 2, "stitched: {} rows from a {} high area", shot.height(), area.3);
+    let bottom = image::imageops::crop_imm(&shot, 0, shot.height() - area.3, area.2, area.3).to_image();
+    let share = alike(&bottom, &end);
+    assert!(share > 0.99, "it ends with what the area showed: {:.1}% alike", share * 100.);
+}
+
 /// The editor's window on screen, its place and size, under a magenta
 /// picture pinned over it; then `kadr shot windows` clicked on it. The shot
 /// and the window's size.

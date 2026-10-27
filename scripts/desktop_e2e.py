@@ -502,6 +502,49 @@ def window_shot(t):
     t.note("the window is taken by itself", near and how == "by itself", size=size, expected=want, how=how)
 
 
+def scroll_shot(t):
+    """`kadr shot scroll` over kadr's own settings, which scroll on every
+    system: their pane picked as the area, scrolled with the wheel through
+    the frame and the bar around it, then the same command again finishes.
+    The picture comes out longer than the area."""
+    shots = t.out / "shots"
+    before = set(shots.glob("*.png"))
+    env = dict(os.environ, KADR_DEV="1", OMARCHY_SCREENSHOT_DIR=str(shots), OMARCHY_SCREENRECORD_DIR=str(t.out / "videos"))
+    t.start(BIN / f"kadr{EXE}", "settings", env=env)
+    win = wait_for(lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-settings"), None), timeout=20)
+    if not t.note("the settings open to scroll", win):
+        return
+    time.sleep(1)
+    (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
+    if LINUX:
+        c = next((c for c in json.loads(run("hyprctl", "-j", "clients").stdout) if c["class"] == "kadr-settings"), None)
+        if c:
+            wx, wy = c["at"]
+    # The pane right of the sections, clear of the top bar and the corners.
+    area = [round(wx + ww * 0.35), round(wy + 80), round(ww * 0.6), round(min(wh - 120, 300))]
+    run(BIN / f"kadr{EXE}", "shot", "scroll", f"{area[0]},{area[1]} {area[2]}x{area[3]}", check=False)
+    shown = wait_for(lambda: next((w for w in dev("windows") or [] if w["kind"] == "kadr-scroll"), None), timeout=10)
+    if not t.note("the scroll bar shows", shown):
+        return
+    time.sleep(0.8)
+    cx, cy = (area[0] + area[2] / 2) * scale, (area[1] + area[3] / 2) * scale
+    run(POINTER, "move", cx, cy)
+    for _ in range(6):
+        run(POINTER, "scroll", 0, 2)
+        time.sleep(0.25)
+    t.shot("scrolled")
+    run(BIN / f"kadr{EXE}", "shot", "scroll", check=False)
+    saved = wait_for(lambda: next(iter(sorted(set(shots.glob("*.png")) - before)), None), timeout=15)
+    size = saved and png_size(saved)
+    t.note("the scrolled pane is stitched", size and abs(size[0] - area[2]) <= 2 and size[1] > area[3] * 1.3, size=size, area=area)
+    # The settings go, so they don't cover what comes next.
+    settings = next((w for w in dev("windows") or [] if w["kind"] == "kadr-settings"), None)
+    if settings:
+        # Escape scrolls back up first, then closes.
+        dev("key", "--window", settings["id"], "escape")
+        dev("key", "--window", settings["id"], "escape")
+
+
 def png_pixels(path):
     """An 8-bit RGB or RGBA PNG's size and its pixels as (r, g, b) rows,
     without a library."""
@@ -683,6 +726,7 @@ def main():
             window_capture_probe(t)
             window_shot(t)
             all_screens(t)
+            scroll_shot(t)
             pointer_in_shots(t)
             record(t)
             record_through_bar(t)

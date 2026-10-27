@@ -7,6 +7,8 @@
 //!   kadr-pointer move X Y
 //!   kadr-pointer click X Y
 //!   kadr-pointer drag X1 Y1 X2 Y2 [steps]
+//!   kadr-pointer scroll DX DY      wheel notches, at the pointer: down
+//!                                  and right positive
 //!   kadr-pointer key ctrl+s        (macOS, Windows)
 //!   kadr-pointer type TEXT         (macOS, Windows)
 //!   kadr-pointer type-hex HEX      the same, the text as UTF-8 in hex: a
@@ -94,6 +96,19 @@ mod device {
             self.flush();
         }
 
+        /// One wheel notch at a time, as a mouse wheel sends them.
+        pub fn scroll(&mut self, dx: i32, dy: i32) {
+            use wl_pointer::{Axis, AxisSource};
+            for (axis, n) in [(Axis::HorizontalScroll, dx), (Axis::VerticalScroll, dy)] {
+                for _ in 0..n.unsigned_abs() {
+                    self.pointer.axis_source(AxisSource::Wheel);
+                    self.pointer.axis_discrete(self.time(), axis, 15. * n.signum() as f64, n.signum());
+                    self.pointer.frame();
+                    self.flush();
+                }
+            }
+        }
+
         fn flush(&self) {
             let _ = self.conn.flush();
             // Room for the compositor to deliver each event on its own.
@@ -161,6 +176,16 @@ mod device {
             Self::pause();
         }
 
+        /// One wheel notch at a time, as a mouse wheel sends them.
+        pub fn scroll(&mut self, dx: i32, dy: i32) {
+            for (axis, n) in [(enigo::Axis::Horizontal, dx), (enigo::Axis::Vertical, dy)] {
+                for _ in 0..n.unsigned_abs() {
+                    let _ = self.0.scroll(n.signum(), axis);
+                    Self::pause();
+                }
+            }
+        }
+
         /// "ctrl+s", "escape", "enter": modifiers held around the last key.
         pub fn key(&mut self, combo: &str) {
             let parts: Vec<&str> = combo.split('+').collect();
@@ -222,6 +247,7 @@ fn main() {
             }
             p.button(false);
         }
+        Some("scroll") => p.scroll(num(1) as i32, num(2) as i32),
         Some("key") => p.key(args.get(1).map(String::as_str).unwrap_or_else(|| usage())),
         Some("type") => p.text(&args[1..].join(" ")),
         Some("type-hex") => {
@@ -237,7 +263,7 @@ fn main() {
 }
 
 fn usage() -> ! {
-    fail("usage: kadr-pointer move X Y | click X Y | drag X1 Y1 X2 Y2 [steps] | key COMBO | type TEXT | type-hex HEX")
+    fail("usage: kadr-pointer move X Y | click X Y | drag X1 Y1 X2 Y2 [steps] | scroll DX DY | key COMBO | type TEXT | type-hex HEX")
 }
 
 fn fail(why: &str) -> ! {

@@ -148,6 +148,21 @@ pub fn grab_monitor(mon: &Mon) -> Option<image::RgbaImage> {
     screen.capture_image().map_err(|e| eprintln!("kadr: screenshot: {e}")).ok()
 }
 
+/// An area of the screen in the monitors' logical layout, as it is now, at
+/// its monitor's pixels (on one monitor: the one its corner is on).
+pub fn grab_area(x: i32, y: i32, w: i32, h: i32) -> Option<image::RgbImage> {
+    let (screen, mon) = screens().into_iter().find(|(_, m)| m.contains(x, y))?;
+    // xcap's region is the monitor's own: points on macOS, pixels on Windows.
+    let s = if cfg!(windows) { mon.scale } else { 1. };
+    let at = |v: i32| (v as f64 * s).round().max(0.) as u32;
+    let (rx, ry) = (at(x - mon.x), at(y - mon.y));
+    // Kept inside the monitor: xcap refuses a region past its edge.
+    let (mw, mh) = (at(mon.w), at(mon.h));
+    let (rw, rh) = (at(w).min(mw.saturating_sub(rx)), at(h).min(mh.saturating_sub(ry)));
+    let image = screen.capture_region(rx, ry, rw, rh).map_err(|e| eprintln!("kadr: screenshot: {e}")).ok()?;
+    Some(image::DynamicImage::ImageRgba8(image).to_rgb8())
+}
+
 /// The windows showing on `mon`, topmost first, kadr's own ones with a
 /// title too (its overlay and cards aside): each with its id (for
 /// `grab_window`) and its frame in the monitor's logical pixels.
