@@ -330,6 +330,11 @@ pub fn open_layer<V: Render + 'static>(
         if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
             crate::platform::bare_window(handle.as_raw());
         }
+        // Windows made it an ordinary window first, with a title bar's
+        // minimum size: a thin overlay came out tens of pixels wide.
+        if cfg!(windows) {
+            window.resize(bounds.size);
+        }
         build(window, cx)
     }) {
         Ok(handle) => {

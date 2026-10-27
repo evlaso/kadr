@@ -182,17 +182,17 @@ fn open_windows(cx: &mut App, mon: Option<Mon>, area: (i32, i32, i32, i32), shar
         let line: Box<dyn FnOnce(&mut Window, &mut App) -> gpui::AnyView> = Box::new(|_, cx| cx.new(|_| Line).into());
         windows.extend(layer(cx, at, size, line));
     }
-    let size = (BAR_WIDTH.min(mon.w as f32 - 16.), bar_height() + 16.);
-    let top = bar_top(local, screen) - 8.;
+    let size = (BAR_WIDTH.min(mon.w as f32 - 16.), bar_height());
+    let top = bar_top(local, screen);
     let left = (x + w / 2. - size.0 / 2.).clamp(8., (mon.w as f32 - size.0 - 8.).max(8.));
     let build = bar(false, cx);
     windows.extend(layer(cx, (left, top), size, build));
     windows
 }
 
-/// The bar's window where it's a window of its own: room for the longest
-/// labels; the bar sits in its middle.
-const BAR_WIDTH: f32 = 640.;
+/// The bar's width where it's a window of its own: room for the longest
+/// labels.
+const BAR_WIDTH: f32 = 560.;
 
 fn bar_height() -> f32 {
     52. * kit::SCALE
@@ -253,9 +253,13 @@ impl Render for ScrollBar {
             .p_1()
             .pl_3()
             .elevation_3(cx)
-            .child(Label::new(t("scroll.scroll_kadr_stitches")).color(Color::Muted))
-            .child(div().w(px(90.)).font_family(kit::MONO_FONT).text_color(cx.theme().colors().text_muted).child(format!("{length} px")))
-            .children(crate::ui::in_system_order(vec![
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(Label::new(t("scroll.scroll_kadr_stitches")).color(Color::Muted))
+                    .child(div().w(px(90.)).font_family(kit::MONO_FONT).text_color(cx.theme().colors().text_muted).child(format!("{length} px"))),
+            )
+            .child(h_flex().gap_2().children(crate::ui::in_system_order(vec![
                 Button::new("cancel", t("common.cancel"))
                     .style(ButtonStyle::Subtle)
                     .size(ButtonSize::Large)
@@ -270,10 +274,12 @@ impl Render for ScrollBar {
                     .tip(Tooltip::text(t("scroll.press_hotkey_again")))
                     .on_click(move |_, _, _| stop.stop.store(true, Ordering::Relaxed))
                     .into_any_element(),
-            ]))
+            ])))
             .child(self.region.mark());
         if !self.frame {
-            return kit::root(cx).flex().items_center().justify_center().child(bar);
+            // The bar is the whole window, so the system's outline and
+            // shadow (macOS) are the bar's.
+            return kit::root(cx).child(bar.size_full().justify_between());
         }
         let (x, y, w, h) = (self.area.0 as f32, self.area.1 as f32, self.area.2 as f32, self.area.3 as f32);
         let top = bar_top(self.area, self.screen);
