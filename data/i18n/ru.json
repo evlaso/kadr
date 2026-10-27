@@ -344,7 +344,6 @@
  "settings.screenshots_folder": "Папка для скриншотов",
  "settings.screenshots_screen_recording": "Скриншоты и запись экрана",
  "settings.search": "Поиск",
- "settings.settings_folder": "Папка настроек",
  "settings.shortcuts": "Клавиши",
  "settings.show_thumbnail": "Показывать карточку",
  "settings.source_code": "Исходный код",
@@ -537,5 +536,9 @@
  "settings.update_channel_tip": "В бете раньше приходят альфы, беты и кандидаты в релиз; в стабильном — только готовые версии.",
  "settings.channel_stable": "Стабильный",
  "settings.channel_beta": "Бета",
- "settings.check_now": "Проверить сейчас"
+ "settings.check_now": "Проверить сейчас",
+ "settings.settings_file": "Файл настроек",
+ "settings.settings_file_tip": "{}: настройки меняются и здесь, и в файле",
+ "settings.edit_file": "Изменить",
+ "settings.file_broken": "kadr не может прочитать settings.toml, поэтому берёт настройки по умолчанию, а изменения здесь не сохранятся, пока файл не исправлен."
 }

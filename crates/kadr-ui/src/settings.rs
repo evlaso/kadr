@@ -73,8 +73,10 @@ impl SettingsVm {
         SettingsVm { settings, tab: Tab::General, query: String::new(), naming: false, keys, recording: None }
     }
 
-    /// Change a setting; it's saved at once.
+    /// Change a setting; it's saved at once. On the file as it is now, so
+    /// what was changed in it by hand meanwhile stays.
     pub fn change(&mut self, f: impl FnOnce(&mut Settings)) {
+        self.settings = Settings::load();
         f(&mut self.settings);
         self.settings.save();
     }
@@ -267,7 +269,7 @@ mod tests {
     fn the_name_template_takes_typing_and_saves() {
         let mut vm = vm();
         vm.naming = true;
-        vm.settings.name_template = "shot".into();
+        vm.change(|s| s.name_template = "shot".into());
         vm.key(&Key::named("backspace"));
         vm.key(&Key::char("!"));
         assert_eq!(vm.settings.name_template, "sho!");

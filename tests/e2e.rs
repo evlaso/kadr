@@ -333,11 +333,11 @@ fn a_window_goes_on_the_saved_background() {
     std::fs::create_dir_all(&config).expect("config");
     let look = serde_json::json!({ "backdrop": { "gradient": 0 }, "padding": 0.06, "radius": 0.012, "shadow": 0.5, "aspect": 0 });
     std::fs::write(config.join("editor-presets.json"), serde_json::json!([{ "name": "Ocean", "look": look }]).to_string()).expect("presets");
-    let settings = config.join("settings.json");
+    let settings = config.join("settings.toml");
     let before = std::fs::read_to_string(&settings).ok();
-    let mut v: Value = before.as_deref().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_else(|| serde_json::json!({}));
-    v["window_backdrop"] = "Ocean".into();
-    std::fs::write(&settings, v.to_string()).expect("settings");
+    // First in the file, ahead of its tables, as a person would add it.
+    let rest: String = before.as_deref().unwrap_or("").lines().filter(|l| !l.trim_start().trim_start_matches("# ").starts_with("window_backdrop")).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&settings, format!("window_backdrop = \"Ocean\"\n{rest}")).expect("settings");
     // The other tests' window shots stay as they were.
     struct Restore(PathBuf, Option<String>);
     impl Drop for Restore {

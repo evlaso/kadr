@@ -344,7 +344,6 @@
  "settings.screenshots_folder": "Screenshots folder",
  "settings.screenshots_screen_recording": "Screenshots and screen recording",
  "settings.search": "Search",
- "settings.settings_folder": "Settings folder",
  "settings.shortcuts": "Shortcuts",
  "settings.show_thumbnail": "Show the thumbnail",
  "settings.source_code": "Source code",
@@ -537,5 +536,9 @@
  "settings.update_channel_tip": "Beta gets alpha, beta and release-candidate versions first; Stable only finished ones.",
  "settings.channel_stable": "Stable",
  "settings.channel_beta": "Beta",
- "settings.check_now": "Check now"
+ "settings.check_now": "Check now",
+ "settings.settings_file": "Settings file",
+ "settings.settings_file_tip": "{}: settings change here or in the file",
+ "settings.edit_file": "Edit",
+ "settings.file_broken": "kadr can't read settings.toml, so it uses the defaults, and changes here aren't saved until the file is fixed."
 }

@@ -35,7 +35,7 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
   - trimming a recording and making a GIF right from its thumbnail;
   - text recognition (English and Russian);
   - history of captures: search, filters, drag out;
-  - settings with search, including hotkeys, theme, language, storage use and automatic clean-up of old captures;
+  - settings with search, including hotkeys, theme, language, storage use and automatic clean-up of old captures; they're kept in `settings.toml`, with a comment on each, to change by hand too;
   - a tray icon;
   - project files: “Project” in the editor or the studio saves a `.kadr` file with the whole edit (the original picture or recording, every shape, zoom and cut), to open again later or on another computer. kadr registers the file type on its first run (`kadr install-desktop` does it by hand), so `.kadr` files open in kadr from the file manager.
 

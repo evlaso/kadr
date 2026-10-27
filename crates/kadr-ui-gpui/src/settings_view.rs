@@ -45,6 +45,8 @@ pub struct SettingsView {
     scroll: gpui::ScrollHandle,
     grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     focus: FocusHandle,
+    /// Why settings.toml can't be read, when it can't.
+    problem: Option<String>,
 }
 
 /// The settings at their About section.
@@ -71,16 +73,40 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| {
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            SettingsView { vm: SettingsVm::new(Settings::load(), hotkeys::load()), languages: ocr::languages(), downloading: false, open_menu: None, menu_bounds: Default::default(), usage: storage::usage(&Settings::load()), scroll: gpui::ScrollHandle::new(), grab: Default::default(), focus }
+            // Back in front: the file may have been changed by hand.
+            cx.observe_window_activation(window, |view: &mut SettingsView, window, cx| {
+                if window.is_window_active() {
+                    view.reload();
+                    cx.notify();
+                }
+            })
+            .detach();
+            SettingsView {
+                vm: SettingsVm::new(Settings::load(), hotkeys::load()),
+                languages: ocr::languages(),
+                downloading: false,
+                open_menu: None,
+                menu_bounds: Default::default(),
+                usage: storage::usage(&Settings::load()),
+                scroll: gpui::ScrollHandle::new(),
+                grab: Default::default(),
+                focus,
+                problem: kadr_core::settings::problem(),
+            }
         })
     });
 }
 
 impl SettingsView {
+    /// The settings as the file has them now.
+    fn reload(&mut self) {
+        self.vm.settings = Settings::load();
+        self.problem = kadr_core::settings::problem();
+    }
+
     fn set_language(&mut self, lang: crate::i18n::Lang, cx: &mut Context<Self>) {
         self.open_menu = None;
-        self.vm.settings.language = lang;
-        self.vm.settings.save();
+        self.vm.change(|s| s.language = lang);
         crate::i18n::set(lang);
         cx.refresh_windows();
         cx.notify();
@@ -170,6 +196,7 @@ impl SettingsView {
 
     fn update(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Settings)) {
         self.vm.change(change);
+        self.problem = kadr_core::settings::problem();
         cx.notify();
     }
 
@@ -304,10 +331,8 @@ impl SettingsView {
                                     .toggle_state(on)
                                     .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.vm.settings.theme = mode;
-                                        this.vm.settings.save();
+                                        this.update(cx, |s| s.theme = mode);
                                         palette::refresh(cx);
-                                        cx.notify();
                                     }))
                             }))
                             .into_any_element()
@@ -464,9 +489,13 @@ impl SettingsView {
                         .on_click(|_, _, _| util::open_file(std::path::Path::new("https://github.com/evlaso/kadr")))
                         .into_any_element(),
                 ),
-                row(t("settings.settings_folder"),
-                    "~/.config/kadr",
-                    Button::new("config", t("common.open")).style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(&util::config_dir())).into_any_element(),
+                row(t("settings.settings_file"),
+                    &tr!("settings.settings_file_tip", settings_file_name()),
+                    h_flex()
+                        .gap_1()
+                        .child(Button::new("config-folder", t("common.show_in_folder")).style(ButtonStyle::Subtle).on_click(|_, _, _| util::open_file(&util::config_dir())))
+                        .child(Button::new("config-file", t("settings.edit_file")).style(ButtonStyle::Subtle).on_click(|_, _, _| open_settings_file()))
+                        .into_any_element(),
                 ),
             ],
         }
@@ -479,6 +508,29 @@ impl SettingsView {
         let tabs = self.vm.tabs_shown();
         let (line_color, group_bg) = (cx.theme().colors().border_variant, cx.theme().colors().element_background);
         let mut body = v_flex().px_6().pt_5().pb_4();
+        // settings.toml broken by hand: said above everything, with where.
+        if let Some(problem) = &self.problem {
+            body = body.child(
+                h_flex()
+                    .mb_5()
+                    .px_4()
+                    .py_3()
+                    .gap_4()
+                    .justify_between()
+                    .rounded(crate::ui::rems_from_px(12.))
+                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .bg(group_bg)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(Label::new(t("settings.file_broken")).color(Color::Error))
+                            .child(Label::new(problem.clone()).size(LabelSize::Small).color(Color::Muted)),
+                    )
+                    .child(div().flex_none().child(Button::new("config-file-broken", t("settings.edit_file")).style(ButtonStyle::Filled).on_click(|_, _, _| open_settings_file()))),
+            );
+        }
         let mut found = false;
         for tab in tabs {
             // Rows in groups, each under its heading; one group while searching.
@@ -522,6 +574,25 @@ impl SettingsView {
         }
         body.into_any_element()
     }
+}
+
+/// settings.toml where a person would look for it: under ~ when it's there.
+fn settings_file_name() -> String {
+    let file = kadr_core::settings::path();
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(std::path::PathBuf::from);
+    match home.and_then(|h| file.strip_prefix(h).ok().map(|rest| rest.to_path_buf())) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => file.display().to_string(),
+    }
+}
+
+/// settings.toml in the system's editor for it, written out first when
+/// there isn't one yet.
+fn open_settings_file() {
+    if !kadr_core::settings::path().exists() {
+        Settings::load().save();
+    }
+    util::open_file(&kadr_core::settings::path());
 }
 
 /// Marks a heading among a section's rows: the rows after it make a group

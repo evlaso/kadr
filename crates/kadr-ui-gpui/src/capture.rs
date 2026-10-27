@@ -201,14 +201,8 @@ fn save_on_backdrop(image: image::RgbaImage, frame: &kadr_core::document::Frame,
 }
 
 /// Window shots get a shadow (the `window_shadow` setting, on by default).
-/// Read straight from settings.json, so it works before the settings window
-/// shows it.
 pub fn window_shadow() -> bool {
-    std::fs::read_to_string(util::config_dir().join("settings.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v["window_shadow"].as_bool())
-        .unwrap_or(true)
+    Settings::load().window_shadow
 }
 
 /// How much of the pixel at (x, y) lies inside a w × h rectangle with

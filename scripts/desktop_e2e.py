@@ -481,16 +481,14 @@ def window_shot(t, backdrop=False):
     if not t.note("the editor's window is there to take" + label, win):
         return
     (wx, wy, ww, wh), scale = win["bounds"], win["scale"] if os.name == "nt" else 1.0
-    settings, presets = config() / "settings.json", config() / "editor-presets.json"
+    settings, presets = config() / "settings.toml", config() / "editor-presets.json"
     kept = {f: f.read_text(encoding="utf-8") if f.exists() else None for f in (settings, presets)}
     padding = 0.08
     if backdrop:
         config().mkdir(parents=True, exist_ok=True)
         look = {"backdrop": {"gradient": 0}, "padding": padding, "radius": 0.012, "shadow": 0.5, "aspect": 0}
         presets.write_text(json.dumps([{"name": "e2e", "look": look}]), encoding="utf-8")
-        current = json.loads(kept[settings]) if kept[settings] else {}
-        current["window_backdrop"] = "e2e"
-        settings.write_text(json.dumps(current), encoding="utf-8")
+        settings.write_text(set_setting(kept[settings], "window_backdrop", "e2e"), encoding="utf-8")
     t.log.write_text("")
     t.start(BIN / f"kadr{EXE}", "shot", "smart")
     shown = wait_for(lambda: next((w for w in json.loads(run(SHOT, "windows").stdout) if w["title"] == "kadr-picker"), None), timeout=10)
@@ -651,11 +649,19 @@ def config():
     return Path.home() / ("Library/Application Support/kadr" if platform.system() == "Darwin" else "AppData/Roaming/kadr")
 
 
+def set_setting(text, key, value):
+    """settings.toml's text with `key` set to `value` (a Python value):
+    the line put first, ahead of the tables, and any other for it gone."""
+    line = f"{key} = {json.dumps(value)}"
+    rest = [l for l in (text or "").splitlines() if not l.lstrip().lstrip("# ").startswith(key + " ")]
+    return "\n".join([line] + rest) + "\n"
+
+
 def pointer_in_shots(t):
     """The `shot_cursor` setting: the same fullscreen shot without and with
     it, the pointer kept still; around the pointer only the second differs."""
     config_dir = config()
-    settings = config_dir / "settings.json"
+    settings = config_dir / "settings.toml"
     old = settings.read_text(encoding="utf-8") if settings.exists() else None
     shots = t.out / "shots"
     sx, sy, sw, sh = screen()
@@ -664,10 +670,9 @@ def pointer_in_shots(t):
     run(POINTER, "move", px, py)
     taken = []
     for on in (False, True):
-        current = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
-        current["shot_cursor"] = on
+        current = settings.read_text(encoding="utf-8") if settings.exists() else None
         config_dir.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps(current), encoding="utf-8")
+        settings.write_text(set_setting(current, "shot_cursor", on), encoding="utf-8")
         before = set(shots.glob("*.png"))
         run(BIN / f"kadr{EXE}", "shot", "fullscreen", check=False)
         taken.append(wait_for(lambda: next(iter(sorted(set(shots.glob("*.png")) - before)), None), timeout=15))
