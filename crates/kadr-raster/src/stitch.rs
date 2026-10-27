@@ -18,8 +18,11 @@ const IGNORE_EDGE: usize = 28;
 const BINS: usize = 32;
 /// Rows that didn't move come out identical; this only absorbs rounding.
 const SAME_ROW: f32 = 0.1;
-/// The best shift has to line rows up at least this well.
-const MATCH: f32 = 6.0;
+/// The best shift has to line rows up at least this well...
+const MATCH: f32 = 1.5;
+/// ...and this much better than no shift at all: frames that moved the
+/// other way line up a little under a shift of one by chance.
+const BETTER: f32 = 0.5;
 
 /// One row, as average brightness across `BINS` strips.
 type Row = [f32; BINS];
@@ -184,6 +187,15 @@ impl Strip {
         if (0..h).all(|r| fixed[r] || next[r].is_none()) {
             return Some((0, 0.));
         }
+        // How far apart the rows are where they are: what a shift has to beat.
+        let (mut total, mut seen) = (0f32, 0usize);
+        for r in 0..h {
+            if let (Some(a), Some(b)) = (&self.last[r], &next[r]) {
+                seen += 1;
+                total += distance(a, b);
+            }
+        }
+        let unshifted = total / seen.max(1) as f32;
         let mut best: Option<(usize, f32)> = None;
         for dy in 1..h {
             let (mut total, mut seen) = (0f32, 0usize);
@@ -207,7 +219,7 @@ impl Strip {
                 best = Some((dy, score));
             }
         }
-        best.filter(|&(_, score)| score < MATCH)
+        best.filter(|&(_, score)| score < MATCH && score < unshifted * BETTER)
     }
 
     /// Take a frame as `measure` saw it; true when it brought new rows.
@@ -232,6 +244,16 @@ mod tests {
     /// A tall page with distinct rows, seen through a window that scrolls.
     fn page(height: u32) -> RgbImage {
         RgbImage::from_fn(80, height, |x, y| image::Rgb([(y % 251) as u8, (y / 251) as u8 * 40 + (x % 7) as u8, (x * 3) as u8]))
+    }
+
+    /// Smooth like rendered content, so a blend of two rows sits between
+    /// them, and never the same twice.
+    fn smooth(height: u32) -> RgbImage {
+        RgbImage::from_fn(240, height, |x, y| {
+            let (y, x) = (y as f32, x as f32);
+            let v = 128. + 60. * (y * 0.071).sin() + 60. * (y * 0.0173 + x * 0.05).sin();
+            image::Rgb([v as u8, (v * 0.5) as u8, (x as u32 % 256) as u8])
+        })
     }
 
     fn view(page: &RgbImage, top: u32, h: u32) -> RgbImage {
@@ -266,16 +288,45 @@ mod tests {
         assert_eq!(s.image().unwrap(), full);
     }
 
+    /// A page scrolled down further between two grabs than they overlap
+    /// (a slow grab) doesn't line up, and isn't taken for a move to the
+    /// right either; scrolled back to what was taken, it goes on.
+    #[test]
+    fn a_long_jump_waits_for_the_page_to_come_back() {
+        let full = smooth(1200);
+        let mut s = Stitcher::new(view(&full, 0, 300));
+        assert!(!s.push(view(&full, 250, 300)), "too far to line up");
+        assert_eq!(s.axis(), None);
+        for top in [120, 300, 480, 660] {
+            assert!(s.push(view(&full, top, 300)), "at {top}");
+        }
+        assert_eq!(s.axis(), Some(Axis::Down));
+        assert_eq!(s.image().unwrap(), view(&full, 0, 960));
+    }
+
+    /// A small move down, caught half way (between pixels), leaves every
+    /// column a little changed, and neighbouring columns alike: a shift of
+    /// one column mustn't pass for a move to the right.
+    #[test]
+    fn a_small_move_down_is_not_taken_for_sideways() {
+        let full = smooth(600);
+        for dy in 1..6 {
+            let (a, b) = (view(&full, dy, 300), view(&full, dy + 1, 300));
+            let half = RgbImage::from_fn(a.width(), a.height(), |x, y| {
+                let (p, q) = (a.get_pixel(x, y).0, b.get_pixel(x, y).0);
+                image::Rgb([0, 1, 2].map(|i| ((p[i] as u16 + q[i] as u16) / 2) as u8))
+            });
+            let mut s = Stitcher::new(view(&full, 0, 300));
+            s.push(half);
+            assert_ne!(s.axis(), Some(Axis::Right), "{dy}.5 rows down taken for sideways");
+        }
+    }
+
     /// With fractional scaling a page that scrolls lands between pixels: each
     /// frame is a blend of two neighbouring rows, never an exact copy.
     #[test]
     fn stitches_frames_that_land_between_pixels() {
-        // Smooth like rendered content, so a blend of two rows sits between them.
-        let full = RgbImage::from_fn(240, 1200, |x, y| {
-            let (y, x) = (y as f32, x as f32);
-            let v = 128. + 60. * (y * 0.071).sin() + 60. * (y * 0.0173 + x * 0.05).sin();
-            image::Rgb([v as u8, (v * 0.5) as u8, (x as u32 % 256) as u8])
-        });
+        let full = smooth(1200);
         let half = |top: u32| {
             let (a, b) = (view(&full, top, 300), view(&full, top + 1, 300));
             RgbImage::from_fn(a.width(), a.height(), |x, y| {
@@ -326,3 +377,4 @@ mod tests {
         assert!(a == b, "content matches the page");
     }
 }
+
