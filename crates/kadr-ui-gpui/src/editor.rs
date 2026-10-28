@@ -648,8 +648,11 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
     // The file's bytes, read once for the picture and then let go.
     let bytes = restored.as_mut().map(|r| std::mem::take(&mut r.base)).unwrap_or(bytes);
     let file_density = cards::png_density(&bytes);
-    let Some((w, h)) = cards::png_size(&bytes) else {
-        return util::notify(t("editor.editor_opens_png_only"), &path.display().to_string());
+    // PNG's size is read straight from its header; JPEG and WebP through
+    // their decoders, without decoding the pixels.
+    let size = cards::png_size(&bytes).or_else(|| image::ImageReader::new(std::io::Cursor::new(&bytes)).with_guessed_format().ok()?.into_dimensions().ok());
+    let Some((w, h)) = size else {
+        return util::notify(t("common.couldnt_open_image"), &path.display().to_string());
     };
     let Some(mon) = util::focused_monitor() else { return };
     let (mw, mh) = (mon.w as f32, mon.h as f32);
@@ -1977,17 +1980,29 @@ impl Editor {
             let (drawn, framed) = (doc.clone(), frame.clone());
             // The result keeps the original's density, less the image size.
             let shrunk = density.map(|d| d * drawn.scale.min(1.) as f64);
-            let png = cx.background_executor().spawn(async move { kadr_raster::render_png(&src, &drawn, &framed) }).await;
-            let Some(png) = png else {
+            // Saved as its name says (a copy is always PNG); the project
+            // keeps a PNG of the result either way.
+            let format = if copy { kadr_raster::Format::Png } else { kadr_raster::Format::of(&path) };
+            let rendered = cx
+                .background_executor()
+                .spawn(async move {
+                    let picture = kadr_raster::render(&src, &drawn, &framed)?;
+                    let png = kadr_raster::encode(&picture, kadr_raster::Format::Png)?;
+                    let file = if format == kadr_raster::Format::Png { None } else { Some(kadr_raster::encode(&picture, format)?) };
+                    Some((png, file))
+                })
+                .await;
+            let Some((png, file)) = rendered else {
                 return util::notify(t("common.couldnt_save"), &path.display().to_string());
             };
             let png = match shrunk {
                 Some(d) => cards::with_density(png, d),
                 None => png,
             };
+            let file = file.unwrap_or_else(|| png.clone());
             match copy {
                 false => {
-                    if let Err(e) = std::fs::write(&path, &png) {
+                    if let Err(e) = std::fs::write(&path, &file) {
                         return util::notify(t("common.couldnt_save"), &e.to_string());
                     }
                     util::copy_image(&path);
@@ -2001,15 +2016,16 @@ impl Editor {
                 }
             }
             // Keep the drawing editable for the next `kadr edit` of the file.
+            let preview = png;
             cx.background_executor()
                 .spawn(async move {
-                    let output = if copy { std::fs::read(&path).unwrap_or_default() } else { png };
+                    let output = if copy { std::fs::read(&path).unwrap_or_default() } else { file };
                     // Encoded once, for the .kadr and the editable copy both.
                     let mut base = None;
                     if let Some(bundle) = bundle {
                         match base_png(original.as_deref(), density) {
                             Ok(png) => {
-                                if let Err(e) = project::save_bundle(&bundle, &output, &png, &doc, &frame) {
+                                if let Err(e) = project::save_bundle(&bundle, &preview, &png, &doc, &frame) {
                                     util::notify(t("bundle.couldnt_save"), &e.to_string());
                                 }
                                 base = Some(png);
@@ -2032,6 +2048,8 @@ impl Editor {
         let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned());
         let filters = [
             kadr_platform::dialog::Filter { name: "PNG", extensions: &["png"] },
+            kadr_platform::dialog::Filter { name: "JPEG", extensions: &["jpg", "jpeg"] },
+            kadr_platform::dialog::Filter { name: "WebP", extensions: &["webp"] },
             kadr_platform::dialog::Filter { name: t("bundle.project"), extensions: &["kadr"] },
         ];
         let picked = kadr_platform::dialog::save(Some(window), t("editor.save_as"), &dir, name.as_deref(), &filters);

@@ -16,5 +16,5 @@ pub mod stitch;
 pub mod text;
 
 pub use frame::{backdrops, blurred_pixels, framed};
-pub use render::{extent, hide, rasterize, render, render_png};
+pub use render::{Format, encode, extent, hide, rasterize, render, render_as, render_png};
 pub use shapes::{Bounds, on_color};

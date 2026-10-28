@@ -35,7 +35,7 @@ impl Usage {
 
 fn is_ours(path: &Path, template: &str) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else { return false };
-    [".png", ".mp4", ".gif", ".webm", ".jpg"].iter().any(|ext| name.ends_with(ext)) && is_capture(path, template)
+    [".png", ".mp4", ".gif", ".webm", ".jpg", ".jpeg", ".webp"].iter().any(|ext| name.ends_with(ext)) && is_capture(path, template)
 }
 
 /// What a capture is, for its name ({type}) and what happens after it.
@@ -182,7 +182,7 @@ pub fn usage(settings: &Settings) -> Usage {
     dirs.dedup();
     for dir in dirs {
         for (path, meta) in ours(&dir) {
-            let picture = path.extension().is_some_and(|e| e == "png" || e == "jpg");
+            let picture = path.extension().is_some_and(|e| ["png", "jpg", "jpeg", "webp"].iter().any(|x| e == *x));
             add(if picture { &mut u.screenshots } else { &mut u.recordings }, &meta);
         }
     }

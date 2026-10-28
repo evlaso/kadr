@@ -434,6 +434,25 @@ fn the_editor_saves_what_the_rasteriser_draws() {
     assert!(share > 0.999, "the saved file isn't the rasteriser's: {:.2}% alike", share * 100.);
 }
 
+/// A JPEG opened in the editor is saved back as a JPEG, not as PNG bytes
+/// under a .jpg name.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_editor_saves_a_jpeg_as_a_jpeg() {
+    let s = Session::start();
+    let path = s.dir.join("shot.jpg");
+    image::open(root().join("tests/golden/cases/arrow/base.png")).expect("fixture").to_rgb8().save(&path).expect("fixture");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    s.dev(&["click", "tool-a"]);
+    s.dev(&["drag", "900,480", "160,90"]);
+    let before = std::fs::read(&path).expect("fixture");
+    s.dev(&["key", "ctrl-s"]);
+    let saved = wait(Duration::from_secs(5), || std::fs::read(&path).ok().filter(|b| *b != before)).expect("never saved");
+    assert_eq!(image::guess_format(&saved).ok(), Some(image::ImageFormat::Jpeg), "the .jpg isn't a JPEG");
+}
+
 /// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word
 /// out with Ctrl+Backspace, Shift+Left selecting and typing over it, all
 /// through the input handler the input method uses too.

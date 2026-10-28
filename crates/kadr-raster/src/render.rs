@@ -19,10 +19,51 @@ pub fn render(base: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<RgbaImage> {
 
 /// `render` for a picture already turned as `doc.view` says, as PNG bytes.
 pub fn render_png(turned: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<Vec<u8>> {
-    let out = compose(turned, doc, frame)?;
-    let mut png = Vec::new();
-    out.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-    Some(png)
+    render_as(turned, doc, frame, Format::Png)
+}
+
+/// A picture file's format, by its extension; PNG for anything else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl Format {
+    pub fn of(path: &std::path::Path) -> Format {
+        match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+            Some("jpg" | "jpeg") => Format::Jpeg,
+            Some("webp") => Format::Webp,
+            _ => Format::Png,
+        }
+    }
+}
+
+/// `picture` as a file of `format`. JPEG has no transparency, so it goes on
+/// white; WebP is lossless.
+pub fn encode(picture: &RgbaImage, format: Format) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut to = std::io::Cursor::new(&mut out);
+    match format {
+        Format::Png => picture.write_to(&mut to, image::ImageFormat::Png).ok()?,
+        Format::Webp => picture.write_to(&mut to, image::ImageFormat::WebP).ok()?,
+        Format::Jpeg => {
+            let mut flat = image::RgbImage::new(picture.width(), picture.height());
+            for (o, p) in flat.pixels_mut().zip(picture.pixels()) {
+                let a = p[3] as u32;
+                *o = image::Rgb([0, 1, 2].map(|c| ((p[c] as u32 * a + 255 * (255 - a) + 127) / 255) as u8));
+            }
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut to, 92).encode_image(&flat).ok()?
+        }
+    }
+    Some(out)
+}
+
+/// `render` for a picture already turned as `doc.view` says, as a file of
+/// `format`.
+pub fn render_as(turned: &RgbaImage, doc: &Doc, frame: &Frame, format: Format) -> Option<Vec<u8>> {
+    encode(&compose(turned, doc, frame)?, format)
 }
 
 /// What the result covers, in image pixels (whole, within the work area):
@@ -221,4 +262,27 @@ pub fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
         }
     }
     RgbaImage::from_raw(w, h, data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_picture_is_written_in_the_format_its_name_asks_for() {
+        use std::path::Path;
+        assert_eq!(Format::of(Path::new("a.PNG")), Format::Png);
+        assert_eq!(Format::of(Path::new("a.jpeg")), Format::Jpeg);
+        assert_eq!(Format::of(Path::new("a.JPG")), Format::Jpeg);
+        assert_eq!(Format::of(Path::new("a.webp")), Format::Webp);
+        assert_eq!(Format::of(Path::new("a")), Format::Png);
+        // Half-transparent red: JPEG puts it on white, WebP keeps it exactly.
+        let picture = RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 128]));
+        let jpeg = encode(&picture, Format::Jpeg).unwrap();
+        assert_eq!(image::guess_format(&jpeg).unwrap(), image::ImageFormat::Jpeg);
+        let p = image::load_from_memory(&jpeg).unwrap().to_rgba8().get_pixel(4, 4).0;
+        assert!(p[0] > 245 && (120..136).contains(&p[1]) && (120..136).contains(&p[2]) && p[3] == 255, "{p:?}");
+        let webp = encode(&picture, Format::Webp).unwrap();
+        assert_eq!(image::load_from_memory(&webp).unwrap().to_rgba8(), picture);
+    }
 }

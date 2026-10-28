@@ -6,6 +6,7 @@ What changed in each kadr release, for the people who use it. The format follows
 
 ### Added
 
+- The editor opens JPEG and WebP pictures, and Save As writes PNG, JPEG or WebP by the name you give it (JPEG on white where the picture is transparent; WebP without loss). Saving a JPEG opened in the editor keeps it a JPEG.
 - While recording, the bar shows the microphone filling with how loud it is, so you can see you're heard.
 - Updating from kadr itself: the update card's Update button downloads the release, checks it against the release key's signature and puts it in place of the installed files, and the tray starts again on it. On Windows the installer runs quietly; the portable kadr.exe swaps itself. A version that fails to start three times in a row is replaced by the previous one. Packages from pacman or Homebrew are left to their manager.
 - Update channels in Settings → General: Stable gets finished versions only, Beta gets alpha, beta and release-candidate versions as well. A pre-release build is on Beta until you change it.
