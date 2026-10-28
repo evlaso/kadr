@@ -3952,10 +3952,13 @@ impl Editor {
                         let (padx, pady) = b.pad;
                         let (_, t, _, bt) = shape.bounds();
                         let radius = b.radius.min((bt - t) / 2.);
+                        // GPUI's border adds to the box; the export's frame
+                        // is inside it, so it comes off the margins here.
+                        let f = if look.frame.is_some() { TextStyle::frame(shape.size) } else { 0. };
                         base.left(x - px(padx * s))
                             .top(y - px(pady * s))
-                            .px(px(padx * s))
-                            .py(px(pady * s))
+                            .px(px((padx - f) * s))
+                            .py(px((pady - f) * s))
                             .rounded(px(radius * s))
                             .when_some(look.fill, |d, fill| d.bg(hsla(fill)))
                             .when_some(look.frame, |d, frame| d.border(px(TextStyle::frame(shape.size) * s)).border_color(hsla(frame)))
