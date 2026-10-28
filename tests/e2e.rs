@@ -558,6 +558,14 @@ fn text_comes_in_styles() {
     s.dev(&["click", "text-style"]);
     s.dev(&["click", "text-label"]);
     assert_eq!(s.dev(&["state"])["view"]["shapes"][0]["text"], "label");
+    // Let go of it; a click of the text tool on it types into it again
+    // rather than starting another.
+    s.dev(&["key", "escape"]);
+    assert!(s.dev(&["state"])["view"]["selected"].is_null());
+    s.dev(&["drag", "910,490", "0,0"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["typing"]["text"], "Step one", "{state}");
+    assert_eq!(state["view"]["shapes"].as_array().map(Vec::len), Some(1), "{state}");
 }
 
 /// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word

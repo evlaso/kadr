@@ -391,7 +391,9 @@ fn shapes_image(shapes: &[Shape], at: P, size: P, density: f32) -> Option<(u32, 
 
 enum Drag {
     Draw,
-    Move { index: usize, last: P, moved: bool },
+    /// `from` is where it was grabbed: it moves once the pointer is a few
+    /// screen pixels away, so a click with a twitch stays a click.
+    Move { index: usize, from: P, last: P, moved: bool },
     Handle { index: usize, handle: usize },
     Scale { index: usize, handle: usize, orig: Shape },
     Crop { start: P, grab: Grab },
@@ -567,6 +569,8 @@ pub struct Editor {
     bundle: Option<PathBuf>,
     /// Pointer shape over a handle or a shape, while no button is held.
     hover: Option<CursorStyle>,
+    /// The text a click of the text tool would type into, outlined.
+    hover_text: Option<usize>,
     text_style: TextStyle,
     /// The cursor tool's shape, by `cursors` name.
     cursor_kind: &'static str,
@@ -802,6 +806,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 restored: reopened,
                 bundle,
                 hover: None,
+                hover_text: None,
                 text_style: TextStyle::Plain,
                 cursor_kind: cursors::STAMPS[0],
                 // Their squares fill 22px slots at twice the pixels.
@@ -1353,6 +1358,22 @@ impl Editor {
         .detach();
     }
 
+    /// The topmost text at `p`.
+    fn text_at(&self, p: P) -> Option<usize> {
+        let tol = GRAB / self.scale();
+        self.vm.doc.shapes.iter().rposition(|s| matches!(s.kind, Kind::Text(_)) && s.hit(p, tol))
+    }
+
+    /// Type into a text again, the caret at its end.
+    fn edit_text(&mut self, i: usize) {
+        self.checkpoint();
+        self.selected = Some(i);
+        self.editing = Some(i);
+        if let Kind::Text(t) = &self.vm.doc.shapes[i].kind {
+            self.field = kadr_ui::text::Field::new(t);
+        }
+    }
+
     fn mouse_down(&mut self, e: &MouseDownEvent, cx: &mut Context<Self>) {
         // Space held: the pointer pans; a press doesn't draw.
         if self.space {
@@ -1370,16 +1391,10 @@ impl Editor {
 
         // Double-click a text to type into it again.
         if e.click_count == 2
-            && let Some(i) = self.shape_at(p)
-            && matches!(self.vm.doc.shapes[i].kind, Kind::Text(_))
+            && let Some(i) = self.text_at(p)
         {
             self.finish_text();
-            self.checkpoint();
-            self.selected = Some(i);
-            self.editing = Some(i);
-            if let Kind::Text(t) = &self.vm.doc.shapes[i].kind {
-                self.field = kadr_ui::text::Field::new(t);
-            }
+            self.edit_text(i);
             return cx.notify();
         }
         self.finish_text();
@@ -1412,12 +1427,15 @@ impl Editor {
         self.marked.clear();
         let grabbed = match self.tool {
             Tool::Select => self.shape_at(p),
+            // The text tool takes any text: a click types into it, a drag
+            // moves it.
+            Tool::Text => self.selected.filter(|&i| self.vm.doc.shapes[i].hit(p, GRAB / s)).or_else(|| self.text_at(p)),
             _ => self.selected.filter(|&i| self.vm.doc.shapes[i].hit(p, GRAB / s)),
         };
         if let Some(index) = grabbed {
             self.checkpoint();
             self.selected = Some(index);
-            self.drag = Some(Drag::Move { index, last: p, moved: false });
+            self.drag = Some(Drag::Move { index, from: p, last: p, moved: false });
             return cx.notify();
         }
         self.selected = None;
@@ -1513,6 +1531,11 @@ impl Editor {
                 self.hover = hover;
                 cx.notify();
             }
+            let text = if self.tool == Tool::Text { self.to_image(e.position, false).and_then(|p| self.text_at(p)).filter(|&i| self.editing != Some(i)) } else { None };
+            if text != self.hover_text {
+                self.hover_text = text;
+                cx.notify();
+            }
             return;
         }
         if let Some(Drag::Slider(knob)) = self.drag {
@@ -1530,8 +1553,12 @@ impl Editor {
             return cx.notify();
         }
         let Some(p) = self.to_image(e.position, true) else { return };
+        let scale = self.scale();
         match &mut self.drag {
-            Some(Drag::Move { index, last, moved }) => {
+            Some(Drag::Move { index, from, last, moved }) => {
+                if !*moved && (p.0 - from.0).hypot(p.1 - from.1) * scale < 3. {
+                    return;
+                }
                 let d = (p.0 - last.0, p.1 - last.1);
                 *last = p;
                 *moved = true;
@@ -1585,7 +1612,12 @@ impl Editor {
             }
             Some(Drag::Slider(_)) => {}
             // A click without movement isn't an edit.
-            Some(Drag::Move { moved: false, .. }) => self.vm.drop_checkpoint(),
+            Some(Drag::Move { index, moved: false, .. }) => {
+                self.vm.drop_checkpoint();
+                if self.tool == Tool::Text && matches!(self.vm.doc.shapes[index].kind, Kind::Text(_)) {
+                    self.edit_text(index);
+                }
+            }
             Some(Drag::Move { index, .. } | Drag::Handle { index, .. } | Drag::Scale { index, .. }) => self.refresh_patch(index, cx),
             Some(Drag::Crop { .. } | Drag::CropEdit { .. }) => {
                 // The view stays where the crop took it.
@@ -1609,13 +1641,15 @@ impl Editor {
                         }
                         _ => (shape.a.0 - shape.b.0).abs() < 3. && (shape.a.1 - shape.b.1).abs() < 3.,
                     };
-                    // What's just drawn isn't selected: the
-                    // next stroke starts right away.
+                    // Strokes aren't selected once drawn, so the next one
+                    // starts right away; shapes with options of their own
+                    // are, to show them under it.
                     if !tiny {
+                        let options = matches!(shape.kind, Kind::Arrow(_) | Kind::Rect | Kind::Ellipse | Kind::Blur(..));
                         self.checkpoint();
                         self.vm.doc.shapes.push(shape);
                         let index = self.vm.doc.shapes.len() - 1;
-                        self.selected = None;
+                        self.selected = options.then_some(index);
                         self.refresh_patch(index, cx);
                     }
                 }
@@ -4100,6 +4134,7 @@ impl Editor {
         };
         let marked: Vec<_> = self.marked.iter().filter_map(|&i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.band_pad(s))).collect();
         let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow(_))));
+        let hovered_text = self.hover_text.filter(|&i| self.selected != Some(i) || self.editing.is_some()).filter(|_| self.drag.is_none()).and_then(|i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.band_pad(s)));
         let accent = cx.theme().colors().text_accent;
         let overlay = canvas(
             |_, _, _| {},
@@ -4135,6 +4170,10 @@ impl Editor {
                     let half = BAND / 2. / s;
                     let r0 = area(l - pad - half, t - pad - half, r + pad + half, b + pad + half);
                     window.paint_quad(crate::ui::quad(r0, px(2.), gpui::transparent_black(), px(BAND), band, BorderStyle::Solid));
+                }
+                // The text a click would type into: a thin line round it.
+                if let Some(((l, t, r, b), pad)) = hovered_text {
+                    window.paint_quad(crate::ui::quad(area(l - pad, t - pad, r + pad, b + pad), px(3.), gpui::transparent_black(), px(1.5), band, BorderStyle::Solid));
                 }
                 if let Some((l, t, r, b)) = marquee {
                     let mut tint = accent;
