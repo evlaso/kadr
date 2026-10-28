@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
+use crate::color::Rgba;
 
 use crate::dirs;
 
@@ -106,7 +107,15 @@ pub struct Settings {
     pub studio_zoom: f64,
     pub studio_backdrop: usize,
     pub studio_padding: usize,
+    /// The editor's colours used lately beyond its own, newest first.
+    pub recent_colors: Vec<Rgba>,
+    /// Colours kept in the editor's colour menu.
+    pub saved_colors: Vec<Rgba>,
 }
+
+/// How many recent and saved colours are kept.
+pub const RECENT_COLORS: usize = 8;
+pub const SAVED_COLORS: usize = 16;
 
 /// kadr's colours: following the system's appearance, or always one set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +155,8 @@ impl Default for Settings {
             studio_zoom: 1.8,
             studio_backdrop: 0,
             studio_padding: 2,
+            recent_colors: Vec::new(),
+            saved_colors: Vec::new(),
         }
     }
 }
@@ -207,6 +218,9 @@ const KEYS: &[(&str, &str, &str)] = &[
     ("studio_zoom", "The zoom placed on clicks, 1 to 4.", ""),
     ("studio_backdrop", "The background, by its place in the studio's list (from 0).", ""),
     ("studio_padding", "How much background shows around: 0 (none) to 3.", ""),
+    ("", "Editor", ""),
+    ("saved_colors", "Colours kept in the colour menu, as \"#rrggbb\".", "[\"#4385be\", \"#100f0f\"]"),
+    ("recent_colors", "Colours used lately, newest first; kadr keeps this list.", ""),
 ];
 
 /// The two tables at the end: what happens after a capture.
@@ -379,6 +393,7 @@ impl Settings {
         let dir = |key: &str| v[key].as_str().filter(|s| !s.is_empty()).map(expand);
         let bool_or = |key: &str, default: bool| v[key].as_bool().unwrap_or(default);
         let num_or = |key: &str, default: u64| v[key].as_u64().unwrap_or(default);
+        let colors = |key: &str, most: usize| v[key].as_array().into_iter().flatten().filter_map(|c| Rgba::parse_hex(c.as_str()?)).take(most).collect();
         Settings {
             screenshot_dir: dir("screenshot_dir"),
             // Before the after-capture choices there were two switches.
@@ -416,6 +431,8 @@ impl Settings {
             studio_zoom: v["studio_zoom"].as_f64().unwrap_or(d.studio_zoom).clamp(1.0, 4.0),
             studio_backdrop: num_or("studio_backdrop", d.studio_backdrop as u64) as usize,
             studio_padding: num_or("studio_padding", d.studio_padding as u64) as usize,
+            recent_colors: colors("recent_colors", RECENT_COLORS),
+            saved_colors: colors("saved_colors", SAVED_COLORS),
         }
     }
 
@@ -454,6 +471,8 @@ impl Settings {
             "studio_zoom": self.studio_zoom,
             "studio_backdrop": self.studio_backdrop,
             "studio_padding": self.studio_padding,
+            "recent_colors": self.recent_colors.iter().map(|c| c.to_hex()).collect::<Vec<_>>(),
+            "saved_colors": self.saved_colors.iter().map(|c| c.to_hex()).collect::<Vec<_>>(),
         })
     }
 

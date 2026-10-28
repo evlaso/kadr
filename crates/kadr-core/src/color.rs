@@ -50,4 +50,31 @@ impl Rgba {
     pub fn with_alpha(self, a: f32) -> Rgba {
         Rgba { a, ..self }
     }
+
+    /// `#rrggbb`, as people write colours (alpha left out).
+    pub fn to_hex(self) -> String {
+        let c = |v: f32| (v.clamp(0., 1.) * 255.).round() as u8;
+        format!("#{:02x}{:02x}{:02x}", c(self.r), c(self.g), c(self.b))
+    }
+
+    /// `#rrggbb` or `rrggbb` (any case), opaque.
+    pub fn parse_hex(text: &str) -> Option<Rgba> {
+        let digits = text.trim().trim_start_matches('#');
+        (digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit())).then(|| Rgba::hex(u32::from_str_radix(digits, 16).unwrap_or(0)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_colour_goes_to_hex_and_back() {
+        let c = Rgba::hex(0x4385be);
+        assert_eq!(c.to_hex(), "#4385be");
+        assert_eq!(Rgba::parse_hex("#4385BE"), Some(c));
+        assert_eq!(Rgba::parse_hex("4385be"), Some(c));
+        assert_eq!(Rgba::parse_hex("#4385b"), None);
+        assert_eq!(Rgba::parse_hex("#4385bg"), None);
+    }
 }

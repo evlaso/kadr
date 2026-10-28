@@ -453,6 +453,32 @@ fn the_editor_saves_a_jpeg_as_a_jpeg() {
     assert_eq!(image::guess_format(&saved).ok(), Some(image::ImageFormat::Jpeg), "the .jpg isn't a JPEG");
 }
 
+/// The pipette takes a colour off the picture: it becomes the current one,
+/// the first of the recent ones and stays in the settings; + keeps it.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_pipette_takes_a_colour_from_the_picture() {
+    let s = Session::start();
+    let path = s.dir.join("teal.png");
+    RgbaImage::from_pixel(1600, 1000, image::Rgba([0x2a, 0x9d, 0x8f, 255])).save(&path).expect("fixture");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    s.dev(&["key", "i"]);
+    assert_eq!(s.dev(&["state"])["view"]["picking"], true);
+    // The picture fills most of the window.
+    s.dev(&["drag", "600,400", "0,0"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["color"], "#2a9d8f", "{state}");
+    assert_eq!(state["view"]["picking"], false);
+    assert_eq!(state["view"]["recent_colors"][0], "#2a9d8f");
+    s.dev(&["click", "colors"]);
+    s.dev(&["click", "color-keep"]);
+    assert_eq!(s.dev(&["state"])["view"]["saved_colors"][0], "#2a9d8f");
+    let settings = std::fs::read_to_string(s.var("XDG_CONFIG_HOME").join("kadr/settings.toml")).expect("settings");
+    assert!(settings.contains(r##"recent_colors = ["#2a9d8f"]"##) && settings.contains(r##"saved_colors = ["#2a9d8f"]"##), "{settings}");
+}
+
 /// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word
 /// out with Ctrl+Backspace, Shift+Left selecting and typing over it, all
 /// through the input handler the input method uses too.

@@ -539,8 +539,14 @@ pub struct Editor {
     /// puts its candidates there.
     caret_at: Cell<Option<Bounds<gpui::Pixels>>>,
     tool: Tool,
+    /// The colour menu's own colours, the current one (any colour), the
+    /// ones picked lately and the ones kept (both in the settings).
     colors: Vec<Hsla>,
-    color: usize,
+    color: Hsla,
+    recent: Vec<Hsla>,
+    saved: Vec<Hsla>,
+    /// The next click on the picture takes its colour.
+    picking: bool,
     /// The size slider, 0..1.
     weight: f32,
     /// Boxes and ellipses are drawn solid.
@@ -734,6 +740,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 .detach();
             }
             crate::dev::mark("editor:fields");
+            let colors = crate::settings::Settings::load();
             let mut editor = Editor {
                 path,
                 card_on_close: card,
@@ -775,7 +782,10 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 caret_at: Default::default(),
                 tool: Tool::Arrow,
                 colors: palette::annotation_colors(),
-                color: 0,
+                color: palette::annotation_colors()[0],
+                recent: colors.recent_colors.iter().map(|&c| crate::ui::from_rgba(c)).collect(),
+                saved: colors.saved_colors.iter().map(|&c| crate::ui::from_rgba(c)).collect(),
+                picking: false,
                 weight: WEIGHT,
                 fill: false,
                 hide: Hide::Pixelate,
@@ -1199,7 +1209,7 @@ impl Editor {
     }
 
     fn current_color(&self) -> Rgba {
-        crate::ui::to_rgba(self.colors[self.color])
+        crate::ui::to_rgba(self.color)
     }
 
     /// Remember the current state for undo, before changing it.
@@ -1340,6 +1350,11 @@ impl Editor {
         // A typed crop size counts once the canvas is clicked.
         self.apply_size_field();
         let Some(p) = self.to_image(e.position, false) else { return };
+        if self.picking {
+            self.picking = false;
+            self.take_color(p);
+            return cx.notify();
+        }
         let s = self.scale();
 
         // Double-click a text to type into it again.
@@ -1662,6 +1677,8 @@ impl Editor {
             ("space", false, false) => self.space = true,
             // Esc steps back: the colour menu, the selection, then the editor.
             ("escape", _, _) if self.colors_open => self.colors_open = false,
+            ("escape", _, _) if self.picking => self.picking = false,
+            ("i", false, false) if self.cropping.is_none() => self.picking = !self.picking,
             ("escape", _, _) if self.cursors_open => self.cursors_open = false,
             ("escape", _, _) if !self.marked.is_empty() => self.marked.clear(),
             ("escape", _, _) if self.selected.is_some() => self.selected = None,
@@ -1713,7 +1730,7 @@ impl Editor {
                         self.set_tool(tool, cx);
                     }
                 } else if let Some(n) = key.parse::<usize>().ok().filter(|n| (1..=self.colors.len()).contains(n)) {
-                    self.pick_color(n - 1);
+                    self.pick_color(self.colors[n - 1]);
                 }
             }
             _ => {}
@@ -1722,12 +1739,57 @@ impl Editor {
     }
 
     /// Toolbar colors and weights also restyle the selected shape.
-    fn pick_color(&mut self, i: usize) {
-        self.color = i;
+    fn pick_color(&mut self, color: Hsla) {
+        self.color = color;
         if let Some(index) = self.selected {
             self.checkpoint();
-            self.vm.doc.shapes[index].color = crate::ui::to_rgba(self.colors[i]);
+            self.vm.doc.shapes[index].color = crate::ui::to_rgba(color);
         }
+    }
+
+    /// Take the colour of the picture where it was clicked, and keep it
+    /// among the recent ones.
+    fn take_color(&mut self, p: P) {
+        let Some(src) = &self.source else { return };
+        let (x, y) = (p.0.floor(), p.1.floor());
+        if x < 0. || y < 0. || x >= src.width() as f32 || y >= src.height() as f32 {
+            return;
+        }
+        let [r, g, b, _] = src.get_pixel(x as u32, y as u32).0;
+        let color = crate::ui::from_hex((r as u32) << 16 | (g as u32) << 8 | b as u32);
+        self.pick_color(color);
+        self.remember_color(color);
+    }
+
+    /// Put a colour first among the recent ones (the menu's own colours
+    /// aren't kept), in the settings too.
+    fn remember_color(&mut self, color: Hsla) {
+        let same = |a: Hsla, b: Hsla| crate::ui::to_rgba(a).to_hex() == crate::ui::to_rgba(b).to_hex();
+        if self.colors.iter().any(|&c| same(c, color)) {
+            return;
+        }
+        self.recent.retain(|&c| !same(c, color));
+        self.recent.insert(0, color);
+        self.recent.truncate(kadr_core::settings::RECENT_COLORS);
+        let recent = self.recent.iter().map(|&c| crate::ui::to_rgba(c)).collect();
+        let mut settings = crate::settings::Settings::load();
+        settings.recent_colors = recent;
+        settings.save();
+    }
+
+    /// Keep the current colour in the menu, or let go of a kept one.
+    fn keep_color(&mut self, color: Hsla, keep: bool) {
+        let same = |a: Hsla| crate::ui::to_rgba(a).to_hex() == crate::ui::to_rgba(color).to_hex();
+        self.saved.retain(|&c| !same(c));
+        if keep {
+            self.saved.push(color);
+            let n = self.saved.len().saturating_sub(kadr_core::settings::SAVED_COLORS);
+            self.saved.drain(..n);
+        }
+        let saved = self.saved.iter().map(|&c| crate::ui::to_rgba(c)).collect();
+        let mut settings = crate::settings::Settings::load();
+        settings.saved_colors = saved;
+        settings.save();
     }
 
     /// Undo restores the size from before the whole slide, not each step.
@@ -2180,28 +2242,85 @@ impl Editor {
 
         let ring = cx.theme().colors().text;
         let current = crate::ui::from_rgba(self.current_color());
-        // Colours sit in a dropdown under one swatch of the current colour.
-        let swatches = self.colors.iter().enumerate().map(|(i, &c)| {
-            let selected = i == self.color;
+        // Colours sit in a dropdown under one swatch of the current colour:
+        // kadr's own and the pipette, then the ones picked lately, then the
+        // ones kept, with + to keep the current one.
+        let hex = |c: Hsla| crate::ui::to_rgba(c).to_hex();
+        let now = hex(self.color);
+        let swatch = |id: (&'static str, usize), c: Hsla, tip: String| {
             div()
-                .id(("color", i))
+                .id(id)
                 .size(px(28.))
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded_full()
                 .border_2()
-                .border_color(if selected { ring } else { gpui::transparent_black() })
+                .border_color(if hex(c) == now { ring } else { gpui::transparent_black() })
                 .cursor_pointer()
-                .child(div().size(px(20.)).rounded_full().bg(c))
-                .tip(Tooltip::text(tr!("editor.color_n", i + 1)))
+                .child(div().size(px(20.)).rounded_full().bg(c).border_1().border_color(cx.theme().colors().border))
+                .tip(Tooltip::text(tip))
+        };
+        let own = self.colors.iter().enumerate().map(|(i, &c)| {
+            swatch(("color", i), c, tr!("editor.color_n", i + 1)).on_click(cx.listener(move |this, _, _, cx| {
+                this.pick_color(c);
+                this.colors_open = false;
+                cx.notify();
+            }))
+        });
+        let pipette = ButtonLike::new("color-pipette")
+            .style(ButtonStyle::Subtle)
+            .size(ButtonSize::Large)
+            .square()
+            .toggle_state(self.picking)
+            .child(Icon::from_path("icons/kadr/pipette.svg").size(IconSize::Small))
+            .tip(Tooltip::text(t("editor.pick_color_tip")))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.picking = true;
+                this.colors_open = false;
+                cx.notify();
+            }));
+        let recent = self.recent.iter().enumerate().map(|(i, &c)| {
+            swatch(("color-recent", i), c, hex(c)).on_click(cx.listener(move |this, _, _, cx| {
+                this.pick_color(c);
+                this.colors_open = false;
+                cx.notify();
+            }))
+        });
+        let saved = self.saved.iter().enumerate().map(|(i, &c)| {
+            swatch(("color-saved", i), c, tr!("editor.saved_color_tip", hex(c)))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.pick_color(i);
+                    this.pick_color(c);
                     this.colors_open = false;
                     cx.notify();
                 }))
-        })
-            .collect::<Vec<_>>();
+                .on_mouse_down(MouseButton::Right, cx.listener(move |this, _, _, cx| {
+                    this.keep_color(c, false);
+                    cx.notify();
+                }))
+        });
+        let kept = self.colors.iter().chain(&self.saved).any(|&c| hex(c) == now);
+        let keep = ButtonLike::new("color-keep")
+            .style(ButtonStyle::Subtle)
+            .size(ButtonSize::Large)
+            .square()
+            .disabled(kept)
+            .child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted))
+            .tip(Tooltip::text(t("editor.keep_color_tip")))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.keep_color(this.color, true);
+                cx.notify();
+            }));
+        let heading = |text: &'static str| Label::new(text).size(LabelSize::XSmall).color(Color::Muted);
+        let row = || h_flex().flex_wrap().gap_1();
+        let swatches = v_flex()
+            // As wide as kadr's colours and the pipette; the other rows wrap.
+            .w(px(8. * 28. + 36. + 8. * 4.))
+            .gap_1p5()
+            .child(h_flex().gap_1().children(own).child(pipette))
+            .when(!self.recent.is_empty(), |d| d.child(heading(t("editor.recent_colors"))).child(row().children(recent)))
+            .child(heading(t("editor.saved_colors")))
+            .child(row().children(saved).child(keep));
         let palette = div()
             .relative()
             .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
@@ -2236,10 +2355,9 @@ impl Editor {
                     .absolute()
                     .top(px(38.))
                     .right_0()
-                    .gap_1()
-                    .p_1p5()
+                    .p_2()
                     .elevation_3(cx)
-                    .children(swatches)
+                    .child(swatches)
                     .child(crate::ui::track_bounds(&self.colors_menu)),
             ))
         });
@@ -3899,6 +4017,7 @@ impl Editor {
 
         let pointer = match self.tool {
             _ if self.space => CursorStyle::OpenHand,
+            _ if self.picking => CursorStyle::Crosshair,
             _ if self.drag.is_none() && self.hover.is_some() => self.hover.unwrap_or(CursorStyle::Arrow),
             Tool::Select => CursorStyle::Arrow,
             Tool::Text => CursorStyle::IBeam,
@@ -5055,6 +5174,10 @@ impl Editor {
         serde_json::json!({
             "path": self.path.display().to_string(),
             "tool": format!("{:?}", self.tool).to_lowercase(),
+            "color": crate::ui::to_rgba(self.color).to_hex(),
+            "picking": self.picking,
+            "recent_colors": self.recent.iter().map(|&c| crate::ui::to_rgba(c).to_hex()).collect::<Vec<_>>(),
+            "saved_colors": self.saved.iter().map(|&c| crate::ui::to_rgba(c).to_hex()).collect::<Vec<_>>(),
             "selected": self.selected,
             "shapes": self.vm.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
             "crop": self.vm.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
