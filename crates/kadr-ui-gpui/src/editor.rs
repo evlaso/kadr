@@ -616,6 +616,8 @@ pub struct Editor {
     /// The colour dropdown in the toolbar is open.
     colors_open: bool,
     colors_menu: crate::ui::MenuBounds,
+    /// The floating bar of the selected shape's options, as wide as drawn.
+    context_w: crate::ui::Width,
     /// The text styles' dropdown is open.
     text_styles_open: bool,
     text_styles_menu: crate::ui::MenuBounds,
@@ -829,6 +831,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 windowed,
                 colors_open: false,
                 colors_menu: Default::default(),
+                context_w: Default::default(),
                 text_styles_open: false,
                 text_styles_menu: Default::default(),
                 cursors_open: false,
@@ -2441,8 +2444,12 @@ impl Editor {
                         cx.notify();
                     })),
             );
+        // With a shape selected (or being typed), its options sit in a bar
+        // under it; without, the tool's for the next shape are up here.
+        let target = self.context_target();
+        let tool_options = target.is_none();
         // Solid or outline, for boxes and ellipses.
-        let shapes_fill = matches!(self.tool, Tool::Rect | Tool::Ellipse)
+        let shapes_fill = (tool_options && matches!(self.tool, Tool::Rect | Tool::Ellipse))
             || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
         let fill_toggle = shapes_fill.then(|| {
             let option = |id: &'static str, solid: bool, icon: &'static str, tip: &'static str| {
@@ -2464,7 +2471,7 @@ impl Editor {
                 .child(Divider::vertical().h_5().mx_1())
         });
         // Plain, on a plate or outlined, for text.
-        let texts = matches!(self.tool, Tool::Text) || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
+        let texts = (tool_options && matches!(self.tool, Tool::Text)) || target.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
         // Text styles in a dropdown under a sample of the current one,
         // each a sample in the current colour.
         let text_options = texts.then(|| {
@@ -2525,7 +2532,7 @@ impl Editor {
             Kind::Arrow(style) => Some(style),
             _ => None,
         });
-        let arrow_options = (self.tool == Tool::Arrow || picked_arrow.is_some()).then(|| {
+        let arrow_options = ((tool_options && self.tool == Tool::Arrow) || picked_arrow.is_some()).then(|| {
             let current = picked_arrow.unwrap_or(self.arrow);
             let option = |style: ArrowStyle, tip: &'static str| {
                 ButtonLike::new(SharedString::from(format!("arrow-{}", style.key())))
@@ -2553,7 +2560,7 @@ impl Editor {
             _ => None,
         });
         // In a dropdown under the current one, like the colours.
-        let cursor_options = (self.tool == Tool::Cursor || picked_cursor.is_some()).then(|| {
+        let cursor_options = ((tool_options && self.tool == Tool::Cursor) || picked_cursor.is_some()).then(|| {
             let current = picked_cursor.unwrap_or(self.cursor_kind);
             let icon = |name: &str| {
                 self.cursor_icons.iter().find(|(n, _)| *n == name).map(|(_, image)| img(gpui::ImageSource::Render(image.clone())).size(px(22.)).object_fit(ObjectFit::Contain))
@@ -2613,7 +2620,7 @@ impl Editor {
                 .child(Divider::vertical().h_5().mx_1())
         });
         // Pixelate or blur, and hiding what looks private, for the hide tool.
-        let hiding = self.tool == Tool::Blur || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
+        let hiding = (tool_options && self.tool == Tool::Blur) || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
         let hide_options = hiding.then(|| {
             let option = |id: &'static str, how: Hide, icon: &'static str, tip: &'static str| {
                 ButtonLike::new(id)
@@ -2742,7 +2749,11 @@ impl Editor {
                 .children(menu)
         });
         let tools = h_flex().gap(px(6.)).children(rows.into_iter().map(|row| h_flex().gap_0p5().children(row.into_iter().map(|t| tool_button(t, cx))))).children(overflow);
-        let style = if compact {
+        let mut floating = None;
+        let style = if let Some(index) = target {
+            floating = self.context_bar(index, h_flex().gap_0p5().children(hide_options).children(arrow_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette).child(weights), cx);
+            h_flex()
+        } else if compact {
             let menu = self.more_open.then(|| {
                 gpui::deferred(
                     v_flex()
@@ -2808,8 +2819,57 @@ impl Editor {
             .justify_end()
             .child(kit::drags_window(div().flex_1().h_full()))
             .child(h_flex().pr_2().child(style))
-            .children(kit::window_controls(true, cx));
+            .children(kit::window_controls(true, cx))
+            .children(floating);
         self.top_bar(width, cx).child(left).child(h_flex().flex_none().child(tools)).child(right).into_any_element()
+    }
+
+    /// The shape whose options show under it: the text being typed, else
+    /// the selected one.
+    fn context_target(&self) -> Option<usize> {
+        if self.cropping.is_some() {
+            return None;
+        }
+        self.editing.or(self.selected).filter(|&i| i < self.vm.doc.shapes.len())
+    }
+
+    /// A shape's options in a bar floating under it (over it, short of room
+    /// below), centred on it and kept on the stage; none while it's dragged.
+    fn context_bar(&self, index: usize, options: Div, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.drag.is_some() {
+            return None;
+        }
+        let (l, t, r, b) = self.vm.doc.shapes[index].bounds();
+        let ((ox, oy), s, m) = (self.origin.get(), self.scale(), self.laid_margin());
+        let (sx, sy, sw, sh) = self.stage_box.get();
+        // Past the selection's handles.
+        let (gap, h) = (18., 46.);
+        let (top, bottom) = (oy + (t + m) * s - gap - h, oy + (b + m) * s + gap);
+        let y = if bottom + h <= sy + sh { bottom } else if top >= sy { top } else { sy + sh - h - 8. };
+        // Centred by the layout, in a row as wide as the room either side of
+        // the shape's middle allows, so it's in place on its first frame;
+        // one wider than that (as last drawn) gets the whole stage.
+        let mid = (ox + ((l + r) / 2. + m) * s).clamp(sx, sx + sw);
+        let half = (mid - sx).min(sx + sw - mid) - 8.;
+        let (x, w) = if self.context_w.get() <= 2. * half { (mid - half, 2. * half) } else { (sx + 8., sw - 16.) };
+        Some(
+            gpui::deferred(
+                gpui::anchored().position(gpui::point(px(x), px(y))).child(
+                    h_flex().w(px(w)).justify_center().child(
+                        h_flex()
+                            .id("context-bar")
+                            .occlude()
+                            .h(px(h))
+                            .px_1p5()
+                            .rounded(px(12.))
+                            .elevation_3(cx)
+                            .child(options)
+                            .child(crate::ui::track_width(&self.context_w)),
+                    ),
+                ),
+            )
+            .into_any_element(),
+        )
     }
 
     /// The bar along the window's top, for the editing and the crop modes.

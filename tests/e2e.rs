@@ -496,20 +496,16 @@ fn a_black_box_leaves_nothing_under_it() {
     let state = s.dev(&["state"]);
     assert_eq!(state["view"]["shapes"][0]["kind"], "redact", "{state}");
     s.dev(&["key", "ctrl-s"]);
-    kadr_core::dirs::set(kadr_core::dirs::Dirs {
-        config: s.var("XDG_CONFIG_HOME").join("kadr"),
-        cache: s.var("XDG_CACHE_HOME").join("kadr"),
-        data: s.var("XDG_DATA_HOME").join("kadr"),
-        pictures: s.var("OMARCHY_SCREENSHOT_DIR"),
-        videos: s.dir.join("home/videos"),
-        runtime: s.dir.clone(),
-    });
-    let restored = wait(Duration::from_secs(5), || kadr_core::project::load(&path, &std::fs::read(&path).ok()?)).expect("no drawing kept with the saved file");
-    let shape = &restored.doc.shapes[0];
-    let (x, y) = (((shape.a.0 + shape.b.0) / 2.) as u32, ((shape.a.1 + shape.b.1) / 2.) as u32);
+    // The project's files read straight from this session's folder: the
+    // process's kadr folders (`dirs::set`) are another test's.
+    let edits = s.var("XDG_DATA_HOME").join("kadr/edits");
+    let project = wait(Duration::from_secs(5), || newest(&edits).filter(|d| d.join("base.png").exists())).expect("no drawing kept with the saved file");
+    let (a, b) = (&state["view"]["shapes"][0]["a"], &state["view"]["shapes"][0]["b"]);
+    let mid = |i: usize| ((a[i].as_f64().unwrap() + b[i].as_f64().unwrap()) / 2.) as u32;
+    let (x, y) = (mid(0), mid(1));
     let saved = image::open(&path).expect("saved").to_rgba8();
     assert_eq!(saved.get_pixel(x, y).0, [0, 0, 0, 255], "the saved file");
-    let base = image::load_from_memory(&restored.base).expect("base").to_rgba8();
+    let base = image::open(project.join("base.png")).expect("base").to_rgba8();
     assert_eq!(base.get_pixel(x, y).0, [0, 0, 0, 255], "the project's picture");
     assert_eq!(base.get_pixel(2, 2).0, [0xf4, 0xa2, 0x61, 255], "the rest of it");
 }

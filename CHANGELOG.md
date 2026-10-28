@@ -18,6 +18,9 @@ What changed in each kadr release, for the people who use it. The format follows
 - Check now in Settings → About, which says right there whether there's a newer version, and updates from the same row; `kadr update` on the command line shows it on a card.
 - Scrolling screenshots on macOS and Windows, and sideways: scroll the area to the right (a timeline, a wide table) and kadr stitches it into one wide picture.
 - Settings live in `settings.toml` (in `~/.config/kadr` on Linux), with a comment on every setting, so they can be changed by hand or kept with your dotfiles. kadr picks up edits the next time it needs them, and the settings window keeps your comments and changes only what you change there. Settings → About → Settings file opens it. If the file can't be read, kadr says where in the settings window and leaves it as it is. The old `settings.json` is moved over by itself.
+### Changed
+
+- In the editor, a selected shape (or a text being typed) has its options in a bar floating under it: its style, colour and size. The top bar keeps the tool's options for the next shape while nothing is selected.
 
 ## [0.3.0-alpha.2] - 2026-10-26
 
