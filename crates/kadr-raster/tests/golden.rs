@@ -190,6 +190,17 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
         ("text_plate", (480, 300), doc(vec![text("On a plate", (140., 150.), 28., TextStyle::Plate)]), none.clone()),
         ("text_outline", (480, 300), doc(vec![text("Outlined", (270., 190.), 36., TextStyle::Outline)]), none.clone()),
         (
+            "text_styles",
+            (480, 300),
+            doc(vec![
+                text("Shadow", (140., 40.), 28., TextStyle::Shadow),
+                text("Highlight", (140., 100.), 28., TextStyle::Highlight),
+                text("Pill", (300., 40.), 28., TextStyle::Pill),
+                text("Label", (290., 190.), 30., TextStyle::Label),
+            ]),
+            none.clone(),
+        ),
+        (
             "counters",
             (480, 300),
             doc([1, 2, 9, 10, 42, 99].iter().enumerate().map(|(i, &n)| shape(Kind::Counter(n), (150. + i as f32 * 52., 230.), (150. + i as f32 * 52., 230.), 36.)).collect()),

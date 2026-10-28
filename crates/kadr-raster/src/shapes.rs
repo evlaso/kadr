@@ -27,13 +27,11 @@ impl Bounds for Shape {
                 let m = metrics(self.size);
                 let width = text.split('\n').map(|l| text_width(l, self.size)).fold(self.size * 0.5, f32::max);
                 let lines = text.split('\n').count().max(1) as f32;
-                let (px, py) = match self.text {
-                    TextStyle::Plain => (0., 0.),
-                    TextStyle::Plate => {
-                        let (px, py, _) = TextStyle::plate(self.size);
-                        (px, py)
-                    }
-                    TextStyle::Outline => (TextStyle::outline(self.size), TextStyle::outline(self.size)),
+                let (px, py) = match (self.text, self.text.text_box(self.size)) {
+                    (_, Some(b)) => b.pad,
+                    (TextStyle::Outline, _) => (TextStyle::outline(self.size), TextStyle::outline(self.size)),
+                    (TextStyle::Shadow, _) => (TextStyle::shadow(self.size), TextStyle::shadow(self.size)),
+                    _ => (0., 0.),
                 };
                 (self.a.0 - px, self.a.1 - py, self.a.0 + width + px, self.a.1 + lines * m.line + py)
             }
@@ -56,6 +54,29 @@ impl Bounds for Shape {
             }
             Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight | Kind::Picture(_) => rect(self.a, self.b),
         }
+    }
+}
+
+/// The colours text of `style` in colour `c` is drawn in: its letters, the
+/// box under them, the box's frame, the ring round the letters and their
+/// shadow, whichever the style has.
+pub struct TextLook {
+    pub ink: Rgba,
+    pub fill: Option<Rgba>,
+    pub frame: Option<Rgba>,
+    pub ring: Option<Rgba>,
+    pub shadow: Option<Rgba>,
+}
+
+pub fn text_look(style: TextStyle, c: Rgba) -> TextLook {
+    let plain = TextLook { ink: c, fill: None, frame: None, ring: None, shadow: None };
+    match style {
+        TextStyle::Plain => plain,
+        TextStyle::Plate | TextStyle::Pill => TextLook { ink: on_color(c), fill: Some(c), ..plain },
+        TextStyle::Outline => TextLook { ring: Some(on_color(c)), ..plain },
+        TextStyle::Shadow => TextLook { shadow: Some(Rgba::new(0., 0., 0., 0.45)), ..plain },
+        TextStyle::Highlight => TextLook { ink: on_color(Rgba::WHITE), fill: Some(c.with_alpha(MARKER_ALPHA)), ..plain },
+        TextStyle::Label => TextLook { fill: Some(on_color(c)), frame: Some(c), ..plain },
     }
 }
 

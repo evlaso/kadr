@@ -616,6 +616,9 @@ pub struct Editor {
     /// The colour dropdown in the toolbar is open.
     colors_open: bool,
     colors_menu: crate::ui::MenuBounds,
+    /// The text styles' dropdown is open.
+    text_styles_open: bool,
+    text_styles_menu: crate::ui::MenuBounds,
     cursors_open: bool,
     cursors_menu: crate::ui::MenuBounds,
     /// The "⋯" menu with the style controls, when the toolbar is too narrow.
@@ -826,6 +829,8 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 windowed,
                 colors_open: false,
                 colors_menu: Default::default(),
+                text_styles_open: false,
+                text_styles_menu: Default::default(),
                 cursors_open: false,
                 cursors_menu: Default::default(),
                 more_open: false,
@@ -1680,6 +1685,7 @@ impl Editor {
             ("space", false, false) => self.space = true,
             // Esc steps back: the colour menu, the selection, then the editor.
             ("escape", _, _) if self.colors_open => self.colors_open = false,
+            ("escape", _, _) if self.text_styles_open => self.text_styles_open = false,
             ("escape", _, _) if self.picking => self.picking = false,
             ("i", false, false) if self.cropping.is_none() => self.picking = !self.picking,
             ("escape", _, _) if self.cursors_open => self.cursors_open = false,
@@ -2459,31 +2465,59 @@ impl Editor {
         });
         // Plain, on a plate or outlined, for text.
         let texts = matches!(self.tool, Tool::Text) || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
+        // Text styles in a dropdown under a sample of the current one,
+        // each a sample in the current colour.
         let text_options = texts.then(|| {
-            let fg = cx.theme().colors().text;
-            let option = |id: &'static str, style: TextStyle, tip: &'static str| {
-                let sample = div().px_1().text_size(px(14.)).font_weight(gpui::FontWeight::SEMIBOLD).child("Aa");
-                let sample = match style {
-                    TextStyle::Plain => sample,
-                    TextStyle::Plate => sample.rounded(px(4.)).bg(fg).text_color(cx.theme().colors().editor_background),
-                    TextStyle::Outline => sample.rounded(px(4.)).border_1().border_color(fg),
-                };
-                ButtonLike::new(id)
-                    .style(if self.text_style == style { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+            let picked = self.selected.and_then(|i| self.vm.doc.shapes.get(i)).filter(|sh| matches!(sh.kind, Kind::Text(_))).map(|sh| (sh.text, sh.color));
+            let (current, color) = picked.unwrap_or((self.text_style, self.current_color()));
+            let options = TextStyle::ALL.into_iter().map(|style| {
+                ButtonLike::new(SharedString::from(format!("text-{}", style.key())))
+                    .style(if current == style { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                     .size(ButtonSize::Large)
-                    .toggle_state(self.text_style == style)
-                    .child(div().px_0p5().child(sample))
-                    .tip(Tooltip::text(tip))
+                    .toggle_state(current == style)
+                    .child(div().px_1().child(text_sample(style, color)))
+                    .tip(Tooltip::text(text_style_name(style)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.pick_text_style(style);
+                        this.text_styles_open = false;
                         cx.notify();
                     }))
-            };
+            });
             h_flex()
-                .gap_0p5()
-                .child(option("text-plain", TextStyle::Plain, t("editor.plain_text")))
-                .child(option("text-plate", TextStyle::Plate, t("editor.on_plate")))
-                .child(option("text-outline", TextStyle::Outline, t("editor.outlined")))
+                .relative()
+                .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                    if this.text_styles_open && !this.text_styles_menu.get().contains(&e.position) {
+                        this.text_styles_open = false;
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    ButtonLike::new("text-style")
+                        .style(if self.text_styles_open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                        .size(ButtonSize::Large)
+                        .toggle_state(self.text_styles_open)
+                        .child(h_flex().gap_1().px_1().child(text_sample(current, color)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                        .tip(Tooltip::text(text_style_name(current)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.text_styles_open = !this.text_styles_open;
+                            cx.notify();
+                        })),
+                )
+                .when(self.text_styles_open, |d| {
+                    d.child(gpui::deferred(
+                        h_flex()
+                            .id("text-style-menu")
+                            .occlude()
+                            .absolute()
+                            .top(px(38.))
+                            .right_0()
+                            .gap_0p5()
+                            .p_1p5()
+                            .elevation_3(cx)
+                            .children(options)
+                            .child(crate::ui::track_bounds(&self.text_styles_menu)),
+                    ))
+                })
                 .child(Divider::vertical().h_5().mx_1())
         });
         // The arrow's style, for the arrow tool or a selected arrow.
@@ -3895,30 +3929,38 @@ impl Editor {
                 };
                 // The export draws text with the bundled font; the canvas must match it.
                 let base = div().absolute().font_family(kit::ANNOTATION_FONT).text_size(px(shape.size * s)).font_weight(gpui::FontWeight::SEMIBOLD).whitespace_nowrap();
-                let ink = crate::ui::from_rgba(shape.color);
-                Some(match shape.text {
-                    TextStyle::Plain => base.left(x).top(y).child(block(ink)).into_any_element(),
-                    TextStyle::Plate => {
-                        let (padx, pady, radius) = TextStyle::plate(shape.size);
+                let look = kadr_raster::shapes::text_look(shape.text, shape.color);
+                let hsla = crate::ui::from_rgba;
+                // GPUI has no text stroke: the outline is the text drawn
+                // around itself in the contrasting colour; the shadow is
+                // one more copy, down and right.
+                let rings = look.ring.into_iter().flat_map(|ring| {
+                    let o = TextStyle::outline(shape.size) * s;
+                    (0..12).map(move |k| {
+                        let th = k as f32 / 12. * std::f32::consts::TAU;
+                        div().absolute().left(px(o * th.cos())).top(px(o * th.sin())).child(block(hsla(ring)))
+                    })
+                });
+                let shadow = look.shadow.map(|shadow| {
+                    let o = TextStyle::shadow(shape.size) * s;
+                    div().absolute().left(px(o)).top(px(o)).child(block(hsla(shadow)))
+                });
+                let letters = div().relative().children(rings.collect::<Vec<_>>()).children(shadow).child(block(hsla(look.ink)));
+                Some(match shape.text.text_box(shape.size) {
+                    None => base.left(x).top(y).child(letters).into_any_element(),
+                    Some(b) => {
+                        let (padx, pady) = b.pad;
+                        let (_, t, _, bt) = shape.bounds();
+                        let radius = b.radius.min((bt - t) / 2.);
                         base.left(x - px(padx * s))
                             .top(y - px(pady * s))
                             .px(px(padx * s))
                             .py(px(pady * s))
                             .rounded(px(radius * s))
-                            .bg(ink)
-                            .child(block(on_color(ink)))
+                            .when_some(look.fill, |d, fill| d.bg(hsla(fill)))
+                            .when_some(look.frame, |d, frame| d.border(px(TextStyle::frame(shape.size) * s)).border_color(hsla(frame)))
+                            .child(letters)
                             .into_any_element()
-                    }
-                    // GPUI has no text stroke: the outline is the text drawn
-                    // around itself in the contrasting colour.
-                    TextStyle::Outline => {
-                        let o = TextStyle::outline(shape.size) * s;
-                        let ring = on_color(ink);
-                        let copies = (0..12).map(|k| {
-                            let th = k as f32 / 12. * std::f32::consts::TAU;
-                            div().absolute().left(px(o * th.cos())).top(px(o * th.sin())).child(block(ring))
-                        });
-                        base.left(x).top(y).child(div().relative().children(copies).child(block(ink))).into_any_element()
                     }
                 })
             }
@@ -4814,6 +4856,39 @@ fn hide_png(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<Vec<u8>
     let mut png = Vec::new();
     patch.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
     Some(png)
+}
+
+/// A text style's name, for its button.
+fn text_style_name(style: TextStyle) -> &'static str {
+    match style {
+        TextStyle::Plain => t("editor.plain_text"),
+        TextStyle::Plate => t("editor.on_plate"),
+        TextStyle::Outline => t("editor.outlined"),
+        TextStyle::Shadow => t("editor.text_shadow"),
+        TextStyle::Highlight => t("editor.text_highlight"),
+        TextStyle::Pill => t("editor.text_pill"),
+        TextStyle::Label => t("editor.text_label"),
+    }
+}
+
+/// "Aa" in a text style and colour, as the canvas draws it, small.
+fn text_sample(style: TextStyle, color: kadr_core::color::Rgba) -> Div {
+    let look = kadr_raster::shapes::text_look(style, color);
+    let hsla = crate::ui::from_rgba;
+    let letters = |c| div().child("Aa").text_color(hsla(c));
+    let rings = look.ring.into_iter().flat_map(|ring| [(-1., 0.), (1., 0.), (0., -1.), (0., 1.)].map(|(x, y)| letters(ring).absolute().left(px(x)).top(px(y))));
+    let shadow = look.shadow.map(|shadow| letters(shadow).absolute().left(px(1.)).top(px(1.)));
+    let inner = div().relative().children(rings.collect::<Vec<_>>()).children(shadow).child(letters(look.ink));
+    let sample = div().text_size(px(14.)).font_weight(gpui::FontWeight::SEMIBOLD).line_height(px(20.)).px(px(4.)).rounded(px(4.));
+    let sample = match style {
+        TextStyle::Pill => sample.px(px(7.)).rounded(px(10.)),
+        TextStyle::Highlight => sample.rounded(px(2.)),
+        _ => sample,
+    };
+    sample
+        .when_some(look.fill, |d, fill| d.bg(hsla(fill)))
+        .when_some(look.frame, |d, frame| d.border_1().border_color(hsla(frame)))
+        .child(inner)
 }
 
 /// White or near-black text on the canvas, whichever reads better on `c`

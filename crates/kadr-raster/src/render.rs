@@ -4,7 +4,7 @@ use image::RgbaImage;
 use kadr_core::document::{Doc, Frame, Hide, Kind, MAX_REACH, P, SPOT_SHADE, Shape, TextStyle, hide_strength, rect, work_margin_at};
 
 use crate::frame::framed;
-use crate::shapes::{Bounds, draw_vector, on_color, paint_for, rounded_rect};
+use crate::shapes::{Bounds, draw_vector, on_color, paint_for, rounded_rect, text_look};
 use crate::text::{draw_line, metrics, text_width};
 
 /// The result of a drawing: `base` as it was taken, turned as `doc` says,
@@ -275,25 +275,35 @@ pub fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
             }
             Kind::Text(text) => {
                 let m = metrics(size);
-                if shape.text == TextStyle::Plate {
+                let look = text_look(shape.text, c);
+                if let Some(b) = shape.text.text_box(size) {
                     let (l, t, r, bt) = shape.bounds();
-                    let (_, _, radius) = TextStyle::plate(size);
-                    if let Some(path) = rounded_rect(l, t, r, bt, radius) {
-                        pm.fill_path(&path, &solid, FillRule::Winding, Transform::identity(), None);
+                    if let Some(path) = rounded_rect(l, t, r, bt, b.radius) {
+                        if let Some(fill) = look.fill {
+                            pm.fill_path(&path, &paint_for(fill, fill.a), FillRule::Winding, Transform::identity(), None);
+                        }
+                        // The frame inside the box's edge.
+                        let f = TextStyle::frame(size);
+                        if let (Some(frame), Some(inner)) = (look.frame, rounded_rect(l + f / 2., t + f / 2., r - f / 2., bt - f / 2., (b.radius - f / 2.).max(0.))) {
+                            pm.stroke_path(&inner, &paint_for(frame, 1.), &tiny_skia::Stroke { width: f, ..tiny_skia::Stroke::default() }, Transform::identity(), None);
+                        }
                     }
                 }
-                let ink = if shape.text == TextStyle::Plate { on_color(c) } else { c };
                 for (i, line) in text.split('\n').enumerate() {
                     let top = a.1 + i as f32 * m.line;
                     let baseline = top + (m.line - (m.ascent - m.descent)) / 2. + m.ascent;
-                    if shape.text == TextStyle::Outline {
+                    if let Some(ring) = look.ring {
                         let o = TextStyle::outline(size);
                         for k in 0..16 {
                             let th = k as f32 / 16. * std::f32::consts::TAU;
-                            draw_line(&mut pm, line, (a.0 + o * th.cos(), baseline + o * th.sin()), size, on_color(c));
+                            draw_line(&mut pm, line, (a.0 + o * th.cos(), baseline + o * th.sin()), size, ring);
                         }
                     }
-                    draw_line(&mut pm, line, (a.0, baseline), size, ink);
+                    if let Some(shadow) = look.shadow {
+                        let o = TextStyle::shadow(size);
+                        draw_line(&mut pm, line, (a.0 + o, baseline + o), size, shadow);
+                    }
+                    draw_line(&mut pm, line, (a.0, baseline), size, look.ink);
                 }
             }
             _ => {}

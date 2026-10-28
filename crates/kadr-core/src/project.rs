@@ -55,11 +55,7 @@ pub fn shape_to_json(shape: &Shape) -> Value {
         "color": [c.r, c.g, c.b, c.a],
         "size": shape.size,
         "filled": shape.filled,
-        "text": match shape.text {
-            TextStyle::Plain => "plain",
-            TextStyle::Plate => "plate",
-            TextStyle::Outline => "outline",
-        },
+        "text": shape.text.key(),
         "bend": shape.bend.map(|p| json!([p.0, p.1])),
     })
 }
@@ -93,11 +89,7 @@ pub fn shape_from_json(v: &Value, picture: &dyn Fn(&str) -> Option<RgbaImage>) -
         color: Rgba::new(f(0), f(1), f(2), f(3)),
         size: v["size"].as_f64()? as f32,
         filled: v["filled"].as_bool().unwrap_or(false),
-        text: match v["text"].as_str() {
-            Some("plate") => TextStyle::Plate,
-            Some("outline") => TextStyle::Outline,
-            _ => TextStyle::Plain,
-        },
+        text: TextStyle::from_key(v["text"].as_str().unwrap_or_default()),
         bend: point(&v["bend"]),
     })
 }

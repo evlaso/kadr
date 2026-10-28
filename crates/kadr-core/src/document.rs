@@ -182,12 +182,66 @@ pub enum TextStyle {
     Plate,
     /// Outlined in a contrasting colour.
     Outline,
+    /// Over a dark shadow, down and right.
+    Shadow,
+    /// Dark letters over a see-through band of its colour, like a marker.
+    Highlight,
+    /// On a plate of its colour rounded into a pill.
+    Pill,
+    /// In its colour on a plate of the contrasting one, framed in its colour.
+    Label,
+}
+
+/// The box some text styles stand on, for a font size: margins round the
+/// text (x, y) and its corner radius (a pill's is cut to half its height).
+pub struct TextBox {
+    pub pad: P,
+    pub radius: f32,
 }
 
 impl TextStyle {
+    pub const ALL: [TextStyle; 7] = [TextStyle::Plain, TextStyle::Plate, TextStyle::Outline, TextStyle::Shadow, TextStyle::Highlight, TextStyle::Pill, TextStyle::Label];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            TextStyle::Plain => "plain",
+            TextStyle::Plate => "plate",
+            TextStyle::Outline => "outline",
+            TextStyle::Shadow => "shadow",
+            TextStyle::Highlight => "highlight",
+            TextStyle::Pill => "pill",
+            TextStyle::Label => "label",
+        }
+    }
+
+    pub fn from_key(key: &str) -> TextStyle {
+        TextStyle::ALL.into_iter().find(|s| s.key() == key).unwrap_or(TextStyle::Plain)
+    }
+
     /// Plate margins and corner radius for a font size.
     pub fn plate(size: f32) -> (f32, f32, f32) {
         (size * 0.4, size * 0.18, size * 0.3)
+    }
+
+    /// The box this style puts the text on, if any.
+    pub fn text_box(self, size: f32) -> Option<TextBox> {
+        let (x, y, radius) = TextStyle::plate(size);
+        match self {
+            TextStyle::Plate | TextStyle::Label => Some(TextBox { pad: (x, y), radius }),
+            TextStyle::Highlight => Some(TextBox { pad: (size * 0.15, size * 0.04), radius: size * 0.08 }),
+            TextStyle::Pill => Some(TextBox { pad: (size * 0.6, size * 0.18), radius: f32::MAX }),
+            TextStyle::Plain | TextStyle::Outline | TextStyle::Shadow => None,
+        }
+    }
+
+    /// How far a shadow falls, down and right, for a font size.
+    pub fn shadow(size: f32) -> f32 {
+        (size * 0.06).max(1.)
+    }
+
+    /// A label's frame, for a font size.
+    pub fn frame(size: f32) -> f32 {
+        (size * 0.08).max(1.5)
     }
 
     /// Outline thickness for a font size.
