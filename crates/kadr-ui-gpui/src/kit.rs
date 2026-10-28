@@ -103,6 +103,10 @@ assets![
     "icons/kadr/more.svg" => "../../../data/icons/editor/more.svg",
     "icons/kadr/pipette.svg" => "../../../data/icons/editor/pipette.svg",
     "icons/kadr/redact.svg" => "../../../data/icons/editor/redact.svg",
+    "icons/kadr/arrow_tapered.svg" => "../../../data/icons/editor/arrow_tapered.svg",
+    "icons/kadr/arrow_double.svg" => "../../../data/icons/editor/arrow_double.svg",
+    "icons/kadr/arrow_open.svg" => "../../../data/icons/editor/arrow_open.svg",
+    "icons/kadr/arrow_solid.svg" => "../../../data/icons/editor/arrow_solid.svg",
     "icons/kadr/skip_forward.svg" => "../../../data/icons/editor/skip_forward.svg",
     "icons/webcam.svg" => "../../../data/icons/ui/webcam.svg",
     // Settings sections, the pin's lock and links (Lucide).

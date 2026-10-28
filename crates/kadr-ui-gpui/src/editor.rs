@@ -21,8 +21,8 @@ use gpui::{
 use image::RgbaImage;
 use kadr_core::color::Rgba;
 use kadr_core::project;
-use kadr_core::document::{Backdrop, Doc, Frame, Hide, Kind, MARKER_ALPHA, MAX_PAD, MAX_REACH, MAX_ROUND, P, SPOT_SHADE, Shape, TextStyle, rect, work_margin_at};
-use kadr_raster::shapes::{arrow_parts, draw_vector, ellipse_points, smooth};
+use kadr_core::document::{ArrowStyle, Backdrop, Doc, Frame, Hide, Kind, MARKER_ALPHA, MAX_PAD, MAX_REACH, MAX_ROUND, P, SPOT_SHADE, Shape, TextStyle, rect, work_margin_at};
+use kadr_raster::shapes::{Piece, arrow_pieces, draw_vector, ellipse_points, smooth};
 use kadr_raster::text::metrics;
 use kadr_raster::{Bounds as _, cursors};
 use kadr_ui::editor::{COUNTER_SIZES, CURSOR_SIZES, Edit, EditorVm, FONT_SIZES, WIDTHS, sized};
@@ -271,7 +271,7 @@ fn strokes_hash(shapes: &[Shape], count: usize, skip: Option<usize>) -> u64 {
         }
         mix(i as u32);
         let tag = match &sh.kind {
-            Kind::Arrow => 1,
+            Kind::Arrow(_) => 1,
             Kind::Rect => 2,
             Kind::Ellipse => 3,
             Kind::Line => 4,
@@ -553,6 +553,8 @@ pub struct Editor {
     fill: bool,
     /// Pixelate or blur, for the hide tool.
     hide: Hide,
+    /// The arrow tool's style.
+    arrow: ArrowStyle,
     /// "Hide sensitive" is reading the picture.
     redacting: bool,
     /// The file's density (PNG pHYs), kept on what's saved. The picture
@@ -789,6 +791,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 weight: WEIGHT,
                 fill: false,
                 hide: Hide::Pixelate,
+                arrow: ArrowStyle::default(),
                 redacting: false,
                 density: file_density,
                 restored: reopened,
@@ -1439,7 +1442,7 @@ impl Editor {
                 self.selected = Some(self.vm.doc.shapes.len() - 1);
                 return cx.notify();
             }
-            Tool::Arrow => Kind::Arrow,
+            Tool::Arrow => Kind::Arrow(self.arrow),
             Tool::Rect => Kind::Rect,
             Tool::Ellipse => Kind::Ellipse,
             Tool::Line => Kind::Line,
@@ -1485,7 +1488,7 @@ impl Editor {
                     let (h, mid) = (corners[handle], shape.bounds());
                     let centre = ((mid.0 + mid.2) / 2., (mid.1 + mid.3) / 2.);
                     return Some(match (shape.kind.clone(), handle) {
-                        (Kind::Line | Kind::Arrow, _) => CursorStyle::Crosshair,
+                        (Kind::Line | Kind::Arrow(_), _) => CursorStyle::Crosshair,
                         (_, 4 | 6) => CursorStyle::ResizeUpDown,
                         (_, 5 | 7) => CursorStyle::ResizeLeftRight,
                         _ if (h.0 - centre.0) * (h.1 - centre.1) > 0. => CursorStyle::ResizeUpLeftDownRight,
@@ -1885,6 +1888,18 @@ impl Editor {
     }
 
     /// Text look; restyles the selected text too.
+    /// The arrow tool's style; restyles the selected arrow too.
+    fn pick_arrow(&mut self, style: ArrowStyle) {
+        self.arrow = style;
+        if let Some(index) = self.selected
+            && let Kind::Arrow(now) = self.vm.doc.shapes[index].kind
+            && now != style
+        {
+            self.checkpoint();
+            self.vm.doc.shapes[index].kind = Kind::Arrow(style);
+        }
+    }
+
     fn pick_text_style(&mut self, style: TextStyle) {
         self.text_style = style;
         if let Some(index) = self.selected
@@ -2471,6 +2486,33 @@ impl Editor {
                 .child(option("text-outline", TextStyle::Outline, t("editor.outlined")))
                 .child(Divider::vertical().h_5().mx_1())
         });
+        // The arrow's style, for the arrow tool or a selected arrow.
+        let picked_arrow = self.selected.and_then(|i| self.vm.doc.shapes.get(i)).and_then(|sh| match sh.kind {
+            Kind::Arrow(style) => Some(style),
+            _ => None,
+        });
+        let arrow_options = (self.tool == Tool::Arrow || picked_arrow.is_some()).then(|| {
+            let current = picked_arrow.unwrap_or(self.arrow);
+            let option = |style: ArrowStyle, tip: &'static str| {
+                ButtonLike::new(SharedString::from(format!("arrow-{}", style.key())))
+                    .style(if current == style { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .size(ButtonSize::Large)
+                    .toggle_state(current == style)
+                    .child(div().px_1().child(Icon::from_path(SharedString::from(format!("icons/kadr/arrow_{}.svg", style.key()))).size(IconSize::Small)))
+                    .tip(Tooltip::text(tip))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.pick_arrow(style);
+                        cx.notify();
+                    }))
+            };
+            h_flex()
+                .gap_0p5()
+                .child(option(ArrowStyle::Solid, t("editor.arrow_solid")))
+                .child(option(ArrowStyle::Open, t("editor.arrow_open")))
+                .child(option(ArrowStyle::Double, t("editor.arrow_double")))
+                .child(option(ArrowStyle::Tapered, t("editor.arrow_tapered")))
+                .child(Divider::vertical().h_5().mx_1())
+        });
         // Which pointer, for the cursor tool or a selected cursor.
         let picked_cursor = self.selected.and_then(|i| self.vm.doc.shapes.get(i)).and_then(|sh| match sh.kind {
             Kind::Cursor(name) => Some(name),
@@ -2679,6 +2721,7 @@ impl Editor {
                         .p_2()
                         .elevation_3(cx)
                         .children(hide_options)
+                        .children(arrow_options)
                         .children(cursor_options)
                         .children(text_options)
                         .children(fill_toggle)
@@ -2709,7 +2752,7 @@ impl Editor {
                     .children(menu),
             )
         } else {
-            h_flex().gap_0p5().children(hide_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette).child(weights)
+            h_flex().gap_0p5().children(hide_options).children(arrow_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette).child(weights)
         };
 
         // The window's controls (or room for them), the modes and history at
@@ -3951,7 +3994,7 @@ impl Editor {
             _ => None,
         };
         let marked: Vec<_> = self.marked.iter().filter_map(|&i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.band_pad(s))).collect();
-        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow)));
+        let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow(_))));
         let accent = cx.theme().colors().text_accent;
         let overlay = canvas(
             |_, _, _| {},
@@ -4411,7 +4454,7 @@ fn constrain(d: &Shape, p: P, shift: bool) -> P {
             let m = dx.abs().max(dy.abs());
             (d.a.0 + m * dx.signum(), d.a.1 + m * dy.signum())
         }
-        Kind::Line | Kind::Arrow => {
+        Kind::Line | Kind::Arrow(_) => {
             let step = std::f32::consts::FRAC_PI_4;
             let angle = (dy.atan2(dx) / step).round() * step;
             let len = dx.hypot(dy);
@@ -4690,16 +4733,23 @@ fn paint_shape(window: &mut Window, shape: &Shape, s: f32, pt: &impl Fn(P) -> Po
             faded.alpha = MARKER_ALPHA;
             stroke(window, &smooth(points), false, faded, w)
         }
-        Kind::Arrow => {
-            let (shaft, head) = arrow_parts(&shape.path(), w);
-            stroke(window, &shaft, false, c, w);
-            let mut f = PathBuilder::fill();
-            f.move_to(pt(head[0]));
-            f.line_to(pt(head[1]));
-            f.line_to(pt(head[2]));
-            f.close();
-            if let Ok(path) = f.build() {
-                window.paint_path(path, c);
+        Kind::Arrow(style) => {
+            for piece in arrow_pieces(&shape.path(), w, *style) {
+                match piece {
+                    Piece::Stroke(points) => stroke(window, &points, false, c, w),
+                    Piece::Fill(points) => {
+                        let Some((first, rest)) = points.split_first() else { continue };
+                        let mut f = PathBuilder::fill();
+                        f.move_to(pt(*first));
+                        for p in rest {
+                            f.line_to(pt(*p));
+                        }
+                        f.close();
+                        if let Ok(path) = f.build() {
+                            window.paint_path(path, c);
+                        }
+                    }
+                }
             }
         }
         // While dragging, outline the area to be hidden.
@@ -5060,7 +5110,7 @@ mod tests {
 
     #[test]
     fn hit_handles_and_move() {
-        let mut line = Shape { kind: Kind::Arrow, a: (10., 10.), b: (110., 10.), color: red(), size: 4., filled: false, text: TextStyle::Plain, bend: None };
+        let mut line = Shape { kind: Kind::Arrow(Default::default()), a: (10., 10.), b: (110., 10.), color: red(), size: 4., filled: false, text: TextStyle::Plain, bend: None };
         assert!(line.hit((60., 13.), 2.));
         assert!(!line.hit((60., 30.), 2.));
         assert_eq!(line.handles(), vec![(10., 10.), (110., 10.), (60., 10.)]);

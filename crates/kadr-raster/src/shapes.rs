@@ -2,7 +2,7 @@
 //! editor's canvas so both draw the same line.
 
 use kadr_core::color::Rgba;
-use kadr_core::document::{Kind, MARKER_ALPHA, P, Shape, TextStyle, rect};
+use kadr_core::document::{ArrowStyle, Kind, MARKER_ALPHA, P, Shape, TextStyle, rect};
 
 use crate::text::{metrics, text_width};
 
@@ -46,7 +46,7 @@ impl Bounds for Shape {
                 let (l, t) = (self.a.0 - hx, self.a.1 - hy);
                 (l, t, l + w, t + h)
             }
-            Kind::Line | Kind::Arrow => {
+            Kind::Line | Kind::Arrow(_) => {
                 let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
                 for p in self.path() {
                     (l, t, r, b) = (l.min(p.0), t.min(p.1), r.max(p.0), b.max(p.1));
@@ -86,6 +86,48 @@ pub fn arrow_parts(points: &[P], w: f32) -> (Vec<P>, [P; 3]) {
     }
     shaft.push(end);
     (shaft, head)
+}
+
+/// A part of a drawn arrow: a line as wide as the arrow, or a filled shape.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Piece {
+    Stroke(Vec<P>),
+    Fill(Vec<P>),
+}
+
+/// An arrow of `style` along `points`, `w` wide, as the parts it's drawn
+/// with; the export and the canvas both draw these.
+pub fn arrow_pieces(points: &[P], w: f32, style: ArrowStyle) -> Vec<Piece> {
+    let (shaft, head) = arrow_parts(points, w);
+    match style {
+        ArrowStyle::Solid => vec![Piece::Stroke(shaft), Piece::Fill(head.to_vec())],
+        // The line runs to the tip; the head is two strokes back from it.
+        ArrowStyle::Open => vec![Piece::Stroke(points.to_vec()), Piece::Stroke(vec![head[1], head[0], head[2]])],
+        ArrowStyle::Double => {
+            let back: Vec<P> = shaft.iter().rev().copied().collect();
+            let (shaft, tail) = arrow_parts(&back, w);
+            vec![Piece::Stroke(shaft), Piece::Fill(head.to_vec()), Piece::Fill(tail.to_vec())]
+        }
+        ArrowStyle::Tapered => {
+            // From a fifth of the width at the tail to all of it at the head.
+            let total: f32 = shaft.windows(2).map(|s| (s[1].0 - s[0].0).hypot(s[1].1 - s[0].1)).sum::<f32>().max(0.001);
+            let (mut left, mut right, mut run) = (Vec::new(), Vec::new(), 0.);
+            for (i, &p) in shaft.iter().enumerate() {
+                if i > 0 {
+                    run += (p.0 - shaft[i - 1].0).hypot(p.1 - shaft[i - 1].1);
+                }
+                let (from, to) = (shaft[i.saturating_sub(1)], shaft[(i + 1).min(shaft.len() - 1)]);
+                let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+                let d = dx.hypot(dy).max(0.001);
+                let half = w * (0.1 + 0.4 * run / total);
+                left.push((p.0 - dy / d * half, p.1 + dx / d * half));
+                right.push((p.0 + dy / d * half, p.1 - dx / d * half));
+            }
+            left.extend([head[1], head[0], head[2]]);
+            left.extend(right.into_iter().rev());
+            vec![Piece::Fill(left)]
+        }
+    }
 }
 
 /// Where the shaft ends and the head triangle.
@@ -230,13 +272,20 @@ pub fn draw_vector(pm: &mut tiny_skia::Pixmap, shape: &Shape, tf: tiny_skia::Tra
                 pm.stroke_path(&path, &paint_for(c, MARKER_ALPHA), &stroke_for(size), tf, None);
             }
         }
-        Kind::Arrow => {
-            let (shaft, head) = arrow_parts(&shape.path(), size);
-            if let Some(path) = polyline(&shaft, false) {
-                pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
-            }
-            if let Some(path) = polyline(&head, true) {
-                pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
+        Kind::Arrow(style) => {
+            for piece in arrow_pieces(&shape.path(), size, *style) {
+                match piece {
+                    Piece::Stroke(points) => {
+                        if let Some(path) = polyline(&points, false) {
+                            pm.stroke_path(&path, &solid, &stroke_for(size), tf, None);
+                        }
+                    }
+                    Piece::Fill(points) => {
+                        if let Some(path) = polyline(&points, true) {
+                            pm.fill_path(&path, &solid, FillRule::Winding, tf, None);
+                        }
+                    }
+                }
             }
         }
         _ => return false,

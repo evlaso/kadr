@@ -89,6 +89,37 @@ pub fn curve(a: P, b: P, bend: Option<P>) -> Vec<P> {
         .collect()
 }
 
+/// How an arrow looks; any of them bends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum ArrowStyle {
+    /// A line with a filled head.
+    #[default]
+    Solid,
+    /// A line ending in an open head, two strokes.
+    Open,
+    /// A filled head at both ends.
+    Double,
+    /// Thin at its tail and widening into the head, one filled shape.
+    Tapered,
+}
+
+impl ArrowStyle {
+    pub const ALL: [ArrowStyle; 4] = [ArrowStyle::Solid, ArrowStyle::Open, ArrowStyle::Double, ArrowStyle::Tapered];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ArrowStyle::Solid => "solid",
+            ArrowStyle::Open => "open",
+            ArrowStyle::Double => "double",
+            ArrowStyle::Tapered => "tapered",
+        }
+    }
+
+    pub fn from_key(key: &str) -> ArrowStyle {
+        ArrowStyle::ALL.into_iter().find(|s| s.key() == key).unwrap_or_default()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Hide {
     Pixelate,
@@ -100,7 +131,7 @@ pub enum Hide {
 
 #[derive(Clone, Debug)]
 pub enum Kind {
-    Arrow,
+    Arrow(ArrowStyle),
     Rect,
     Ellipse,
     Line,
@@ -128,8 +159,9 @@ impl PartialEq for Kind {
             (Kind::Counter(a), Kind::Counter(b)) => a == b,
             (Kind::Cursor(a), Kind::Cursor(b)) => a == b,
             (Kind::Blur(a), Kind::Blur(b)) => a == b,
+            (Kind::Arrow(a), Kind::Arrow(b)) => a == b,
             (Kind::Picture(a), Kind::Picture(b)) => Arc::ptr_eq(a, b),
-            (Kind::Arrow, Kind::Arrow) | (Kind::Rect, Kind::Rect) | (Kind::Ellipse, Kind::Ellipse) | (Kind::Line, Kind::Line) | (Kind::Spotlight, Kind::Spotlight) => true,
+            (Kind::Rect, Kind::Rect) | (Kind::Ellipse, Kind::Ellipse) | (Kind::Line, Kind::Line) | (Kind::Spotlight, Kind::Spotlight) => true,
             _ => false,
         }
     }
@@ -138,7 +170,7 @@ impl PartialEq for Kind {
 impl Kind {
     /// Drawn as lines and fills.
     pub fn is_vector(&self) -> bool {
-        matches!(self, Kind::Arrow | Kind::Rect | Kind::Ellipse | Kind::Line | Kind::Pen(_) | Kind::Marker(_))
+        matches!(self, Kind::Arrow(_) | Kind::Rect | Kind::Ellipse | Kind::Line | Kind::Pen(_) | Kind::Marker(_))
     }
 }
 

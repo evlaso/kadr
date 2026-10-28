@@ -6,6 +6,7 @@ What changed in each kadr release, for the people who use it. The format follows
 
 ### Added
 
+- Arrow styles in the editor: a filled head, an open head, a head at both ends, or tapered from a thin tail into the head. Any of them bends, and a selected arrow takes another style.
 - Hiding is harder to undo: the blur first brings the area down to blocks with a little noise and then smooths it, so it looks as soft as before but no deblurring brings the text back, and each block of a pixelation is nudged by noise, so it can't be matched against pixelated guesses.
 - A black box among the hide tool's choices (B): what's under it is gone from the saved file and from the copy kept to edit it again, so removing the box later shows black. Hide private info covers with black boxes too when they're picked.
 - Colours in the editor: the pipette (I) takes one from the picture, the colour menu keeps the ones picked lately, and + keeps the current colour among your own (right-click one to remove it). Both lists live in `settings.toml`.

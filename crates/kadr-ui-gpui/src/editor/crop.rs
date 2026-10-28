@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn a_turned_drawing_comes_back_upright() {
         let red = kadr_core::color::Rgba::hsl(0., 1., 0.5, 1.);
-        let line = Shape { kind: Kind::Arrow, a: (10., 20.), b: (70., 25.), color: red, size: 3., filled: false, text: super::super::TextStyle::Plain, bend: Some((40., 5.)) };
+        let line = Shape { kind: Kind::Arrow(Default::default()), a: (10., 20.), b: (70., 25.), color: red, size: 3., filled: false, text: super::super::TextStyle::Plain, bend: Some((40., 5.)) };
         let mut doc = Doc { shapes: vec![line], crop: Some(((5., 6.), (50., 40.))), ..Doc::default() };
         let mut size = (100u32, 60u32);
         for step in [Turn::Clockwise, Turn::Mirror, Turn::Clockwise] {

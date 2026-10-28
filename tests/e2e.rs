@@ -514,6 +514,32 @@ fn a_black_box_leaves_nothing_under_it() {
     assert_eq!(base.get_pixel(2, 2).0, [0xf4, 0xa2, 0x61, 255], "the rest of it");
 }
 
+/// The arrow's style: picked before drawing, and changed on the selected
+/// arrow afterwards as one undo step.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn arrows_come_in_styles() {
+    let s = Session::start();
+    let path = fixture(&s, "shot.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    s.dev(&["click", "tool-a"]);
+    s.dev(&["click", "arrow-double"]);
+    s.dev(&["drag", "900,480", "160,90"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["shapes"][0]["data"], "double", "{state}");
+    // Selected, it takes another style.
+    s.dev(&["click", "tool-v"]);
+    s.dev(&["drag", "980,525", "0,0"]);
+    assert_eq!(s.dev(&["state"])["view"]["selected"], 0);
+    s.dev(&["click", "arrow-tapered"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["shapes"][0]["data"], "tapered", "{state}");
+    s.dev(&["key", "ctrl-z"]);
+    assert_eq!(s.dev(&["state"])["view"]["shapes"][0]["data"], "double");
+}
+
 /// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word
 /// out with Ctrl+Backspace, Shift+Left selecting and typing over it, all
 /// through the input handler the input method uses too.

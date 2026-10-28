@@ -15,7 +15,7 @@ use image::RgbaImage;
 use serde_json::{Value, json};
 
 use crate::color::Rgba;
-use crate::document::{Doc, Frame, Hide, Kind, Orientation, P, Shape, TextStyle, cursor};
+use crate::document::{ArrowStyle, Doc, Frame, Hide, Kind, Orientation, P, Shape, TextStyle, cursor};
 
 fn point(v: &Value) -> Option<P> {
     Some((v.get(0)?.as_f64()? as f32, v.get(1)?.as_f64()? as f32))
@@ -29,7 +29,9 @@ fn points(v: &Value) -> Vec<P> {
 pub fn shape_to_json(shape: &Shape) -> Value {
     let pts = |ps: &[P]| ps.iter().map(|p| json!([p.0, p.1])).collect::<Vec<_>>();
     let (kind, extra) = match &shape.kind {
-        Kind::Arrow => ("arrow", json!(null)),
+        // The plain arrow keeps no style, as before there were others.
+        Kind::Arrow(ArrowStyle::Solid) => ("arrow", json!(null)),
+        Kind::Arrow(style) => ("arrow", json!(style.key())),
         Kind::Rect => ("rect", json!(null)),
         Kind::Ellipse => ("ellipse", json!(null)),
         Kind::Line => ("line", json!(null)),
@@ -66,7 +68,7 @@ pub fn shape_to_json(shape: &Shape) -> Value {
 pub fn shape_from_json(v: &Value, picture: &dyn Fn(&str) -> Option<RgbaImage>) -> Option<Shape> {
     let data = &v["data"];
     let kind = match v["kind"].as_str()? {
-        "arrow" => Kind::Arrow,
+        "arrow" => Kind::Arrow(data.as_str().map(ArrowStyle::from_key).unwrap_or_default()),
         "rect" => Kind::Rect,
         "ellipse" => Kind::Ellipse,
         "line" => Kind::Line,
@@ -264,11 +266,12 @@ mod tests {
         let red = Rgba::hsl(0.01, 0.6, 0.54, 1.);
         let shape = |kind, a, b, size, filled, text, bend| Shape { kind, a, b, color: red, size, filled, text, bend };
         let shapes = [
-            shape(Kind::Arrow, (1., 2.), (30., 40.), 4., false, TextStyle::Plain, Some((10., 30.))),
+            shape(Kind::Arrow(Default::default()), (1., 2.), (30., 40.), 4., false, TextStyle::Plain, Some((10., 30.))),
             shape(Kind::Pen(vec![(0., 0.), (5., 6.)]), (0., 0.), (5., 6.), 2., false, TextStyle::Plain, None),
             shape(Kind::Text("Hi\nthere".into()), (3., 4.), (3., 4.), 20., false, TextStyle::Plate, None),
             shape(Kind::Blur(Hide::Blur), (3., 4.), (50., 60.), 2., false, TextStyle::Plain, None),
             shape(Kind::Rect, (3., 4.), (50., 60.), 2., true, TextStyle::Plain, None),
+            shape(Kind::Arrow(ArrowStyle::Tapered), (3., 4.), (50., 60.), 2., false, TextStyle::Plain, None),
             shape(Kind::Cursor("pointer"), (3., 4.), (3., 4.), 30., false, TextStyle::Plain, None),
         ];
         for shape in &shapes {
@@ -279,7 +282,8 @@ mod tests {
                 (Kind::Text(x), Kind::Text(y)) => assert_eq!(x, y),
                 (Kind::Blur(x), Kind::Blur(y)) => assert_eq!(x, y),
                 (Kind::Cursor(x), Kind::Cursor(y)) => assert_eq!(x, y),
-                (Kind::Arrow, Kind::Arrow) | (Kind::Rect, Kind::Rect) => {}
+                (Kind::Arrow(x), Kind::Arrow(y)) => assert_eq!(x, y),
+                (Kind::Rect, Kind::Rect) => {}
                 _ => panic!("kind changed"),
             }
         }
@@ -324,7 +328,7 @@ mod tests {
         let red = Rgba::new(1., 0., 0., 1.);
         let doc = Doc {
             shapes: vec![
-                Shape { kind: Kind::Arrow, a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None },
+                Shape { kind: Kind::Arrow(Default::default()), a: (1., 1.), b: (9., 9.), color: red, size: 2., filled: false, text: TextStyle::Plain, bend: None },
                 Shape { kind: Kind::Text("hi".into()), a: (5., 5.), b: (5., 5.), color: red, size: 20., filled: false, text: TextStyle::Outline, bend: None },
             ],
             crop: Some(((0., 0.), (10., 10.))),

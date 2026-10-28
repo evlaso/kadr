@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use image::{Rgba, RgbaImage};
 use kadr_core::color::Rgba as Color;
-use kadr_core::document::{Backdrop, Doc, Frame, Hide, Kind, Orientation, P, Shape, TextStyle};
+use kadr_core::document::{ArrowStyle, Backdrop, Doc, Frame, Hide, Kind, Orientation, P, Shape, TextStyle};
 use kadr_core::project;
 
 fn workspace() -> PathBuf {
@@ -175,8 +175,11 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
     let text = |s: &str, at: P, size: f32, style: TextStyle| Shape { text: style, ..shape(Kind::Text(s.into()), at, at, size) };
     let blue = color(0.6, 0.9, 0.55);
     vec![
-        ("arrow", (480, 300), doc(vec![shape(Kind::Arrow, (140., 60.), (380., 220.), 6.)]), none.clone()),
-        ("arrow_bent", (480, 300), doc(vec![Shape { bend: Some((330., 70.)), ..shape(Kind::Arrow, (140., 220.), (420., 120.), 6.) }]), none.clone()),
+        ("arrow", (480, 300), doc(vec![shape(Kind::Arrow(Default::default()), (140., 60.), (380., 220.), 6.)]), none.clone()),
+        ("arrow_bent", (480, 300), doc(vec![Shape { bend: Some((330., 70.)), ..shape(Kind::Arrow(Default::default()), (140., 220.), (420., 120.), 6.) }]), none.clone()),
+        ("arrow_open", (480, 300), doc(vec![shape(Kind::Arrow(ArrowStyle::Open), (140., 60.), (380., 220.), 6.)]), none.clone()),
+        ("arrow_double", (480, 300), doc(vec![shape(Kind::Arrow(ArrowStyle::Double), (140., 60.), (380., 220.), 6.)]), none.clone()),
+        ("arrow_tapered_bent", (480, 300), doc(vec![Shape { bend: Some((330., 70.)), ..shape(Kind::Arrow(ArrowStyle::Tapered), (140., 220.), (420., 120.), 10.) }]), none.clone()),
         ("line", (480, 300), doc(vec![shape(Kind::Line, (130., 250.), (450., 60.), 4.)]), none.clone()),
         ("rect", (480, 300), doc(vec![shape(Kind::Rect, (125., 40.), (435., 135.), 4.)]), none.clone()),
         ("rect_filled", (480, 300), doc(vec![Shape { filled: true, color: blue, ..shape(Kind::Rect, (140., 160.), (240., 260.), 4.) }]), none.clone()),
@@ -213,7 +216,7 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
         (
             "arrow_through_crop",
             (480, 300),
-            Doc { shapes: vec![shape(Kind::Arrow, (60., 40.), (330., 200.), 6.)], crop: Some(((120., 30.), (460., 290.))), ..Doc::default() },
+            Doc { shapes: vec![shape(Kind::Arrow(Default::default()), (60., 40.), (330., 200.), 6.)], crop: Some(((120., 30.), (460., 290.))), ..Doc::default() },
             none.clone(),
         ),
         (
@@ -225,14 +228,14 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
         (
             "turned_mirrored",
             (480, 300),
-            Doc { shapes: vec![shape(Kind::Arrow, (40., 60.), (250., 400.), 6.)], view: Orientation { turns: 1, mirrored: true }, ..Doc::default() },
+            Doc { shapes: vec![shape(Kind::Arrow(Default::default()), (40., 60.), (250., 400.), 6.)], view: Orientation { turns: 1, mirrored: true }, ..Doc::default() },
             none.clone(),
         ),
         ("scaled_down", (480, 300), Doc { shapes: vec![shape(Kind::Rect, (125., 40.), (435., 135.), 4.)], scale: 0.5, ..Doc::default() }, none.clone()),
         (
             "frame_gradient",
             (480, 300),
-            doc(vec![shape(Kind::Arrow, (140., 60.), (380., 220.), 6.)]),
+            doc(vec![shape(Kind::Arrow(Default::default()), (140., 60.), (380., 220.), 6.)]),
             Frame { backdrop: Backdrop::Gradient(0), padding: 0.08, radius: 0.02, shadow: 0.6, aspect: 0 },
         ),
         ("frame_transparent", (480, 300), doc(Vec::new()), Frame { backdrop: Backdrop::Transparent, padding: 0.06, radius: 0.03, shadow: 0.5, aspect: 1 }),
@@ -241,7 +244,7 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
             "hidpi_2x",
             (960, 600),
             doc(vec![
-                shape(Kind::Arrow, (280., 120.), (760., 440.), 12.),
+                shape(Kind::Arrow(Default::default()), (280., 120.), (760., 440.), 12.),
                 text("Retina", (300., 300.), 56., TextStyle::Plate),
                 shape(Kind::Counter(7), (220., 460.), (220., 460.), 72.),
             ]),

@@ -37,7 +37,7 @@ impl Edit for Shape {
     fn hit(&self, p: P, tol: f32) -> bool {
         let reach = tol + self.size / 2.;
         match &self.kind {
-            Kind::Line | Kind::Arrow => self.path().windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach),
+            Kind::Line | Kind::Arrow(_) => self.path().windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach),
             Kind::Pen(points) | Kind::Marker(points) => points.windows(2).any(|w| segment_distance(p, w[0], w[1]) <= reach),
             _ => {
                 let (l, t, r, b) = self.bounds();
@@ -53,7 +53,7 @@ impl Edit for Shape {
         match self.kind {
             Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight => vec![a, (b.0, a.1), b, (a.0, b.1), (mid.0, a.1), (b.0, mid.1), (mid.0, b.1), (a.0, mid.1)],
             // Ends, then the middle that bends it.
-            Kind::Line | Kind::Arrow => vec![a, b, self.bend.unwrap_or(mid)],
+            Kind::Line | Kind::Arrow(_) => vec![a, b, self.bend.unwrap_or(mid)],
             // Text, counters and freehand scale from their box's corners.
             _ => {
                 let (l, t, r, bt) = self.bounds();
@@ -73,7 +73,7 @@ impl Edit for Shape {
     /// shapes, on the points themselves for lines.
     fn knobs(&self, scale: f32) -> Vec<P> {
         let hs = self.handles();
-        if matches!(self.kind, Kind::Line | Kind::Arrow) {
+        if matches!(self.kind, Kind::Line | Kind::Arrow(_)) {
             return hs;
         }
         let (l, t, r, b) = self.bounds();
@@ -117,14 +117,14 @@ impl Edit for Shape {
 
     fn set_handle(&mut self, handle: usize, p: P) {
         match (&self.kind, handle) {
-            (Kind::Line | Kind::Arrow, 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 0) => self.a = p,
-            (Kind::Line | Kind::Arrow, 2) => {
+            (Kind::Line | Kind::Arrow(_), 0) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 0) => self.a = p,
+            (Kind::Line | Kind::Arrow(_), 2) => {
                 // Back to straight when the middle is dragged onto the line.
                 let mid = ((self.a.0 + self.b.0) / 2., (self.a.1 + self.b.1) / 2.);
                 let len = (self.b.0 - self.a.0).hypot(self.b.1 - self.a.1);
                 self.bend = (segment_distance(p, self.a, self.b) > len * 0.02 || (p.0 - mid.0).hypot(p.1 - mid.1) > len * 0.3).then_some(p);
             }
-            (Kind::Line | Kind::Arrow, 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 2) => self.b = p,
+            (Kind::Line | Kind::Arrow(_), 1) | (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 2) => self.b = p,
             (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 1) => (self.b.0, self.a.1) = p,
             (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 3) => (self.a.0, self.b.1) = p,
             (Kind::Rect | Kind::Ellipse | Kind::Blur(..) | Kind::Spotlight, 4) => self.a.1 = p.1,
