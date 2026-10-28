@@ -55,7 +55,7 @@ pub fn cuda() -> bool {
     false
 }
 
-pub fn sound_output() -> Option<[&'static str; 3]> {
+pub fn sound_output() -> Option<&'static [&'static str]> {
     None
 }
 

@@ -693,11 +693,14 @@ impl StudioEditor {
                 }
                 n += 1;
             }
-            // The end of the file: stop on the last frame, sharpened.
+            // The end of the file: stop on the last frame, sharpened, and
+            // let the sound play out what it still holds.
             let _ = this.update(cx, |editor, cx| {
                 if request.get() == id {
                     let end = editor.project.trim.1;
+                    let sound = editor.sound.take();
                     editor.seek(end, cx);
+                    sound.map(Sound::finish);
                 }
             });
         })
@@ -2573,7 +2576,7 @@ impl crate::presets::HasPresets for StudioEditor {
 
 
 /// The recording's sound from a point on, through ffplay; stops when dropped.
-struct Sound(std::process::Child);
+struct Sound(Option<std::process::Child>);
 
 impl Sound {
     /// From `start` through the audio filters `af` (on a clock starting at 0
@@ -2596,14 +2599,28 @@ impl Sound {
                 cmd
             }
         };
-        cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok().map(Sound)
+        cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok().map(|c| Sound(Some(c)))
+    }
+}
+
+impl Sound {
+    /// Let it play to its end on its own, which comes shortly after the
+    /// picture's: the sound output is a little behind.
+    fn finish(mut self) {
+        if let Some(mut child) = self.0.take() {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
     }
 }
 
 impl Drop for Sound {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if let Some(child) = &mut self.0 {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 

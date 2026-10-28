@@ -132,9 +132,11 @@ pub fn cuda() -> bool {
     Path::new("/proc/driver/nvidia/version").exists()
 }
 
-/// ffmpeg's output for playing sound straight to the speakers.
-pub fn sound_output() -> Option<[&'static str; 3]> {
-    Some(["-f", "pulse", "kadr"])
+/// ffmpeg's output for playing sound straight to the speakers. With a
+/// short buffer: the server's own is about 2 s, so the sound ran behind the
+/// picture and stopping it lost what was still in it.
+pub fn sound_output() -> Option<&'static [&'static str]> {
+    Some(&["-f", "pulse", "-buffer_duration", "100", "kadr"])
 }
 
 /// Run a background job (ffmpeg making preview frames) below everything

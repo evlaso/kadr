@@ -31,6 +31,7 @@ Recording and window shots come to macOS and Windows, and Windows gets an instal
 
 ### Fixed
 
+- The studio played the end of a recording's sound only if it kept up with the picture: playback stopped the sound along with the last frame. It now plays out, and runs closer to the picture.
 - Recordings no longer lose their sound at the edges: the first half second, which was muted to hide the microphone's click, is now 0.15 s, and after Stop the recorder runs on for 0.4 s so the last word, still in the system's audio buffers, makes it into the file.
 - kadr on Windows starts about 2 seconds sooner.
 - On macOS kadr stopped answering after its first system notification.
