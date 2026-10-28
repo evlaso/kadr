@@ -2785,8 +2785,9 @@ impl Editor {
         let tools = h_flex().gap(px(6.)).children(rows.into_iter().map(|row| h_flex().gap_0p5().children(row.into_iter().map(|t| tool_button(t, cx))))).children(overflow);
         let mut floating = None;
         let style = if let Some(index) = target {
-            floating = self.context_bar(index, h_flex().gap_0p5().children(hide_options).children(arrow_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette).child(weights), cx);
-            h_flex()
+            // The size stays up here, where drawing finds it.
+            floating = self.context_bar(index, h_flex().gap_0p5().children(hide_options).children(arrow_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette), cx);
+            h_flex().child(weights)
         } else if compact {
             let menu = self.more_open.then(|| {
                 gpui::deferred(

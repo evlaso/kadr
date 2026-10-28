@@ -48,7 +48,9 @@ kadr-raster = { path = "crates/kadr-raster" }
 # For working on kadr and its tests: optimised, incremental, no
 # whole-program pass, so a one-file change builds in seconds.
 [profile.release]
-strip = true
+# Function names stay, so a crash's backtrace (`cache_dir()/crash.log`)
+# says where; what's shipped (dist) drops them.
+strip = "debuginfo"
 panic = "abort"
 incremental = true
 
@@ -56,6 +58,7 @@ incremental = true
 # and a little faster: whole-program optimisation in one unit, ~2.5 min.
 [profile.dist]
 inherits = "release"
+strip = true
 lto = "fat"
 codegen-units = 1
 incremental = false
