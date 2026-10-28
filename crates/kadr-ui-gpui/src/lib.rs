@@ -35,6 +35,7 @@ mod ui;
 mod job;
 mod kit;
 mod menubar;
+mod meter;
 mod ocr;
 mod update;
 mod util;

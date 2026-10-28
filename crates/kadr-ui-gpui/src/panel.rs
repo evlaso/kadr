@@ -11,7 +11,7 @@ use gpui::{
     AnyView, App, Bounds, Context, CursorStyle, DispatchPhase, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, WeakEntity,
     Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, deferred, div, point, popup::*, px, rgba, size,
 };
-use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*, rems_from_px};
+use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
 use crate::kit::{self, InputRegion, LayerSpec};
 use crate::picker::{BOTTOM, LEFT, RIGHT, Rect, TOP};
@@ -42,10 +42,9 @@ pub struct Panel {
     /// pointer when it started.
     drag: Option<(u8, Rect, (f32, f32))>,
     size_menu: bool,
-    /// The microphone's level 0..1 while it's on, and the `parec` reading it
-    /// (with the device it reads).
+    /// The microphone's level 0..1 while it's on, and what reads it.
     level: f32,
-    meter: Option<(String, u32)>,
+    meter: Option<crate::meter::Meter>,
     /// Only the bar takes the pointer: the camera bubble and the windows
     /// around stay reachable while the panel is up.
     region: InputRegion,
@@ -54,13 +53,6 @@ pub struct Panel {
     focus: FocusHandle,
 }
 
-impl Drop for Panel {
-    fn drop(&mut self) {
-        if let Some((_, pid)) = self.meter.take() {
-            util::signal(pid, util::Signal::Terminate);
-        }
-    }
-}
 
 /// Show the bar for an area that's already been picked.
 pub fn open(target: Target, cx: &mut App) -> Option<WindowHandle<Panel>> {
@@ -227,54 +219,14 @@ impl Panel {
     /// Keep a level meter on the chosen microphone while it's on.
     fn sync_meter(&mut self, cx: &mut Context<Self>) {
         let want = self.opts.mic.then(|| self.opts.mic_device.clone());
-        if self.meter.as_ref().map(|(d, _)| d) == want.as_ref() {
+        if self.meter.as_ref().map(|m| &m.device) == want.as_ref() {
             return;
         }
-        if let Some((_, pid)) = self.meter.take() {
-            util::signal(pid, util::Signal::Terminate);
-        }
+        self.meter = None;
         self.level = 0.;
-        let Some(device) = want else { return };
-        let source = if device.is_empty() { "@DEFAULT_SOURCE@".to_owned() } else { device.clone() };
-        let Ok(mut child) = std::process::Command::new("parec")
-            .args([format!("--device={source}"), "--format=s16le".into(), "--rate=16000".into(), "--channels=1".into(), "--latency-msec=40".into()])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        else {
-            return;
-        };
-        self.meter = Some((device, child.id()));
-        let (mut tx, mut rx) = futures::channel::mpsc::channel::<f32>(4);
-        std::thread::spawn(move || {
-            use std::io::Read;
-            let Some(mut out) = child.stdout.take() else { return };
-            // 50 ms of samples per reading.
-            let mut buf = [0u8; 1600];
-            while out.read_exact(&mut buf).is_ok() {
-                let sum: f64 = buf.chunks_exact(2).map(|b| (i16::from_le_bytes([b[0], b[1]]) as f64 / 32768.).powi(2)).sum();
-                let rms = (sum / 800.).sqrt().max(1e-6);
-                let level = ((20. * rms.log10() + 55.) / 50.).clamp(0., 1.) as f32;
-                if futures::executor::block_on(futures::SinkExt::send(&mut tx, level)).is_err() {
-                    break;
-                }
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-        });
-        cx.spawn(async move |this, cx| {
-            while let Some(level) = futures::StreamExt::next(&mut rx).await {
-                let alive = this.update(cx, |panel, cx| {
-                    // Up at once, down slowly, like a VU meter.
-                    panel.level = level.max(panel.level * 0.75);
-                    cx.notify();
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
+        if let Some(device) = want {
+            self.meter = crate::meter::listen(&device, cx, |panel: &mut Panel| &mut panel.level);
+        }
     }
 
     /// Under the area; above it, or inside its bottom edge, when there's no room.
@@ -514,32 +466,15 @@ impl Render for Panel {
         self.region.reset();
         let bar_y = self.bar_y();
         // While the microphone is on, its button fills from the bottom with
-        // how loud it is, like in call apps: a shade of the text color, so
-        // darker than the button in light themes and lighter in dark ones.
+        // how loud it is.
         let level = if self.opts.mic { self.level.clamp(0., 1.) } else { 0. };
-        let mut fill = cx.theme().colors().text;
-        fill.alpha = 0.12;
         let mic = h_flex()
             .child(
                 ButtonLike::new("mic")
                     .style(if self.opts.mic { ButtonStyle::Filled } else { ButtonStyle::Subtle })
                     .size(ButtonSize::Large)
                     .toggle_state(self.opts.mic)
-                    .when(level > 0.03, |b| {
-                        // The button's whole shape, filled up to the level by a
-                        // hard-edged gradient: a shorter box would round into a
-                        // pill of its own, since GPUI can't clip to the corners.
-                        let mut clear = fill;
-                        clear.alpha = 0.;
-                        b.child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .rounded(rems_from_px(9.))
-                                .rounded_smoothing(crate::ui::SMOOTHING)
-                                .bg(gpui::linear_gradient(0., gpui::linear_color_stop(fill, level), gpui::linear_color_stop(clear, level + 0.01))),
-                        )
-                    })
+                    .children(crate::meter::fill(level, 9., cx))
                     .child(div().px_1().child(Icon::new(IconName::Mic).size(IconSize::Medium)))
                     .tip(tip(t("record_bar.microphone"), None))
                     .on_click(cx.listener(|this, _, _, cx| {

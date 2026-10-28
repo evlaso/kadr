@@ -415,7 +415,7 @@ impl Recorder {
         if Settings::load().region_frame {
             windows.extend(open_frame(&target, cx));
         }
-        windows.extend(self.open_indicator(&target, clock.clone(), cx));
+        windows.extend(self.open_indicator(&target, clock.clone(), opts.mic.then(|| opts.mic_device.clone()), cx));
         let tracker = Tracker::start(cx, keys, studio, |rec: &Recorder| rec.clock());
         self.state = State::Recording(Session {
             id,
@@ -471,6 +471,9 @@ impl Recorder {
                 if let State::Recording(s) = &rec.state
                     && s.id == id
                 {
+                    // When it went, to tell a cut-off end from a slow one.
+                    let line = format!("{} the recorder stopped {} ms after Stop\n", chrono_now(), STOP_TAIL.as_millis());
+                    let _ = std::fs::write(util::cache_dir().join("record-stop.log"), line);
                     s.recording.stop();
                 }
             });
@@ -545,7 +548,7 @@ impl Recorder {
     /// Recording controls, kept outside the captured area so they don't end up
     /// in the video. With a whole single monitor recorded there is nowhere to
     /// put them; the Omarchy bar indicator and the hotkey still work.
-    fn open_indicator(&self, target: &Target, clock: Rc<Clock>, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
+    fn open_indicator(&self, target: &Target, clock: Rc<Clock>, mic: Option<String>, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
         let (mon, top, center) = placement(target, &util::monitors())?;
         // A whole-monitor layer, clickable only on the bar, so the bar can sit
         // exactly where the panel's was and its shadow isn't clipped.
@@ -560,7 +563,7 @@ impl Recorder {
             monitor: Some(mon),
         };
         let recorder = cx.weak_entity();
-        kit::open_layer(cx, spec, move |window, cx| cx.new(|cx| RecBar::new(recorder, clock, (top, center), window, cx))).map(Into::into)
+        kit::open_layer(cx, spec, move |window, cx| cx.new(|cx| RecBar::new(recorder, clock, (top, center), mic, window, cx))).map(Into::into)
     }
 }
 
@@ -788,10 +791,15 @@ struct RecBar {
     /// The bar's top and horizontal centre on the monitor.
     at: (f32, f32),
     region: InputRegion,
+    /// The microphone being recorded, if one is: how loud it is now, so a
+    /// person sees they're heard.
+    level: f32,
+    meter: Option<crate::meter::Meter>,
 }
 
 impl RecBar {
-    fn new(recorder: gpui::WeakEntity<Recorder>, clock: Rc<Clock>, at: (f32, f32), window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(recorder: gpui::WeakEntity<Recorder>, clock: Rc<Clock>, at: (f32, f32), mic: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let meter = mic.and_then(|device| crate::meter::listen(&device, cx, |bar: &mut RecBar| &mut bar.level));
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(250)).await;
@@ -801,7 +809,7 @@ impl RecBar {
             }
         })
         .detach();
-        RecBar { recorder, clock, at, region: InputRegion::default() }
+        RecBar { recorder, clock, at, region: InputRegion::default(), level: 0., meter }
     }
 }
 
@@ -856,6 +864,23 @@ impl Render for RecBar {
                         .child(dot)
                         .child(div().min_w(px(44.)).font_family(kit::MONO_FONT).text_sm().child(util::format_duration(elapsed))),
                 )
+                // The microphone, filling with how loud it is; still while
+                // paused, when nothing is recorded.
+                .when(self.meter.is_some(), |bar| {
+                    let level = if paused { 0. } else { self.level };
+                    bar.child(
+                        div()
+                            .id("mic-level")
+                            .relative()
+                            .size(crate::ui::rems_from_px(32.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .children(crate::meter::fill(level, 9., cx))
+                            .child(Icon::new(IconName::Mic).size(IconSize::Small).color(if paused { Color::Muted } else { Color::Default }))
+                            .tooltip(Tooltip::text(t("record_bar.microphone"))),
+                    )
+                })
                 .child(Divider::vertical().h_5().mx_1())
                 .child(
                     button("pause", if paused { IconName::PlayFilled } else { IconName::DebugPause }, if paused { t("record.resume") } else { t("record.pause") })
@@ -935,6 +960,11 @@ async fn finalize(file: &Path, system: bool, mic: bool) {
             let _ = std::fs::remove_file(&processed);
         }
     }
+}
+
+/// The local time of day, to the millisecond, for the stop log.
+fn chrono_now() -> String {
+    chrono::Local::now().format("%H:%M:%S%.3f").to_string()
 }
 
 /// How long a kept recording goes on after Stop, for its sound to arrive.
