@@ -214,6 +214,9 @@ struct Strokes {
     lift_busy: bool,
     /// Replaced pictures, for the next frame to free.
     retired: Vec<Arc<gpui::RenderImage>>,
+    /// Pictures retired by the last frame, freed by this one: a picture
+    /// the frame on screen still shows mustn't leave the atlas under it.
+    retiring: Vec<Arc<gpui::RenderImage>>,
 }
 
 struct Lifted {
@@ -464,6 +467,7 @@ pub struct Editor {
     picture: Option<Arc<gpui::RenderImage>>,
     /// Pictures replaced by a turn, to free from the window's atlas.
     stale_pictures: Vec<Arc<gpui::RenderImage>>,
+    leaving_pictures: Vec<Arc<gpui::RenderImage>>,
     /// The finished strokes as one picture, for the canvas to show.
     strokes: Rc<RefCell<Strokes>>,
     px: (u32, u32),
@@ -757,6 +761,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 card_on_close: card,
                 picture: None,
                 stale_pictures: Vec::new(),
+                leaving_pictures: Vec::new(),
                 strokes: Default::default(),
                 px: (w, h),
                 source: None,
@@ -3956,9 +3961,12 @@ impl Editor {
                 if let Some((focus, entity)) = &input {
                     window.handle_input(focus, gpui::ElementInputHandler::new(bounds, entity.clone()), cx);
                 }
-                for old in strokes.borrow_mut().retired.drain(..) {
+                let mut state = strokes.borrow_mut();
+                for old in std::mem::take(&mut state.retiring) {
                     let _ = window.drop_image(old);
                 }
+                state.retiring = std::mem::take(&mut state.retired);
+                drop(state);
                 let o = bounds.origin;
                 let pt = |p: P| point(o.x + px(p.0 * s + off), o.y + px(p.1 * s + off));
                 for shape in &live {
@@ -4336,9 +4344,11 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        for old in self.stale_pictures.drain(..) {
+        // Freed a frame after they're replaced, like the strokes' pictures.
+        for old in std::mem::take(&mut self.leaving_pictures) {
             let _ = window.drop_image(old);
         }
+        self.leaving_pictures = std::mem::take(&mut self.stale_pictures);
         self.fit_window();
         // The next screenshot starts with this background.
         let frame = self.frame.to_json();
