@@ -456,8 +456,26 @@ impl Recorder {
         for w in &s.windows {
             let _ = w.update(cx, |_, window, _| window.remove_window());
         }
-        // The recorder writes out its file; on_end follows.
-        s.recording.stop();
+        // The recorder writes out its file; on_end follows. A take that's
+        // kept runs on a moment first: the sound still on its way (the
+        // system's audio buffers, and the last packet, which
+        // gpu-screen-recorder drops on stopping) would cut off the last word.
+        if discard || s.clock.paused() {
+            s.recording.stop();
+            return;
+        }
+        let id = s.id;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(STOP_TAIL).await;
+            let _ = this.update(cx, |rec, _| {
+                if let State::Recording(s) = &rec.state
+                    && s.id == id
+                {
+                    s.recording.stop();
+                }
+            });
+        })
+        .detach();
     }
 
     fn toggle_pause(&mut self) -> Option<bool> {
@@ -903,8 +921,9 @@ async fn finalize(file: &Path, system: bool, mic: bool) {
             (false, true) => format!("[0:a:0]{center},"),
             _ => "[0:a:0]".into(),
         };
-        // Mute the PipeWire capture-open pop, then normalize to -14 LUFS.
-        graph = format!("{mix}volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11[a]");
+        // Mute the PipeWire capture-open pop, only its first moment so the
+        // first word stays, then normalize to -14 LUFS.
+        graph = format!("{mix}volume=enable='lt(t,0.15)':volume=0,afade=t=in:st=0.15:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11[a]");
         args.extend(["-filter_complex", &graph, "-map", "0:v:0", "-map", "[a]"]);
     }
     args.push(&processed);
@@ -917,6 +936,9 @@ async fn finalize(file: &Path, system: bool, mic: bool) {
         }
     }
 }
+
+/// How long a kept recording goes on after Stop, for its sound to arrive.
+const STOP_TAIL: Duration = Duration::from_millis(400);
 
 fn refresh_omarchy_indicator() {
     if cfg!(target_os = "linux") {

@@ -30,6 +30,7 @@ Recording and window shots come to macOS and Windows, and Windows gets an instal
 
 ### Fixed
 
+- Recordings no longer lose their sound at the edges: the first half second, which was muted to hide the microphone's click, is now 0.15 s, and after Stop the recorder runs on for 0.4 s so the last word, still in the system's audio buffers, makes it into the file.
 - kadr on Windows starts about 2 seconds sooner.
 - On macOS kadr stopped answering after its first system notification.
 - On Windows the cards had a tall outline and shadow round them.
