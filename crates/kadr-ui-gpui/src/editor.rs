@@ -1012,6 +1012,10 @@ impl Editor {
         if self.cropping.is_some() {
             self.apply_crop();
         }
+        // Another tool to draw with lets go of the shape, and its bar.
+        if tool != self.tool && tool != Tool::Select {
+            self.selected = None;
+        }
         self.tool = tool;
     }
 
@@ -2483,13 +2487,12 @@ impl Editor {
                         cx.notify();
                     })),
             );
-        // With a shape selected (or being typed), its options sit in a bar
-        // under it; without, the tool's for the next shape are up here.
+        // A shape's own options show in a bar under it once it's drawn (or
+        // while it's typed), never up here: the next shape takes the ones
+        // picked last.
         let target = self.context_target();
-        let tool_options = target.is_none();
         // Solid or outline, for boxes and ellipses.
-        let shapes_fill = (tool_options && matches!(self.tool, Tool::Rect | Tool::Ellipse))
-            || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
+        let shapes_fill = self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Rect | Kind::Ellipse));
         let fill_toggle = shapes_fill.then(|| {
             let option = |id: &'static str, solid: bool, icon: &'static str, tip: &'static str| {
                 ButtonLike::new(id)
@@ -2510,7 +2513,7 @@ impl Editor {
                 .child(Divider::vertical().h_5().mx_1())
         });
         // Plain, on a plate or outlined, for text.
-        let texts = (tool_options && matches!(self.tool, Tool::Text)) || target.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
+        let texts = target.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Text(_)));
         // Text styles in a dropdown under a sample of the current one,
         // each a sample in the current colour.
         let text_options = texts.then(|| {
@@ -2571,7 +2574,7 @@ impl Editor {
             Kind::Arrow(style) => Some(style),
             _ => None,
         });
-        let arrow_options = ((tool_options && self.tool == Tool::Arrow) || picked_arrow.is_some()).then(|| {
+        let arrow_options = picked_arrow.is_some().then(|| {
             let current = picked_arrow.unwrap_or(self.arrow);
             let option = |style: ArrowStyle, tip: &'static str| {
                 ButtonLike::new(SharedString::from(format!("arrow-{}", style.key())))
@@ -2599,7 +2602,7 @@ impl Editor {
             _ => None,
         });
         // In a dropdown under the current one, like the colours.
-        let cursor_options = ((tool_options && self.tool == Tool::Cursor) || picked_cursor.is_some()).then(|| {
+        let cursor_options = picked_cursor.is_some().then(|| {
             let current = picked_cursor.unwrap_or(self.cursor_kind);
             let icon = |name: &str| {
                 self.cursor_icons.iter().find(|(n, _)| *n == name).map(|(_, image)| img(gpui::ImageSource::Render(image.clone())).size(px(22.)).object_fit(ObjectFit::Contain))
@@ -2658,8 +2661,8 @@ impl Editor {
                 )
                 .child(Divider::vertical().h_5().mx_1())
         });
-        // Pixelate or blur, and hiding what looks private, for the hide tool.
-        let hiding = (tool_options && self.tool == Tool::Blur) || self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
+        // Pixelate, blur or a black box, for a selected hidden part.
+        let hiding = self.selected.and_then(|i| self.vm.doc.shapes.get(i)).is_some_and(|sh| matches!(sh.kind, Kind::Blur(..)));
         let hide_options = hiding.then(|| {
             let option = |id: &'static str, how: Hide, icon: &'static str, tip: &'static str| {
                 ButtonLike::new(id)
@@ -2678,6 +2681,12 @@ impl Editor {
                 .child(option("hide-pixelate", Hide::Pixelate, "icons/kadr/pixelate.svg", t("editor.pixelate")))
                 .child(option("hide-blur", Hide::Blur, "icons/kadr/blur.svg", t("editor.blur")))
                 .child(option("hide-redact", Hide::Redact, "icons/kadr/redact.svg", t("editor.redact_tip")))
+        });
+        // Hiding what looks private is an action, not a shape's option: up
+        // here with the hide tool.
+        let sensitive = (target.is_none() && self.tool == Tool::Blur).then(|| {
+            h_flex()
+                .gap_0p5()
                 .child({
                     // Short of room the label goes, the tooltip still says it.
                     let tip = Tooltip::text(t("editor.hide_sensitive_tip"));
@@ -2725,8 +2734,8 @@ impl Editor {
         // The modes, a spacer and undo/redo (redo's icon has a little more
         // room), in the bar's inset.
         let left_w = g1 + controls(false) + 5. * button + 3. * g05 + 3. * g1 + 13.;
-        let hide_w = if width >= WIDE_TOOLBAR { 13. } else { 7.9 };
-        let options: f32 = [(shapes_fill, 5.4), (texts, 9.), (cursor_options.is_some(), 3.6), (hide_options.is_some(), hide_w)].iter().filter(|o| o.0).map(|o| o.1 * rem).sum();
+        let sensitive_w = if width >= WIDE_TOOLBAR { 7.6 } else { 2.6 };
+        let options: f32 = if sensitive.is_some() { sensitive_w * rem } else { 0. };
         let right_w = |compact: bool| (if compact { button } else { 10.8 * rem + options }) + g2 + controls(true) + g1;
         let flat: Vec<(usize, Tool)> = groups.iter().enumerate().flat_map(|(g, group)| group.iter().map(move |&t| (g, t))).collect();
         let tools_w = |n: usize| flat.iter().take(n).enumerate().map(|(i, &(g, _))| button + if i == 0 { 0. } else if g != flat[i - 1].0 { 6. } else { g05 }).sum::<f32>();
@@ -2809,11 +2818,7 @@ impl Editor {
                         .gap_2()
                         .p_2()
                         .elevation_3(cx)
-                        .children(hide_options)
-                        .children(arrow_options)
-                        .children(cursor_options)
-                        .children(text_options)
-                        .children(fill_toggle)
+                        .children(sensitive)
                         .child(palette)
                         .child(weights),
                 )
@@ -2841,7 +2846,7 @@ impl Editor {
                     .children(menu),
             )
         } else {
-            h_flex().gap_0p5().children(hide_options).children(arrow_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette).child(weights)
+            h_flex().gap_0p5().children(sensitive).child(palette).child(weights)
         };
 
         // The window's controls (or room for them), the modes and history at

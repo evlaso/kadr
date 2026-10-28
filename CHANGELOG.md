@@ -20,7 +20,7 @@ What changed in each kadr release, for the people who use it. The format follows
 - Settings live in `settings.toml` (in `~/.config/kadr` on Linux), with a comment on every setting, so they can be changed by hand or kept with your dotfiles. kadr picks up edits the next time it needs them, and the settings window keeps your comments and changes only what you change there. Settings → About → Settings file opens it. If the file can't be read, kadr says where in the settings window and leaves it as it is. The old `settings.json` is moved over by itself.
 ### Changed
 
-- In the editor, a selected shape (or a text being typed) has the options only its kind has (an arrow's or a text's style, a box's fill, how an area is hidden, a pointer's look) in a bar floating under it; the colour and size stay in the top bar's corner. The top bar keeps the tool's options for the next shape while nothing is selected. An arrow, a box, an ellipse or a hidden area stays selected once drawn, so its bar shows right away.
+- In the editor, a selected shape (or a text being typed) has the options only its kind has (an arrow's or a text's style, a box's fill, how an area is hidden, a pointer's look) in a bar floating under it; the colour and size stay in the top bar's corner. Before drawing, the top bar shows none of them: an arrow, a box, an ellipse or a hidden area stays selected once drawn, so its bar shows right away, and the next shape takes what was picked last. Picking another tool lets go of the selected shape.
 - The text tool types into a text it's clicked on, which it outlines when the pointer is over it, instead of starting another; a drag still moves it.
 
 ## [0.3.0-alpha.2] - 2026-10-26

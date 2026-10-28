@@ -491,8 +491,9 @@ fn a_black_box_leaves_nothing_under_it() {
     s.window("kadr-editor");
     wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
     s.dev(&["key", "b"]);
-    s.dev(&["click", "hide-redact"]);
     s.dev(&["drag", "500,300", "300,200"]);
+    // Drawn, the hidden part is selected and its bar offers the black box.
+    s.dev(&["click", "hide-redact"]);
     let state = s.dev(&["state"]);
     assert_eq!(state["view"]["shapes"][0]["kind"], "redact", "{state}");
     s.dev(&["key", "ctrl-s"]);
@@ -510,8 +511,8 @@ fn a_black_box_leaves_nothing_under_it() {
     assert_eq!(base.get_pixel(2, 2).0, [0xf4, 0xa2, 0x61, 255], "the rest of it");
 }
 
-/// The arrow's style: picked before drawing, and changed on the selected
-/// arrow afterwards as one undo step.
+/// The arrow's style: picked in the bar under the drawn arrow, as one undo
+/// step, and the next arrow's from then on.
 #[test]
 #[ignore = "e2e: just e2e"]
 fn arrows_come_in_styles() {
@@ -521,23 +522,24 @@ fn arrows_come_in_styles() {
     s.window("kadr-editor");
     wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
     s.dev(&["click", "tool-a"]);
-    s.dev(&["click", "arrow-double"]);
+    // Nothing of the arrow's own before it's drawn.
+    assert!(s.try_dev(&["find", "arrow-double"]).is_none_or(|v| v.is_null()), "styles shown before drawing");
     s.dev(&["drag", "900,480", "160,90"]);
+    assert_eq!(s.dev(&["state"])["view"]["selected"], 0);
+    s.dev(&["click", "arrow-double"]);
     let state = s.dev(&["state"]);
     assert_eq!(state["view"]["shapes"][0]["data"], "double", "{state}");
-    // Selected, it takes another style.
-    s.dev(&["click", "tool-v"]);
-    s.dev(&["drag", "980,525", "0,0"]);
-    assert_eq!(s.dev(&["state"])["view"]["selected"], 0);
-    s.dev(&["click", "arrow-tapered"]);
-    let state = s.dev(&["state"]);
-    assert_eq!(state["view"]["shapes"][0]["data"], "tapered", "{state}");
     s.dev(&["key", "ctrl-z"]);
-    assert_eq!(s.dev(&["state"])["view"]["shapes"][0]["data"], "double");
+    assert!(s.dev(&["state"])["view"]["shapes"][0]["data"].is_null());
+    s.dev(&["key", "ctrl-shift-z"]);
+    // The next arrow takes it.
+    s.dev(&["drag", "500,300", "120,60"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["shapes"][1]["data"], "double", "{state}");
 }
 
-/// A text style picked from the dropdown is the next text's; with the text
-/// selected, another one restyles it.
+/// A text style picked from the dropdown under the text being typed is
+/// its own and the next one's; with the text selected, another restyles it.
 #[test]
 #[ignore = "e2e: just e2e"]
 fn text_comes_in_styles() {
@@ -547,9 +549,9 @@ fn text_comes_in_styles() {
     s.window("kadr-editor");
     wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
     s.dev(&["click", "tool-t"]);
+    s.dev(&["drag", "900,480", "0,0"]);
     s.dev(&["click", "text-style"]);
     s.dev(&["click", "text-pill"]);
-    s.dev(&["drag", "900,480", "0,0"]);
     s.dev(&["type", "Step one"]);
     s.dev(&["key", "escape"]);
     let state = s.dev(&["state"]);
