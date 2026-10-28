@@ -144,21 +144,49 @@ pub fn hide(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<RgbaIma
     let k = hide_strength(size);
     match how {
         Hide::Pixelate => {
+            // Each block's average, nudged by noise, so the blocks can't be
+            // matched against pixelated guesses of the text.
             let block = (((long / 120).clamp(8, 32) as f32 * k).round() as u32).max(3);
             let region = image::imageops::crop_imm(src, x, y, w, h).to_image();
-            let small = image::imageops::resize(&region, (w / block).max(1), (h / block).max(1), image::imageops::FilterType::Triangle);
+            let mut small = image::imageops::resize(&region, (w / block).max(1), (h / block).max(1), image::imageops::FilterType::Triangle);
+            jitter(&mut small, seed(a, b), 14);
             Some(image::imageops::resize(&small, w, h, image::imageops::FilterType::Nearest))
         }
         Hide::Redact => Some(RgbaImage::from_pixel(w, h, image::Rgba([0, 0, 0, 255]))),
         Hide::Blur => {
-            // Blurred with what's around it, so the edges don't sharpen up.
+            // Blurred with what's around it, so the edges don't sharpen up;
+            // first brought down to blocks with noise, so no deblurring gets
+            // the text back, then smoothed past the blocks.
             let sigma = (long as f32 / 140.).clamp(6., 24.) * k;
             let reach = (sigma * 2.).ceil() as u32;
             let (bx, by) = (x.saturating_sub(reach), y.saturating_sub(reach));
             let (bw, bh) = ((x + w + reach).min(src.width()) - bx, (y + h + reach).min(src.height()) - by);
             let region = image::imageops::crop_imm(src, bx, by, bw, bh).to_image();
-            let blurred = image::imageops::fast_blur(&region, sigma);
+            let block = (sigma / 2.).max(2.);
+            let mut small = image::imageops::resize(&region, ((bw as f32 / block).round() as u32).max(1), ((bh as f32 / block).round() as u32).max(1), image::imageops::FilterType::Triangle);
+            jitter(&mut small, seed(a, b), 10);
+            let coarse = image::imageops::resize(&small, bw, bh, image::imageops::FilterType::Triangle);
+            let blurred = image::imageops::fast_blur(&coarse, sigma);
             Some(image::imageops::crop_imm(&blurred, x - bx, y - by, w, h).to_image())
+        }
+    }
+}
+
+/// The same noise for the same area, so the canvas and the export agree.
+fn seed(a: P, b: P) -> u64 {
+    [a.0, a.1, b.0, b.1].iter().fold(0x9e37_79b9_7f4a_7c15, |h: u64, v| (h ^ v.to_bits() as u64).wrapping_mul(0x0100_0000_01b3))
+}
+
+/// Shift every pixel's channels by up to `amount` either way, the same for
+/// the three so the colour stays and only its lightness wavers.
+fn jitter(picture: &mut RgbaImage, mut state: u64, amount: i32) {
+    for p in picture.pixels_mut() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let d = (state % (2 * amount as u64 + 1)) as i32 - amount;
+        for c in &mut p.0[..3] {
+            *c = (*c as i32 + d).clamp(0, 255) as u8;
         }
     }
 }
@@ -286,6 +314,16 @@ pub fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pixelation_is_noisy_but_the_same_each_time() {
+        let grey = RgbaImage::from_pixel(400, 300, image::Rgba([128, 128, 128, 255]));
+        let once = hide(&grey, (0., 0.), (200., 200.), Hide::Pixelate, 0.5).unwrap();
+        assert_eq!(hide(&grey, (0., 0.), (200., 200.), Hide::Pixelate, 0.5).unwrap(), once, "the canvas and the export agree");
+        let shades: std::collections::HashSet<u8> = once.pixels().map(|p| p.0[0]).collect();
+        assert!(shades.len() > 4, "blocks of a flat grey differ: {shades:?}");
+        assert!(once.pixels().all(|p| p.0[0].abs_diff(128) <= 14 && p.0[0] == p.0[1] && p.0[1] == p.0[2]), "only lightness wavers, a little");
+    }
 
     #[test]
     fn black_boxes_are_burnt_into_the_picture_as_taken() {
