@@ -93,6 +93,9 @@ pub fn curve(a: P, b: P, bend: Option<P>) -> Vec<P> {
 pub enum Hide {
     Pixelate,
     Blur,
+    /// A solid black box: what's under it is gone from the saved file and
+    /// from the project kept with it.
+    Redact,
 }
 
 #[derive(Clone, Debug)]
@@ -225,6 +228,15 @@ impl Orientation {
     /// The shown size of a picture taken at `size`.
     pub fn size(self, size: (u32, u32)) -> (u32, u32) {
         if self.turns % 2 == 1 { (size.1, size.0) } else { size }
+    }
+
+    /// The picture as taken, from one shown this way: `apply` undone.
+    pub fn undo(self, picture: &RgbaImage) -> RgbaImage {
+        let mut out = picture.clone();
+        for _ in 0..self.turns {
+            out = image::imageops::rotate270(&out);
+        }
+        if self.mirrored { image::imageops::flip_horizontal(&out) } else { out }
     }
 
     pub fn apply(self, picture: &RgbaImage) -> RgbaImage {

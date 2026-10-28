@@ -479,6 +479,41 @@ fn the_pipette_takes_a_colour_from_the_picture() {
     assert!(settings.contains(r##"recent_colors = ["#2a9d8f"]"##) && settings.contains(r##"saved_colors = ["#2a9d8f"]"##), "{settings}");
 }
 
+/// A black box hides what's under it in the saved file and in the project
+/// kept to edit it again, so taking the box away there shows black.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_black_box_leaves_nothing_under_it() {
+    let s = Session::start();
+    let path = s.dir.join("secret.png");
+    RgbaImage::from_pixel(1600, 1000, image::Rgba([0xf4, 0xa2, 0x61, 255])).save(&path).expect("fixture");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    s.dev(&["key", "b"]);
+    s.dev(&["click", "hide-redact"]);
+    s.dev(&["drag", "500,300", "300,200"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["shapes"][0]["kind"], "redact", "{state}");
+    s.dev(&["key", "ctrl-s"]);
+    kadr_core::dirs::set(kadr_core::dirs::Dirs {
+        config: s.var("XDG_CONFIG_HOME").join("kadr"),
+        cache: s.var("XDG_CACHE_HOME").join("kadr"),
+        data: s.var("XDG_DATA_HOME").join("kadr"),
+        pictures: s.var("OMARCHY_SCREENSHOT_DIR"),
+        videos: s.dir.join("home/videos"),
+        runtime: s.dir.clone(),
+    });
+    let restored = wait(Duration::from_secs(5), || kadr_core::project::load(&path, &std::fs::read(&path).ok()?)).expect("no drawing kept with the saved file");
+    let shape = &restored.doc.shapes[0];
+    let (x, y) = (((shape.a.0 + shape.b.0) / 2.) as u32, ((shape.a.1 + shape.b.1) / 2.) as u32);
+    let saved = image::open(&path).expect("saved").to_rgba8();
+    assert_eq!(saved.get_pixel(x, y).0, [0, 0, 0, 255], "the saved file");
+    let base = image::load_from_memory(&restored.base).expect("base").to_rgba8();
+    assert_eq!(base.get_pixel(x, y).0, [0, 0, 0, 255], "the project's picture");
+    assert_eq!(base.get_pixel(2, 2).0, [0xf4, 0xa2, 0x61, 255], "the rest of it");
+}
+
 /// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word
 /// out with Ctrl+Backspace, Shift+Left selecting and typing over it, all
 /// through the input handler the input method uses too.

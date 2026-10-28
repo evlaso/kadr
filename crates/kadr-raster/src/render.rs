@@ -149,6 +149,7 @@ pub fn hide(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<RgbaIma
             let small = image::imageops::resize(&region, (w / block).max(1), (h / block).max(1), image::imageops::FilterType::Triangle);
             Some(image::imageops::resize(&small, w, h, image::imageops::FilterType::Nearest))
         }
+        Hide::Redact => Some(RgbaImage::from_pixel(w, h, image::Rgba([0, 0, 0, 255]))),
         Hide::Blur => {
             // Blurred with what's around it, so the edges don't sharpen up.
             let sigma = (long as f32 / 140.).clamp(6., 24.) * k;
@@ -160,6 +161,24 @@ pub fn hide(src: &RgbaImage, a: P, b: P, how: Hide, size: f32) -> Option<RgbaIma
             Some(image::imageops::crop_imm(&blurred, x - bx, y - by, w, h).to_image())
         }
     }
+}
+
+/// The picture as taken (`original`, before `doc.view`) with the drawing's
+/// black boxes burnt in, for what's kept to edit again: removing a box
+/// there shows black, not what was under it. None when there are none.
+pub fn burn_redactions(original: &RgbaImage, doc: &Doc) -> Option<RgbaImage> {
+    let boxes: Vec<_> = doc.shapes.iter().filter(|s| matches!(s.kind, Kind::Blur(Hide::Redact))).collect();
+    if boxes.is_empty() {
+        return None;
+    }
+    let mut shown = doc.view.apply(original);
+    for shape in boxes {
+        if let Some(patch) = hide(&shown, shape.a, shape.b, Hide::Redact, shape.size) {
+            let (l, t, _, _) = rect(shape.a, shape.b);
+            image::imageops::replace(&mut shown, &patch, l.floor().max(0.) as i64, t.floor().max(0.) as i64);
+        }
+    }
+    Some(doc.view.undo(&shown))
 }
 
 /// Draw everything onto the picture at full resolution.
@@ -267,6 +286,25 @@ pub fn rasterize(src: &RgbaImage, shapes: &[Shape]) -> Option<RgbaImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn black_boxes_are_burnt_into_the_picture_as_taken() {
+        use kadr_core::document::Orientation;
+        // 40×20 taken, shown turned a quarter (20×40) and mirrored.
+        let original = RgbaImage::from_pixel(40, 20, image::Rgba([200, 200, 200, 255]));
+        let view = Orientation::default().turned().mirrored();
+        let shown = view.apply(&original);
+        assert_eq!(view.undo(&shown), original);
+        let boxed = |a: P, b: P| Shape { kind: Kind::Blur(Hide::Redact), a, b, color: kadr_core::color::Rgba::WHITE, size: 1., filled: false, text: TextStyle::Plain, bend: None };
+        let doc = Doc { shapes: vec![boxed((0., 0.), (10., 10.))], view, ..Doc::default() };
+        let burnt = burn_redactions(&original, &doc).unwrap();
+        // What's black, shown the same way, is the box.
+        let again = view.apply(&burnt);
+        for (x, y, p) in again.enumerate_pixels() {
+            assert_eq!(p.0[0] == 0, x < 10 && y < 10, "({x}, {y})");
+        }
+        assert!(burn_redactions(&original, &Doc::default()).is_none());
+    }
 
     #[test]
     fn a_picture_is_written_in_the_format_its_name_asks_for() {

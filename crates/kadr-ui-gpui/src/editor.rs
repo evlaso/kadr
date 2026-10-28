@@ -2085,7 +2085,7 @@ impl Editor {
                     // Encoded once, for the .kadr and the editable copy both.
                     let mut base = None;
                     if let Some(bundle) = bundle {
-                        match base_png(original.as_deref(), density) {
+                        match base_png(original.as_deref(), density, &doc) {
                             Ok(png) => {
                                 if let Err(e) = project::save_bundle(&bundle, &preview, &png, &doc, &frame) {
                                     util::notify(t("bundle.couldnt_save"), &e.to_string());
@@ -2095,7 +2095,7 @@ impl Editor {
                             Err(e) => util::notify(t("bundle.couldnt_save"), &e.to_string()),
                         }
                     }
-                    let _ = project::save(&path, &output, move || base.map_or_else(|| base_png(original.as_deref(), density), Ok), &doc, &frame);
+                    let _ = project::save(&path, &output, || base.map_or_else(|| base_png(original.as_deref(), density, &doc), Ok), &doc, &frame);
                 })
                 .await;
         })
@@ -2187,7 +2187,7 @@ impl Editor {
                 .background_executor()
                 .spawn(async move {
                     let png = kadr_raster::render_png(&src, &doc, &frame).ok_or_else(|| std::io::Error::other(t("common.couldnt_save")))?;
-                    project::save_bundle(&target, &png, &base_png(original.as_deref(), density)?, &doc, &frame).map(|_| target)
+                    project::save_bundle(&target, &png, &base_png(original.as_deref(), density, &doc)?, &doc, &frame).map(|_| target)
                 })
                 .await;
             match result {
@@ -2555,6 +2555,7 @@ impl Editor {
                 .gap_0p5()
                 .child(option("hide-pixelate", Hide::Pixelate, "icons/kadr/pixelate.svg", t("editor.pixelate")))
                 .child(option("hide-blur", Hide::Blur, "icons/kadr/blur.svg", t("editor.blur")))
+                .child(option("hide-redact", Hide::Redact, "icons/kadr/redact.svg", t("editor.redact_tip")))
                 .child({
                     // Short of room the label goes, the tooltip still says it.
                     let tip = Tooltip::text(t("editor.hide_sensitive_tip"));
@@ -4780,9 +4781,12 @@ fn patch_key(how: Hide, a: P, b: P, size: f32) -> u64 {
     h
 }
 
-/// The picture as taken, as the PNG a project keeps under its drawing.
-fn base_png(original: Option<&RgbaImage>, density: Option<f64>) -> std::io::Result<Vec<u8>> {
+/// The picture as taken, as the PNG a project keeps under its drawing,
+/// with the drawing's black boxes burnt in.
+fn base_png(original: Option<&RgbaImage>, density: Option<f64>, doc: &Doc) -> std::io::Result<Vec<u8>> {
     let original = original.ok_or_else(|| std::io::Error::other("the picture isn't read yet"))?;
+    let burnt = kadr_raster::burn_redactions(original, doc);
+    let original = burnt.as_ref().unwrap_or(original);
     let mut png = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new_with_quality(&mut png, image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::Adaptive);
     original.write_with_encoder(encoder).map_err(std::io::Error::other)?;

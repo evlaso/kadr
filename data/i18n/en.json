@@ -149,6 +149,7 @@
  "editor.hold_to_snap": "Hold {} to snap",
  "editor.revert_to_original": "Revert to Original",
  "editor.blur": "Blur",
+ "editor.redact_tip": "Black box: what's under it is gone from the saved file",
  "editor.copy_text": "Text",
  "editor.copy_text_tip": "Recognize the text in the picture and copy it",
  "editor.couldnt_read_picture": "Couldn't read the picture",

@@ -40,6 +40,7 @@ pub fn shape_to_json(shape: &Shape) -> Value {
         Kind::Cursor(name) => ("cursor", json!(name)),
         Kind::Blur(Hide::Pixelate) => ("pixelate", json!(null)),
         Kind::Blur(Hide::Blur) => ("blur", json!(null)),
+        Kind::Blur(Hide::Redact) => ("redact", json!(null)),
         Kind::Spotlight => ("spotlight", json!(null)),
         Kind::Picture(_) => ("picture", json!(null)),
     };
@@ -76,6 +77,7 @@ pub fn shape_from_json(v: &Value, picture: &dyn Fn(&str) -> Option<RgbaImage>) -
         "cursor" => Kind::Cursor(cursor(data.as_str()?)),
         "pixelate" => Kind::Blur(Hide::Pixelate),
         "blur" => Kind::Blur(Hide::Blur),
+        "redact" => Kind::Blur(Hide::Redact),
         "spotlight" => Kind::Spotlight,
         "picture" => Kind::Picture(Arc::new(picture(v["picture"].as_str()?)?)),
         _ => return None,

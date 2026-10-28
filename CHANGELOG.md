@@ -6,6 +6,7 @@ What changed in each kadr release, for the people who use it. The format follows
 
 ### Added
 
+- A black box among the hide tool's choices (B): what's under it is gone from the saved file and from the copy kept to edit it again, so removing the box later shows black. Hide private info covers with black boxes too when they're picked.
 - Colours in the editor: the pipette (I) takes one from the picture, the colour menu keeps the ones picked lately, and + keeps the current colour among your own (right-click one to remove it). Both lists live in `settings.toml`.
 - The editor opens JPEG and WebP pictures, and Save As writes PNG, JPEG or WebP by the name you give it (JPEG on white where the picture is transparent; WebP without loss). Saving a JPEG opened in the editor keeps it a JPEG.
 - While recording, the bar shows the microphone filling with how loud it is, so you can see you're heard.

@@ -202,6 +202,7 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
         ),
         ("blur", (480, 300), doc(vec![shape(Kind::Blur(Hide::Blur), (250., 140.), (450., 280.), 1.)]), none.clone()),
         ("pixelate", (480, 300), doc(vec![shape(Kind::Blur(Hide::Pixelate), (120., 35.), (420., 140.), 1.)]), none.clone()),
+        ("redact", (480, 300), doc(vec![shape(Kind::Blur(Hide::Redact), (120., 35.), (420., 90.), 1.)]), none.clone()),
         ("spotlight", (480, 300), doc(vec![shape(Kind::Spotlight, (250., 140.), (450., 280.), 1.)]), none.clone()),
         (
             "text_on_blur",

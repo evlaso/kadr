@@ -149,6 +149,7 @@
  "editor.hold_to_snap": "С {} — прилипать",
  "editor.revert_to_original": "Вернуть как было",
  "editor.blur": "Размытие",
+ "editor.redact_tip": "Чёрная плашка: под ней в сохранённом файле ничего не останется",
  "editor.copy_text": "Текст",
  "editor.copy_text_tip": "Распознать текст на картинке и скопировать",
  "editor.couldnt_read_picture": "Не удалось прочитать картинку",
