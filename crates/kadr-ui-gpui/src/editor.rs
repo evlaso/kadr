@@ -2790,9 +2790,13 @@ impl Editor {
         let tools = h_flex().gap(px(6.)).children(rows.into_iter().map(|row| h_flex().gap_0p5().children(row.into_iter().map(|t| tool_button(t, cx))))).children(overflow);
         let mut floating = None;
         let style = if let Some(index) = target {
-            // The size stays up here, where drawing finds it.
-            floating = self.context_bar(index, h_flex().gap_0p5().children(hide_options).children(arrow_options).children(cursor_options).children(text_options).children(fill_toggle).child(palette), cx);
-            h_flex().child(weights)
+            // The colour and size stay up here, where drawing finds them;
+            // the bar has what only this kind of shape has, if anything.
+            let own: Vec<AnyElement> = [hide_options.map(IntoElement::into_any_element), arrow_options.map(IntoElement::into_any_element), cursor_options.map(IntoElement::into_any_element), text_options.map(IntoElement::into_any_element), fill_toggle.map(IntoElement::into_any_element)].into_iter().flatten().collect();
+            if !own.is_empty() {
+                floating = self.context_bar(index, h_flex().gap_0p5().children(own), cx);
+            }
+            h_flex().gap_0p5().child(palette).child(weights)
         } else if compact {
             let menu = self.more_open.then(|| {
                 gpui::deferred(
