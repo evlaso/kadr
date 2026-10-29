@@ -5,6 +5,7 @@ What changed in each kadr release, for the people who use it. The format follows
 ## [Unreleased]
 
 ### Added
+- The editor's background places the picture anywhere on a 3×3 grid: off the middle it sits flush with that edge or corner, square there. "Even margins" cuts a screenshot's plain margins to match, so what's in it sits in the middle (one undo step).
 
 - Seven text styles in the editor, in a dropdown that shows each in the current colour: plain, on a plate, outlined, with a shadow, highlighted like with a marker, in a pill, and a framed label.
 - Arrow styles in the editor: a filled head, an open head, a head at both ends, or tapered from a thin tail into the head. Any of them bends, and a selected arrow takes another style.

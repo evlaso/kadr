@@ -570,6 +570,34 @@ fn text_comes_in_styles() {
     assert_eq!(state["view"]["shapes"].as_array().map(Vec::len), Some(1), "{state}");
 }
 
+/// The background panel's "Even margins" cuts the wider plain margin to the
+/// narrower one, and the picture can sit flush in a corner.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_background_evens_margins_and_aligns() {
+    let s = Session::start();
+    let path = s.dir.join("margins.png");
+    // A block 60 px from the left, 440 from the right; 50 from the top, 240
+    // from the bottom.
+    let block = |x: u32, y: u32| (60..760).contains(&x) && (50..560).contains(&y);
+    RgbaImage::from_fn(1200, 800, |x, y| if block(x, y) { image::Rgba([59, 111, 212, 255]) } else { image::Rgba([245, 245, 245, 255]) }).save(&path).expect("fixture");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    s.dev(&["click", "mode-background"]);
+    // The panel's last section, below its fold.
+    s.dev(&["scroll", "130,400", "3000"]);
+    s.dev(&["click", "balance-margins"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["crop"], serde_json::json!([[0.0, 0.0], [820.0, 610.0]]), "{state}");
+    s.dev(&["click", "align-8"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["frame"]["align"], 8, "{state}");
+    assert_ne!(state["view"]["frame"]["backdrop"], "none", "{state}");
+    s.dev(&["key", "ctrl-z"]);
+    assert!(s.dev(&["state"])["view"]["crop"].is_null());
+}
+
 /// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word
 /// out with Ctrl+Backspace, Shift+Left selecting and typing over it, all
 /// through the input handler the input method uses too.

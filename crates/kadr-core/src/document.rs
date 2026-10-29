@@ -26,6 +26,8 @@ pub const MAX_ROUND: f32 = 0.05;
 pub const MAX_REACH: f32 = 3.;
 /// The backdrop's aspect ratios, by `Frame::aspect`; None fits the picture.
 pub const FRAME_ASPECTS: [Option<f32>; 5] = [None, Some(16. / 9.), Some(4. / 3.), Some(1.), Some(9. / 16.)];
+/// `Frame::align` for the picture in the middle of the backdrop.
+pub const FRAME_CENTRE: usize = 4;
 
 /// The cursor stamps' names, like CSS cursors; the first is the fallback.
 pub const CURSORS: [&str; 13] = [
@@ -379,11 +381,15 @@ pub struct Frame {
     pub shadow: f32,
     /// Index into `FRAME_ASPECTS`.
     pub aspect: usize,
+    /// Where the picture sits on the backdrop, row by row from the top
+    /// left (0..9, 4 the middle): off the middle it's flush with that edge
+    /// or corner, square there, the room going to the other side.
+    pub align: usize,
 }
 
 impl Default for Frame {
     fn default() -> Self {
-        Frame { backdrop: Backdrop::None, padding: FRAME_PAD, radius: 0.012, shadow: 0.5, aspect: 0 }
+        Frame { backdrop: Backdrop::None, padding: FRAME_PAD, radius: 0.012, shadow: 0.5, aspect: 0, align: FRAME_CENTRE }
     }
 }
 
@@ -396,7 +402,7 @@ impl Frame {
             Backdrop::Gradient(i) => serde_json::json!({ "gradient": i }),
             Backdrop::Wallpaper(path) => serde_json::json!({ "wallpaper": path.display().to_string() }),
         };
-        serde_json::json!({ "backdrop": backdrop, "padding": self.padding, "radius": self.radius, "shadow": self.shadow, "aspect": self.aspect })
+        serde_json::json!({ "backdrop": backdrop, "padding": self.padding, "radius": self.radius, "shadow": self.shadow, "aspect": self.aspect, "align": self.align })
     }
 
     pub fn from_json(v: &serde_json::Value) -> Frame {
@@ -420,6 +426,7 @@ impl Frame {
             radius: num("radius", d.radius, MAX_ROUND),
             shadow: num("shadow", d.shadow, 1.),
             aspect: v["aspect"].as_u64().map_or(d.aspect, |a| (a as usize).min(FRAME_ASPECTS.len() - 1)),
+            align: v["align"].as_u64().map_or(d.align, |a| (a as usize).min(8)),
         }
     }
 
@@ -445,6 +452,27 @@ impl Frame {
                 oh = (ow / a).round();
             }
         }
-        ((ow, oh), (((ow - w) / 2.).round(), ((oh - h) / 2.).round()))
+        let (ax, ay) = (self.align % 3, self.align.min(8) / 3);
+        let at = |room: f32, a: usize| match a {
+            0 => 0.,
+            1 => (room / 2.).round(),
+            _ => room,
+        };
+        ((ow, oh), (at(ow - w, ax), at(oh - h, ay)))
+    }
+
+    /// The picture's edges that touch the backdrop's: left, top, right,
+    /// bottom.
+    pub fn flush(&self) -> [bool; 4] {
+        let (ax, ay) = (self.align % 3, self.align.min(8) / 3);
+        [ax == 0, ay == 0, ax == 2, ay == 2]
+    }
+
+    /// Which of the picture's corners are rounded: top left, top right,
+    /// bottom right, bottom left. One on an edge flush with the backdrop's
+    /// is square, so no backdrop shows past it.
+    pub fn round_corners(&self) -> [bool; 4] {
+        let [l, t, r, b] = self.flush();
+        [!(l || t), !(t || r), !(r || b), !(b || l)]
     }
 }

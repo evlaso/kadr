@@ -39,6 +39,9 @@ mod redact;
 
 /// Where the size slider starts.
 const WEIGHT: f32 = 0.22;
+/// The background preview's corners on the stage (the saved picture's are
+/// square).
+const BACKDROP_RADIUS: f32 = 8.;
 
 
 /// Room around the picture to draw and crop in, the same way: the
@@ -1153,6 +1156,24 @@ impl Editor {
             let r = crop::fit_ratio(self.crop_or_picture(), k);
             self.vm.doc.crop = Some(((r.0, r.1), (r.2, r.3)));
         }
+    }
+
+    /// Even out the picture's plain margins (the background panel's
+    /// button): the crop cuts the wider of two opposite bands to the
+    /// narrower, so what's in the screenshot sits in the middle.
+    fn balance_margins(&mut self) -> bool {
+        let Some(src) = self.source.clone() else { return false };
+        let (l, t, r, b) = self.crop_or_picture();
+        // The crop's part of the picture; past its edges is the fill.
+        let inside = |v: f32, max: u32| v.round().clamp(0., max as f32) as u32;
+        let area = (inside(l, src.width()), inside(t, src.height()), inside(r, src.width()), inside(b, src.height()));
+        let Some(even) = kadr_raster::balanced(&src, area) else { return false };
+        self.checkpoint();
+        let moved = |old: u32, new: u32| new as f32 - old as f32;
+        let (l, t) = (l + moved(area.0, even.0), t + moved(area.1, even.1));
+        let (r, b) = (r + moved(area.2, even.2), b + moved(area.3, even.3));
+        self.vm.doc.crop = Some(((l, t), (r, b)));
+        true
     }
 
     /// The ↔ button: the crop and its shape on their side.
@@ -3697,6 +3718,41 @@ impl Editor {
                     .into_any_element()
             })
             .collect();
+        // Where the picture sits: a 3×3 grid, the middle by default.
+        let align_cells: Vec<AnyElement> = (0..9)
+            .map(|i| {
+                let on = self.frame.align == i;
+                ButtonLike::new(SharedString::from(format!("align-{i}")))
+                    .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
+                    .toggle_state(on)
+                    .child(div().size(px(22.)).flex().items_center().justify_center().child(div().size(px(if on { 8. } else { 4. })).rounded_full().bg(if on { accent } else { edge })))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.frame.align = i;
+                        if !this.frame.on() {
+                            this.frame.backdrop = Backdrop::Gradient(0);
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let mut align_cells = align_cells.into_iter();
+        let align_grid = v_flex()
+            .flex_none()
+            .p(px(2.))
+            .gap(px(2.))
+            .rounded(px(8.))
+            .bg(field_bg)
+            .children((0..3).map(|_| h_flex().gap(px(2.)).children(align_cells.by_ref().take(3))));
+        let balance = Button::new("balance-margins", t("editor.balance"))
+            .style(ButtonStyle::Filled)
+            .size(ButtonSize::Default)
+            .disabled(self.source.is_none())
+            .tip(Tooltip::text(t("editor.balance_tip")))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.balance_margins();
+                cx.notify();
+            }));
         let slider = |text: &'static str, control: AnyElement| v_flex().w_full().gap_1().child(heading(text)).child(control);
         let padding = self.slider(Knob::Padding, self.frame.padding / MAX_PAD, format!("{}%", (self.frame.padding * 100.).round()), cx);
         let radius = self.slider(Knob::Radius, self.frame.radius / MAX_ROUND, format!("{}", (self.frame.radius / MAX_ROUND * 100.).round()), cx);
@@ -3734,7 +3790,8 @@ impl Editor {
                     .child(heading(t("editor.aspect_ratio")))
                     .child(h_flex().w_full().p(px(2.)).gap(px(2.)).rounded(px(8.)).bg(field_bg).children(aspects))
                     .children(size.map(|s| Label::new(s).size(LabelSize::XSmall).color(Color::Muted))),
-            );
+            )
+            .child(section().child(heading(t("editor.position"))).child(h_flex().w_full().gap_3().items_start().child(align_grid).child(v_flex().min_w_0().gap_1().child(balance))));
         div()
             .relative()
             .flex_none()
@@ -4235,13 +4292,25 @@ impl Editor {
         // stage's shadow and edge would show through it as a dark box.
         let clear_edge = matches!(self.window, Some((_, Some(_))));
         let radius = if framed { self.disp.0.max(self.disp.1) * self.frame.radius } else { 6. };
+        // Square where the picture is flush with the backdrop's edge; in
+        // the backdrop's own corner, as round as the preview's.
+        let [tl, tr, br, bl] = if framed {
+            let [l, t, r, b] = self.frame.flush();
+            let corner = |on: bool, a: bool, b: bool| px(if on { radius } else if a && b { BACKDROP_RADIUS } else { 0. });
+            let [rtl, rtr, rbr, rbl] = self.frame.round_corners();
+            [corner(rtl, l, t), corner(rtr, t, r), corner(rbr, r, b), corner(rbl, b, l)]
+        } else {
+            [px(radius); 4]
+        };
+        let corners = gpui::Corners { top_left: tl, top_right: tr, bottom_right: br, bottom_left: bl };
+        let round = move |d: gpui::Div| d.rounded_tl(tl).rounded_tr(tr).rounded_br(br).rounded_bl(bl);
         let picture = div()
             .absolute()
             .left(px(off))
             .top(px(off))
             .w(px(self.disp.0))
             .h(px(self.disp.1))
-            .rounded(px(radius))
+            .map(round)
             .overflow_hidden()
             .when(!framed && !clear_edge, |d| d.shadow(kit::shadow()))
             .when(framed && self.frame.shadow > 0., |d| {
@@ -4263,7 +4332,7 @@ impl Editor {
                         |_, _, _| {},
                         move |bounds, _, window, _| {
                             let outer = Bounds::new(point(bounds.origin.x - px(rim), bounds.origin.y - px(rim)), gpui::size(bounds.size.width + px(2. * rim), bounds.size.height + px(2. * rim)));
-                            let _ = window.paint_image(bounds, outer, px(radius).into(), 0., picture.clone(), 0, false);
+                            let _ = window.paint_image(bounds, outer, corners, 0., picture.clone(), 0, false);
                         },
                     )
                     .size_full()
@@ -4301,7 +4370,7 @@ impl Editor {
                 .top(px(et * s + off - top))
                 .w(px(ow))
                 .h(px(oh))
-                .rounded_lg()
+                .rounded(px(BACKDROP_RADIUS))
                 .overflow_hidden()
                 .child(fill)
         });
@@ -4320,7 +4389,7 @@ impl Editor {
                         d.left(px(el * s + off)).top(px(et * s + off)).w(px((er - el) * s)).h(px((eb - et) * s))
                     }
                 })
-                .when(framed, |d| d.rounded(px(radius)))
+                .when(framed, round)
                 .bg(color)
         });
         div()
@@ -5204,7 +5273,7 @@ mod tests {
     #[test]
     fn a_transparent_background_leaves_the_margin_clear() {
         let src = RgbaImage::from_pixel(100, 80, image::Rgba([200, 30, 30, 255]));
-        let frame = Frame { backdrop: Backdrop::Transparent, padding: 0.1, radius: 0., shadow: 0., aspect: 0 };
+        let frame = Frame { backdrop: Backdrop::Transparent, padding: 0.1, radius: 0., shadow: 0., aspect: 0, ..Frame::default() };
         let out = framed(&src, &RgbaImage::new(100, 80), (0., 0., 100., 80.), &frame);
         assert_eq!(out.get_pixel(0, 0).0[3], 0, "the margin is see-through");
         let (w, h) = out.dimensions();
@@ -5315,7 +5384,7 @@ mod tests {
         line.set_handle(2, (60., 50.));
         assert_eq!(line.bend, Some((60., 50.)));
         assert!(line.hit((60., 50.), 2.) && !line.hit((60., 10.), 2.));
-        let (shaft, head) = arrow_parts(&line.path(), line.size);
+        let (shaft, head) = kadr_raster::shapes::arrow_parts(&line.path(), line.size);
         assert_eq!(head[0], (110., 10.));
         assert!(shaft.last().unwrap().1 > 10., "the head comes in along the curve, from below");
         // Dragged back onto the line, it's straight again.
@@ -5389,7 +5458,7 @@ mod tests {
 
     #[test]
     fn background_round_trips_through_json() {
-        let frame = Frame { backdrop: Backdrop::Gradient(2), padding: 0.03, radius: 0.02, shadow: 0.7, aspect: 3 };
+        let frame = Frame { backdrop: Backdrop::Gradient(2), padding: 0.03, radius: 0.02, shadow: 0.7, aspect: 3, ..Frame::default() };
         let back = Frame::from_json(&frame.to_json());
         assert!(back.backdrop == frame.backdrop && back.padding == frame.padding && back.radius == frame.radius && back.shadow == frame.shadow && back.aspect == frame.aspect);
         assert!(!Frame::from_json(&Frame::default().to_json()).on());

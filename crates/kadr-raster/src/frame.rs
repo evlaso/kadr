@@ -82,11 +82,19 @@ pub fn framed(img: &RgbaImage, drawn: &RgbaImage, inner: (f32, f32, f32, f32), f
     let strength = frame.shadow.clamp(0., 1.);
     let clear = frame.backdrop == Backdrop::Transparent;
     let mut out = if clear { RgbaImage::new(ow as u32, oh as u32) } else { backdrop_pixels(&frame.backdrop, img, ow as u32, oh as u32) };
-    // Signed distance to a rounded rectangle centered at (cx, cy).
+    // Signed distance to a rounded rectangle centered at (cx, cy), each
+    // corner rounded or square (flush with the backdrop's edge).
+    let [tl, tr, br, bl] = frame.round_corners().map(|on| if on { radius } else { 0. });
     let sdf = |x: f32, y: f32, cx: f32, cy: f32| {
-        let qx = (x - cx).abs() - (w / 2. - radius);
-        let qy = (y - cy).abs() - (h / 2. - radius);
-        qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - radius
+        let r = match (x < cx, y < cy) {
+            (true, true) => tl,
+            (false, true) => tr,
+            (false, false) => br,
+            (true, false) => bl,
+        };
+        let qx = (x - cx).abs() - (w / 2. - r);
+        let qy = (y - cy).abs() - (h / 2. - r);
+        qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - r
     };
     let (cx, cy) = (left + inner.0 + w / 2., top + inner.1 + h / 2.);
     for (x, y, px) in out.enumerate_pixels_mut() {
@@ -128,4 +136,48 @@ pub fn framed(img: &RgbaImage, drawn: &RgbaImage, inner: (f32, f32, f32, f32), f
         *px = image::Rgba([un(c[0]), un(c[1]), un(c[2]), (a * 255.).round() as u8]);
     }
     out
+}
+
+/// A crop of `area` (left, top, right, bottom, in `picture`'s pixels) that
+/// evens out the picture's plain margins: the wider of two opposite bands
+/// of the edge's own colour cut to the narrower, so what's in it sits in
+/// the middle. None when there's nothing to even.
+pub fn balanced(picture: &RgbaImage, area: (u32, u32, u32, u32)) -> Option<(u32, u32, u32, u32)> {
+    let (l, t, r, b) = (area.0, area.1, area.2.min(picture.width()), area.3.min(picture.height()));
+    if r <= l + 2 || b <= t + 2 {
+        return None;
+    }
+    // Close enough to the corner's colour: JPEG noise and a soft gradient
+    // still count as plain.
+    let near = |p: &image::Rgba<u8>, q: &image::Rgba<u8>| p.0.iter().zip(q.0).all(|(a, b)| a.abs_diff(b) <= 10);
+    let plain_col = |x: u32, c: &image::Rgba<u8>| (t..b).all(|y| near(picture.get_pixel(x, y), c));
+    let plain_row = |y: u32, c: &image::Rgba<u8>| (l..r).all(|x| near(picture.get_pixel(x, y), c));
+    let tl = *picture.get_pixel(l, t);
+    let br = *picture.get_pixel(r - 1, b - 1);
+    let left = (l..r).take_while(|&x| plain_col(x, &tl)).count() as u32;
+    let top = (t..b).take_while(|&y| plain_row(y, &tl)).count() as u32;
+    let right = (l..r).rev().take_while(|&x| plain_col(x, &br)).count() as u32;
+    let bottom = (t..b).rev().take_while(|&y| plain_row(y, &br)).count() as u32;
+    // All one colour: nothing in it to centre.
+    if left + right >= r - l || top + bottom >= b - t {
+        return None;
+    }
+    let (x, y) = (left.min(right), top.min(bottom));
+    let out = (l + left - x, t + top - y, r - right + x, b - bottom + y);
+    (out != (l, t, r, b)).then_some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uneven_margins_are_evened_out() {
+        // A dark block 20 px from the left, 60 from the right, 10 from the
+        // top and bottom.
+        let picture = RgbaImage::from_fn(200, 100, |x, y| if (20..140).contains(&x) && (10..90).contains(&y) { image::Rgba([20, 20, 20, 255]) } else { image::Rgba([250, 250, 250, 255]) });
+        assert_eq!(balanced(&picture, (0, 0, 200, 100)), Some((0, 0, 160, 100)));
+        assert_eq!(balanced(&picture, (0, 0, 160, 100)), None);
+        assert_eq!(balanced(&RgbaImage::from_pixel(50, 50, image::Rgba([1, 2, 3, 255])), (0, 0, 50, 50)), None);
+    }
 }

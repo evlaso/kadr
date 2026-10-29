@@ -9,6 +9,8 @@
 //! - `click <id> [window] [--at dx,dy]`: a click in its middle (or offset).
 //! - `drag <id|x,y> <dx,dy> [window]`: press on an element's middle (or a
 //!   point in the window), move by dx,dy and let go.
+//! - `scroll <id|x,y> <dy> [window]`: the wheel over an element's middle
+//!   (or a point), dy pixels down (negative: up).
 //! - `key <combo>… [--window id]`: keystrokes, as GPUI writes them
 //!   ("ctrl-z", "escape", "a").
 //! - `type <text> [--window id]`: text, one key per character.
@@ -318,7 +320,7 @@ pub fn handle(args: Vec<String>, reply: Stream, cx: &mut App) {
     let takes = match command.as_str() {
         "dump" | "state" | "windows" | "mem" => 0,
         "find" | "click" | "shot" => 1,
-        "drag" => 2,
+        "drag" | "scroll" => 2,
         _ => usize::MAX,
     };
     if words.len() > takes
@@ -390,6 +392,30 @@ pub fn handle(args: Vec<String>, reply: Stream, cx: &mut App) {
                 };
                 let result = match start {
                     Some(start) => drag(handle, start, by, cx).map(|_| json!({ "from": [f32::from(start.x), f32::from(start.y)], "by": [by.0, by.1] })),
+                    None => Err("not found".to_owned()),
+                };
+                answer(reply, result);
+            });
+        }
+        "scroll" => {
+            let (Some(over), Some(dy)) = (words.first().cloned(), words.get(1).and_then(|w| w.parse::<f32>().ok())) else {
+                return answer(reply, Err("dev scroll <id|x,y> <dy>".into()));
+            };
+            fresh_nodes(handle, cx, move |nodes, cx| {
+                let at = match pair(&over) {
+                    Some((x, y)) => Some(point(px(x), px(y))),
+                    None => nodes.iter().find(|n| n.id == over).map(|n| n.bounds.center()),
+                };
+                let result = match at {
+                    Some(position) => handle
+                        .update(cx, |_, window, cx| {
+                            let modifiers = Modifiers::default();
+                            window.dispatch_event(PlatformInput::MouseMove(gpui::MouseMoveEvent { position, pressed_button: None, modifiers }), cx);
+                            let delta = gpui::ScrollDelta::Pixels(point(px(0.), px(-dy)));
+                            window.dispatch_event(PlatformInput::ScrollWheel(gpui::ScrollWheelEvent { position, delta, modifiers, touch_phase: gpui::TouchPhase::Moved }), cx);
+                            json!({ "at": [f32::from(position.x), f32::from(position.y)], "dy": dy })
+                        })
+                        .map_err(|e| e.to_string()),
                     None => Err("not found".to_owned()),
                 };
                 answer(reply, result);

@@ -247,9 +247,11 @@ fn cases() -> Vec<(&'static str, (u32, u32), Doc, Frame)> {
             "frame_gradient",
             (480, 300),
             doc(vec![shape(Kind::Arrow(Default::default()), (140., 60.), (380., 220.), 6.)]),
-            Frame { backdrop: Backdrop::Gradient(0), padding: 0.08, radius: 0.02, shadow: 0.6, aspect: 0 },
+            Frame { backdrop: Backdrop::Gradient(0), padding: 0.08, radius: 0.02, shadow: 0.6, aspect: 0, ..Frame::default() },
         ),
-        ("frame_transparent", (480, 300), doc(Vec::new()), Frame { backdrop: Backdrop::Transparent, padding: 0.06, radius: 0.03, shadow: 0.5, aspect: 1 }),
+        ("frame_transparent", (480, 300), doc(Vec::new()), Frame { backdrop: Backdrop::Transparent, padding: 0.06, radius: 0.03, shadow: 0.5, aspect: 1, ..Frame::default() }),
+        // Flush with the bottom right corner, square there.
+        ("frame_aligned", (480, 300), doc(Vec::new()), Frame { backdrop: Backdrop::Gradient(0), padding: 0.1, radius: 0.04, shadow: 0.6, aspect: 3, align: 8 }),
         (
             // A 2× screenshot: everything twice as big.
             "hidpi_2x",
