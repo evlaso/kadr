@@ -449,6 +449,16 @@ enum CropMenu {
     Fill,
 }
 
+/// Where dropped pictures go: over the result, or joined to one side.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Beside {
+    Over,
+    Left,
+    Right,
+    Above,
+    Below,
+}
+
 /// A dropdown choice: its text, whether it's the current one, and what
 /// picking it does.
 type MenuPick = Rc<dyn Fn(&mut Editor, &mut Window, &mut Context<Editor>)>;
@@ -556,6 +566,11 @@ pub struct Editor {
     saved: Vec<Hsla>,
     /// The next click on the picture takes its colour.
     picking: bool,
+    /// Files dragged over the window: where they'd go.
+    dropping: Option<Beside>,
+    /// How far the middle of what's in view is from the picture's, in its
+    /// pixels: the result reaching past it on one side.
+    view_shift: (f32, f32),
     /// The size slider, 0..1.
     weight: f32,
     /// Boxes and ellipses are drawn solid.
@@ -805,6 +820,8 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 recent: colors.recent_colors.iter().map(|&c| crate::ui::from_rgba(c)).collect(),
                 saved: colors.saved_colors.iter().map(|&c| crate::ui::from_rgba(c)).collect(),
                 picking: false,
+                dropping: None,
+                view_shift: (0., 0.),
                 weight: WEIGHT,
                 fill: false,
                 hide: Hide::Pixelate,
@@ -1252,6 +1269,28 @@ impl Editor {
     /// everything drawn around it.
     fn extent(&self) -> (f32, f32, f32, f32) {
         kadr_raster::extent(&self.vm.doc, self.px, !self.frame.clips())
+    }
+
+    /// On a background with the result filled (pictures joined into one
+    /// card), the corners of a part of it at `(l, t, r, b)`, on screen:
+    /// rounded where they're the card's own, as Save rounds them. None
+    /// otherwise.
+    fn card_corners(&self, (l, t, r, b): (f32, f32, f32, f32)) -> Option<[f32; 4]> {
+        if !self.frame.on() || self.cropping.is_some() || self.vm.doc.fill.is_none() {
+            return None;
+        }
+        let (el, et, er, eb) = self.extent();
+        let radius = (er - el).max(eb - et) * self.scale() * self.frame.radius;
+        let [fl, ft, fr, fb] = self.frame.flush();
+        let [rtl, rtr, rbr, rbl] = self.frame.round_corners();
+        let at = |a: f32, b: f32| (a - b).abs() < 0.5;
+        let corner = |mine: bool, on: bool, a: bool, b: bool| if !mine { 0. } else if on { radius } else if a && b { BACKDROP_RADIUS } else { 0. };
+        Some([
+            corner(at(l, el) && at(t, et), rtl, fl, ft),
+            corner(at(r, er) && at(t, et), rtr, ft, fr),
+            corner(at(r, er) && at(b, eb), rbr, fr, fb),
+            corner(at(l, el) && at(b, eb), rbl, fb, fl),
+        ])
     }
 
     fn current_color(&self) -> Rgba {
@@ -1951,13 +1990,70 @@ impl Editor {
         }
     }
 
-    /// Files dropped on the editor: each image goes on as a picture.
-    fn drop_files(&mut self, paths: &gpui::ExternalPaths) {
+    /// Where files dropped at `pos` go: beside the result on the side
+    /// they're dropped past, or over it.
+    fn beside_at(&self, pos: Point<gpui::Pixels>) -> Beside {
+        let Some((x, y)) = self.to_image(pos, true) else { return Beside::Over };
+        let (l, t, r, b) = self.crop_or_picture();
+        // The way it's furthest out wins at a corner.
+        let out = [(l - x, Beside::Left), (x - r, Beside::Right), (t - y, Beside::Above), (y - b, Beside::Below)];
+        out.into_iter().filter(|o| o.0 > 0.).max_by(|a, c| a.0.total_cmp(&c.0)).map_or(Beside::Over, |o| o.1)
+    }
+
+    /// Files dropped on the editor: each image goes beside the result on
+    /// the side it's dropped past, one after another, or over it.
+    fn drop_files(&mut self, paths: &gpui::ExternalPaths, side: Beside) {
         for path in paths.paths() {
             if let Some(picture) = std::fs::read(path).ok().and_then(|bytes| decode_picture(&bytes)) {
-                self.add_picture(picture);
+                match side {
+                    Beside::Over => self.add_picture(picture),
+                    side => self.add_beside(picture, side),
+                }
             }
         }
+    }
+
+    /// A picture joined to the result on one side, as tall (or wide) as it,
+    /// the crop grown to take it in, and selected.
+    fn add_beside(&mut self, picture: Arc<RgbaImage>, side: Beside) {
+        let (pw, ph) = (picture.width().max(1) as f32, picture.height().max(1) as f32);
+        let (l, t, r, b) = self.crop_or_picture();
+        let (cw, ch) = (r - l, b - t);
+        // Only as far as a crop may reach past the picture.
+        let reach = work_margin_at(self.px, MAX_REACH);
+        let (w, h) = (self.px.0 as f32, self.px.1 as f32);
+        let ((x0, y0), (x1, y1), crop) = match side {
+            Beside::Left | Beside::Right => {
+                let room = if side == Beside::Left { l + reach } else { w + reach - r };
+                let k = (ch / ph).min(room / pw);
+                let (nw, nh) = ((pw * k).round(), (ph * k).round());
+                let x = if side == Beside::Left { l - nw } else { r };
+                let y = t + ((ch - nh) / 2.).round();
+                ((x, y), (x + nw, y + nh), if side == Beside::Left { (x, t, r, b) } else { (l, t, x + nw, b) })
+            }
+            _ => {
+                let room = if side == Beside::Above { t + reach } else { h + reach - b };
+                let k = (cw / pw).min(room / ph);
+                let (nw, nh) = ((pw * k).round(), (ph * k).round());
+                let y = if side == Beside::Above { t - nh } else { b };
+                let x = l + ((cw - nw) / 2.).round();
+                ((x, y), (x + nw, y + nh), if side == Beside::Above { (l, y, r, b) } else { (l, t, r, y + nh) })
+            }
+        };
+        if x1 - x0 < 1. || y1 - y0 < 1. {
+            return;
+        }
+        self.checkpoint();
+        self.vm.doc.shapes.push(Shape { kind: Kind::Picture(picture), a: (x0, y0), b: (x1, y1), color: self.current_color(), size: 0., filled: false, text: TextStyle::Plain, bend: None });
+        self.vm.doc.crop = Some(((crop.0, crop.1), (crop.2, crop.3)));
+        // One card on a background, rounded and shadowed as a whole; white
+        // where a narrower picture leaves room.
+        if self.vm.doc.fill.is_none() {
+            self.vm.doc.fill = Some([255, 255, 255, 255]);
+        }
+        self.selected = Some(self.vm.doc.shapes.len() - 1);
+        self.apply_crop();
+        self.tool = Tool::Select;
     }
 
     /// Text look; restyles the selected text too.
@@ -3840,7 +3936,20 @@ impl Editor {
             Kind::Picture(picture) => {
                 let patch = self.shown_picture(picture)?;
                 let (l, t, r, b) = rect(shape.a, shape.b);
-                Some(img(patch.clone()).absolute().left(px(l * s + off)).top(px(t * s + off)).w(px((r - l) * s)).h(px((b - t) * s)).object_fit(ObjectFit::Fill))
+                let [tl, tr, br, bl] = self.card_corners((l, t, r, b)).unwrap_or_default();
+                Some(
+                    img(patch.clone())
+                        .absolute()
+                        .left(px(l * s + off))
+                        .top(px(t * s + off))
+                        .w(px((r - l) * s))
+                        .h(px((b - t) * s))
+                        .object_fit(ObjectFit::Fill)
+                        .rounded_tl(px(tl))
+                        .rounded_tr(px(tr))
+                        .rounded_br(px(br))
+                        .rounded_bl(px(bl)),
+                )
             }
             _ => None,
         });
@@ -4211,18 +4320,39 @@ impl Editor {
         let selection = self.selected.filter(|_| self.editing.is_none()).and_then(|i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.knobs(s), sh.band_pad(s), matches!(sh.kind, Kind::Line | Kind::Arrow(_))));
         let hovered_text = self.hover_text.filter(|&i| self.selected != Some(i) || self.editing.is_some()).filter(|_| self.drag.is_none()).and_then(|i| self.vm.doc.shapes.get(i)).map(|sh| (sh.bounds(), sh.band_pad(s)));
         let accent = cx.theme().colors().text_accent;
+        // Where dragged files would land: a band along that side, or the
+        // whole result.
+        let landing = self.dropping.map(|side| {
+            let (l, t, r, b) = self.crop_or_picture();
+            let k = (r - l).min(b - t) * 0.35;
+            match side {
+                Beside::Over => (l, t, r, b),
+                Beside::Left => (l - k, t, l, b),
+                Beside::Right => (r, t, r + k, b),
+                Beside::Above => (l, t - k, r, t),
+                Beside::Below => (l, b, r, b + k),
+            }
+        });
         let overlay = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let o = bounds.origin;
                 let pt = |p: P| point(o.x + px(p.0 * s + off), o.y + px(p.1 * s + off));
                 let area = |l: f32, t: f32, r: f32, b: f32| Bounds::from_corners(pt((l, t)), pt((r, b)));
+                if let Some((l, t, r, b)) = landing {
+                    let mut tint = accent;
+                    tint.alpha = 0.22;
+                    window.paint_quad(crate::ui::quad(area(l, t, r, b), px(6.), tint, px(2.), accent, gpui::BorderStyle::Solid));
+                }
                 if let Some((a, b)) = crop {
                     let (l, t, r, bt) = rect(a, b);
                     // The whole work area outside the crop, in image pixels.
                     let (w, h) = (f32::from(bounds.size.width) / s - m, f32::from(bounds.size.height) / s - m);
                     let shade = rgba(0x000000a6);
                     for (l0, t0, r0, b0) in [(-m, -m, w, t), (-m, bt, w, h), (-m, t, l, bt), (r, t, w, bt)] {
+                        // Out of the crop mode, only the picture's cut-off
+                        // parts: past it there's nothing to shade.
+                        let (l0, t0, r0, b0) = if cropping { (l0, t0, r0, b0) } else { (l0.max(0.), t0.max(0.), r0.min(pw), b0.min(ph)) };
                         if r0 > l0 && b0 > t0 {
                             window.paint_quad(fill(area(l0, t0, r0, b0), shade));
                         }
@@ -4294,7 +4424,9 @@ impl Editor {
         let radius = if framed { self.disp.0.max(self.disp.1) * self.frame.radius } else { 6. };
         // Square where the picture is flush with the backdrop's edge; in
         // the backdrop's own corner, as round as the preview's.
-        let [tl, tr, br, bl] = if framed {
+        let [tl, tr, br, bl] = if let Some(card) = self.card_corners((0., 0., self.px.0 as f32, self.px.1 as f32)) {
+            card.map(px)
+        } else if framed {
             let [l, t, r, b] = self.frame.flush();
             let corner = |on: bool, a: bool, b: bool| px(if on { radius } else if a && b { BACKDROP_RADIUS } else { 0. });
             let [rtl, rtr, rbr, rbl] = self.frame.round_corners();
@@ -4303,6 +4435,18 @@ impl Editor {
             [px(radius); 4]
         };
         let corners = gpui::Corners { top_left: tl, top_right: tr, bottom_right: br, bottom_left: bl };
+        let card_shadow = {
+            let big = self.disp.0.max(self.disp.1);
+            vec![BoxShadow {
+                color: gpui::hsla(0., 0., 0., 0.6 * self.frame.shadow).into(),
+                offset: point(px(0.), px(big * 0.012)),
+                blur_radius: px(big * 0.035),
+                spread_radius: px(0.),
+                inset: false,
+            }]
+        };
+        let fill_corners = self.card_corners((el, et, er, eb));
+        let card = fill_corners.is_some();
         let round = move |d: gpui::Div| d.rounded_tl(tl).rounded_tr(tr).rounded_br(br).rounded_bl(bl);
         let picture = div()
             .absolute()
@@ -4313,16 +4457,8 @@ impl Editor {
             .map(round)
             .overflow_hidden()
             .when(!framed && !clear_edge, |d| d.shadow(kit::shadow()))
-            .when(framed && self.frame.shadow > 0., |d| {
-                let big = self.disp.0.max(self.disp.1);
-                d.shadow(vec![BoxShadow {
-                    color: gpui::hsla(0., 0., 0., 0.6 * self.frame.shadow).into(),
-                    offset: point(px(0.), px(big * 0.012)),
-                    blur_radius: px(big * 0.035),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
-            })
+            // A card's shadow is the whole card's, under the fill.
+            .when(framed && !card && self.frame.shadow > 0., |d| d.shadow(card_shadow.clone()))
             .child(match self.picture.clone() {
                 // The padded picture, painted past the bounds by its rim so
                 // only the picture itself shows, rounded.
@@ -4389,7 +4525,10 @@ impl Editor {
                         d.left(px(el * s + off)).top(px(et * s + off)).w(px((er - el) * s)).h(px((eb - et) * s))
                     }
                 })
-                .when(framed, round)
+                .map(|d| match fill_corners {
+                    Some([a, b, c, e]) => d.rounded_tl(px(a)).rounded_tr(px(b)).rounded_br(px(c)).rounded_bl(px(e)).when(self.frame.shadow > 0., |d| d.shadow(card_shadow.clone())),
+                    None => d.when(framed, round),
+                })
                 .bg(color)
         });
         div()
@@ -4422,6 +4561,10 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A drag of files that left the window (or was let go elsewhere).
+        if self.dropping.is_some() && !cx.has_active_drag() {
+            self.dropping = None;
+        }
         // Freed a frame after they're replaced, like the strokes' pictures.
         for old in std::mem::take(&mut self.leaving_pictures) {
             let _ = window.drop_image(old);
@@ -4442,7 +4585,15 @@ impl Render for Editor {
         let panel = if self.panel { PANEL } else { 0. };
         // The same layout in and out of the crop mode, so the picture keeps
         // its size there.
-        let pad_share = self.resting_margin() / self.px.0.max(self.px.1).max(1) as f32;
+        // What's in view: the picture and the result, wherever it reaches
+        // past it (pictures joined beside it, a crop pulled out), centred.
+        let (pw, ph) = (self.px.0.max(1) as f32, self.px.1.max(1) as f32);
+        let (el, et, er, eb) = self.extent();
+        let (ul, ut, ur, ub) = (el.min(0.), et.min(0.), er.max(pw), eb.max(ph));
+        let d = self.natural.0 / pw;
+        let shown = ((ur - ul) * d, (ub - ut) * d);
+        self.view_shift = ((ul + ur - pw) / 2., (ut + ub - ph) / 2.);
+        let pad_share = work_margin_at(self.px, WORK_PAD) / pw.max(ph);
         let box_of = |frame: &Frame, (w, h): (f32, f32)| {
             if frame.on() {
                 frame.layout(w, h).0
@@ -4451,7 +4602,7 @@ impl Render for Editor {
                 (w + 2. * pad, h + 2. * pad)
             }
         };
-        let full = box_of(&self.frame, self.natural);
+        let full = box_of(&self.frame, shown);
         let room = (vw - 48. - panel, self.stage_h.get() - 48.);
         let k = (room.0 / full.0).min(room.1 / full.1).min(1.);
         let fit = (self.natural.0 * k, self.natural.1 * k);
@@ -4497,7 +4648,8 @@ impl Render for Editor {
             let (_, _, w, h) = self.stage_box.get();
             let (s, m) = (self.disp.0 / self.px.0.max(1) as f32, self.margin());
             let off = m * s;
-            let at = ((w - self.disp.0) / 2. - off + self.view_pan.0, (h - self.disp.1) / 2. - off + self.view_pan.1);
+            let shift = (self.view_shift.0 * s, self.view_shift.1 * s);
+            let at = ((w - self.disp.0) / 2. - off - shift.0 + self.view_pan.0, (h - self.disp.1) / 2. - off - shift.1 + self.view_pan.1);
             // A crop pulled past the stage takes the view along, so its edge
             // stays in sight.
             self.crop_shift = match (&self.drag, self.vm.doc.crop) {
@@ -4597,8 +4749,17 @@ impl Render for Editor {
                     cx.notify();
                 }
             }))
-            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
-                this.drop_files(paths);
+            .on_drag_move(cx.listener(|this, e: &gpui::DragMoveEvent<gpui::ExternalPaths>, _, cx| {
+                let side = Some(this.beside_at(e.event.position));
+                if this.dropping != side {
+                    this.dropping = side;
+                    cx.notify();
+                }
+            }))
+            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                let side = this.beside_at(window.mouse_position());
+                this.dropping = None;
+                this.drop_files(paths, side);
                 cx.notify();
             }))
             // The pointer stays with this surface while the button is held.

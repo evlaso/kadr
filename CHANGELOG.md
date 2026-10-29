@@ -6,6 +6,7 @@ What changed in each kadr release, for the people who use it. The format follows
 
 ### Added
 - The editor's background places the picture anywhere on a 3×3 grid: off the middle it sits flush with that edge or corner, square there. "Even margins" cuts a screenshot's plain margins to match, so what's in it sits in the middle (one undo step).
+- Pictures dropped on the editor past the screenshot's edge join it on that side, as tall (or wide) as it, and the result grows to take them in; while you drag, the editor shows where they'll go. Dropped on the screenshot, a picture still goes on top. On a background, the joined pictures make one card with rounded corners and one shadow.
 
 - Seven text styles in the editor, in a dropdown that shows each in the current colour: plain, on a plate, outlined, with a shadow, highlighted like with a marker, in a pill, and a framed label.
 - Arrow styles in the editor: a filled head, an open head, a head at both ends, or tapered from a thin tail into the head. Any of them bends, and a selected arrow takes another style.
@@ -23,6 +24,7 @@ What changed in each kadr release, for the people who use it. The format follows
 
 - In the editor, a selected shape (or a text being typed) has the options only its kind has (an arrow's or a text's style, a box's fill, how an area is hidden, a pointer's look) in a bar floating under it; the colour and size stay in the top bar's corner. Before drawing, the top bar shows none of them: an arrow, a box, an ellipse or a hidden area stays selected once drawn, so its bar shows right away, and the next shape takes what was picked last. Picking another tool lets go of the selected shape.
 - The text tool types into a text it's clicked on, which it outlines when the pointer is over it, instead of starting another; a drag still moves it.
+- The editor keeps the whole result in view and in the middle when it reaches past the screenshot (joined pictures, a crop pulled out), and shades only the cut-off parts of the screenshot, not the empty room around it.
 
 ## [0.3.0-alpha.2] - 2026-10-26
 

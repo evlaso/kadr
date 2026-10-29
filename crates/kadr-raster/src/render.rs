@@ -113,7 +113,10 @@ fn compose(src: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<RgbaImage> {
     if frame.on() {
         // The picture gets the rounded corners and the shadow; what's drawn
         // past its edges sits on the backdrop as it is.
-        let drawn = rasterize(&RgbaImage::new(ew, eh), &shapes)?;
+        // On a filled canvas, pictures joined to it are part of the card,
+        // cut by its rounded edge like the rest.
+        let past: Vec<Shape> = shapes.iter().filter(|sh| doc.fill.is_none() || !matches!(sh.kind, Kind::Picture(_))).cloned().collect();
+        let drawn = rasterize(&RgbaImage::new(ew, eh), &past)?;
         let (w, h) = (src.width() as f32, src.height() as f32);
         // A filled canvas is all picture: it gets the corners and shadow.
         let inner = if doc.fill.is_some() { (0., 0., ew as f32, eh as f32) } else { ((-l).max(0.), (-t).max(0.), (w - l).min(ew as f32), (h - t).min(eh as f32)) };
@@ -333,6 +336,27 @@ mod tests {
         let shades: std::collections::HashSet<u8> = once.pixels().map(|p| p.0[0]).collect();
         assert!(shades.len() > 4, "blocks of a flat grey differ: {shades:?}");
         assert!(once.pixels().all(|p| p.0[0].abs_diff(128) <= 14 && p.0[0] == p.0[1] && p.0[1] == p.0[2]), "only lightness wavers, a little");
+    }
+
+    /// A picture joined beside the screenshot (the crop grown over it, the
+    /// rest filled) is part of one card on the background: its far corner is
+    /// rounded off like the screenshot's own.
+    #[test]
+    fn a_joined_picture_is_rounded_with_the_card() {
+        use kadr_core::document::{Backdrop, Frame};
+        let base = RgbaImage::from_pixel(200, 100, image::Rgba([250, 250, 250, 255]));
+        let joined = std::sync::Arc::new(RgbaImage::from_pixel(100, 100, image::Rgba([0, 160, 0, 255])));
+        let picture = Shape { kind: Kind::Picture(joined), a: (200., 0.), b: (300., 100.), color: kadr_core::color::Rgba::WHITE, size: 0., filled: false, text: TextStyle::Plain, bend: None };
+        let doc = Doc { shapes: vec![picture], crop: Some(((0., 0.), (300., 100.))), fill: Some([255, 255, 255, 255]), ..Doc::default() };
+        let frame = Frame { backdrop: Backdrop::Gradient(5), padding: 0.1, radius: 0.05, shadow: 0., ..Frame::default() };
+        let out = render(&base, &doc, &frame).expect("render");
+        // 30 px of padding all round; the card's top right corner.
+        let ((ow, _), (left, top)) = frame.layout(300., 100.);
+        assert_eq!(out.width(), ow as u32);
+        let corner = out.get_pixel((left + 299.) as u32, top as u32).0;
+        assert_eq!(corner, [0, 0, 0, 255], "the backdrop (black) shows past the rounded corner");
+        let inside = out.get_pixel((left + 250.) as u32, (top + 50.) as u32).0;
+        assert_eq!(inside, [0, 160, 0, 255]);
     }
 
     #[test]

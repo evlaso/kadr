@@ -11,6 +11,8 @@
 //!   point in the window), move by dx,dy and let go.
 //! - `scroll <id|x,y> <dy> [window]`: the wheel over an element's middle
 //!   (or a point), dy pixels down (negative: up).
+//! - `drop <x,y> <path>… [hover]`: files dragged in from outside and let
+//!   go at x,y; with `hover`, held there (and left again).
 //! - `key <combo>… [--window id]`: keystrokes, as GPUI writes them
 //!   ("ctrl-z", "escape", "a").
 //! - `type <text> [--window id]`: text, one key per character.
@@ -420,6 +422,30 @@ pub fn handle(args: Vec<String>, reply: Stream, cx: &mut App) {
                 };
                 answer(reply, result);
             });
+        }
+        "drop" => {
+            let hover = words.last().is_some_and(|w| w == "hover");
+            if hover {
+                words.pop();
+            }
+            let (Some(position), paths) = (words.first().and_then(|w| pair(w)).map(|(x, y)| point(px(x), px(y))), words[1.min(words.len())..].to_vec()) else {
+                return answer(reply, Err("dev drop <x,y> <path>… [hover]".into()));
+            };
+            if paths.is_empty() {
+                return answer(reply, Err("dev drop <x,y> <path>… [hover]".into()));
+            }
+            let result = handle
+                .update(cx, |_, window, cx| {
+                    let paths = gpui::ExternalPaths(paths.iter().map(std::path::PathBuf::from).collect());
+                    window.dispatch_event(PlatformInput::FileDrop(gpui::FileDropEvent::Entered { position, paths }), cx);
+                    window.dispatch_event(PlatformInput::FileDrop(gpui::FileDropEvent::Pending { position }), cx);
+                    if !hover {
+                        window.dispatch_event(PlatformInput::FileDrop(gpui::FileDropEvent::Submit { position }), cx);
+                    }
+                    json!({ "at": [f32::from(position.x), f32::from(position.y)], "dropped": !hover })
+                })
+                .map_err(|e| e.to_string());
+            answer(reply, result);
         }
         "key" | "type" => {
             let strokes: Result<Vec<gpui::Keystroke>, String> = if command == "key" {

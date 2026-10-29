@@ -598,6 +598,40 @@ fn the_background_evens_margins_and_aligns() {
     assert!(s.dev(&["state"])["view"]["crop"].is_null());
 }
 
+/// A picture dropped past the screenshot's right edge joins it there, as
+/// tall as it, as one undo step, and Save writes both side by side.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_dropped_picture_joins_the_screenshot() {
+    let s = Session::start();
+    let path = s.dir.join("left.png");
+    RgbaImage::from_pixel(800, 500, image::Rgba([240, 240, 245, 255])).save(&path).expect("fixture");
+    let other = s.dir.join("right.png");
+    RgbaImage::from_pixel(200, 250, image::Rgba([30, 150, 90, 255])).save(&other).expect("fixture");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    let window = s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("the picture never loaded");
+    // The window's right edge, past the picture, at its middle height.
+    let (w, h) = (window["bounds"][2].as_f64().unwrap(), window["bounds"][3].as_f64().unwrap());
+    let at = format!("{},{}", (w - 30.) as i32, (h / 2.) as i32);
+    s.dev(&["drop", &at, other.to_str().unwrap()]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["shapes"][0]["kind"], "picture", "{state}");
+    assert_eq!(state["view"]["shapes"][0]["a"], serde_json::json!([800.0, 0.0]), "{state}");
+    assert_eq!(state["view"]["shapes"][0]["b"], serde_json::json!([1200.0, 500.0]), "{state}");
+    assert_eq!(state["view"]["crop"], serde_json::json!([[0.0, 0.0], [1200.0, 500.0]]), "{state}");
+    s.dev(&["key", "ctrl-z"]);
+    let state = s.dev(&["state"]);
+    assert!(state["view"]["crop"].is_null() && state["view"]["shapes"].as_array().is_some_and(Vec::is_empty), "{state}");
+    s.dev(&["key", "ctrl-shift-z"]);
+    assert_eq!(s.dev(&["state"])["view"]["shapes"].as_array().map(Vec::len), Some(1));
+    s.dev(&["key", "ctrl-s"]);
+    let saved = wait(Duration::from_secs(5), || image::open(&path).ok().map(|i| i.to_rgba8()).filter(|i| i.width() == 1200)).expect("not saved side by side");
+    assert_eq!(saved.height(), 500);
+    assert_eq!(saved.get_pixel(100, 250).0, [240, 240, 245, 255]);
+    assert_eq!(saved.get_pixel(1000, 250).0, [30, 150, 90, 255]);
+}
+
 /// Typing a text with the system's keys (SPEC 3.10): Unicode in, a word
 /// out with Ctrl+Backspace, Shift+Left selecting and typing over it, all
 /// through the input handler the input method uses too.
