@@ -15,16 +15,18 @@ struct Fields {
     crop: Option<(P, P)>,
     view: Orientation,
     scale: f32,
+    export_density: Option<f64>,
     fill: Option<[u8; 4]>,
 }
 
 impl Fields {
     fn of(doc: &Doc) -> Fields {
-        Fields { crop: doc.crop, view: doc.view, scale: doc.scale, fill: doc.fill }
+        Fields { crop: doc.crop, view: doc.view, scale: doc.scale, export_density: doc.export_density, fill: doc.fill }
     }
 
     fn put(&self, doc: &mut Doc) {
         (doc.crop, doc.view, doc.scale, doc.fill) = (self.crop, self.view, self.scale, self.fill);
+        doc.export_density = self.export_density;
     }
 }
 
@@ -176,6 +178,7 @@ mod tests {
             }),
             Box::new(|d| d.shapes.insert(0, shape(9.))),
             Box::new(|d| d.view = d.view.turned()),
+            Box::new(|d| d.export_density = Some(2.)),
             Box::new(|d| d.shapes.clear()),
         ]
     }

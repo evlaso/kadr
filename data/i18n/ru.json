@@ -97,6 +97,8 @@
  "editor.recent_colors": "Последние",
  "editor.saved_colors": "Свои",
  "editor.drag": "Перетащи",
+ "editor.export_original": "Исходный",
+ "editor.export_scale_tip": "Размер экспорта: исходные пиксели, 1× по размеру макета или 2×. Для сохранения, копирования и перетаскивания.",
  "editor.drag_annotated_image_into_chat": "Перетащите в чат или папку",
  "editor.cursor": "Курсор",
  "editor.cursor_arrow": "Стрелка",

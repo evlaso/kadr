@@ -479,6 +479,55 @@ fn the_pipette_takes_a_colour_from_the_picture() {
     assert!(settings.contains(r##"recent_colors = ["#2a9d8f"]"##) && settings.contains(r##"saved_colors = ["#2a9d8f"]"##), "{settings}");
 }
 
+/// Export size is a saved choice: doubling an ordinary image writes twice
+/// its pixels, reopening keeps the editable source and the export choice.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_editor_exports_at_two_times_and_keeps_the_choice() {
+    let s = Session::start();
+    let config = s.var("XDG_CONFIG_HOME").join("kadr");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("settings.toml"), "language = \"ru\"\n").unwrap();
+    let path = s.dir.join("scale.png");
+    RgbaImage::from_pixel(400, 200, image::Rgba([30, 140, 90, 255])).save(&path).expect("fixture");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("picture never loaded");
+    let resized = s.cmd("hyprctl").args(["eval", "hl.dispatch(hl.dsp.window.resize({ x = 640, y = 420, relative = false }))"]).output().unwrap().status.success();
+    if !resized {
+        assert!(s.cmd("hyprctl").args(["dispatch", "resizeactive", "exact 640 420"]).status().unwrap().success());
+    }
+    s.dev(&["click", "dropdown-export-scale"]);
+    s.dev(&["click", "menu-row-2"]);
+    assert_eq!(s.dev(&["state"])["view"]["export_density"], 2.);
+    s.dev(&["key", "ctrl-z"]);
+    assert!(s.dev(&["state"])["view"]["export_density"].is_null());
+    s.dev(&["key", "ctrl-shift-z"]);
+    assert_eq!(s.dev(&["state"])["view"]["export_density"], 2.);
+    // Keep a screenshot of the Russian footer at the minimum window size.
+    if let Ok(out) = std::env::var("KADR_TEST_EXPORT_SCREENSHOT") {
+        s.grab(None).save(out).expect("export screenshot");
+    }
+    s.dev(&["key", "ctrl-s"]);
+    wait(Duration::from_secs(5), || image::open(&path).ok().filter(|i| i.width() == 800 && i.height() == 400)).expect("not saved at 2x");
+    wait(Duration::from_secs(5), || {
+        let dirs = std::fs::read_dir(s.var("XDG_DATA_HOME").join("kadr/edits")).ok()?;
+        dirs.flatten().find_map(|d| {
+            let v: Value = serde_json::from_slice(&std::fs::read(d.path().join("project.json")).ok()?).ok()?;
+            (v["export_density"] == 2.).then_some(())
+        })
+    }).expect("export choice not kept in project");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    let state = wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("picture never reloaded");
+    assert_eq!(state["view"]["export_density"], 2., "{state}");
+    assert_eq!(state["view"]["image"], serde_json::json!([400, 200]), "editable source was resized: {state}");
+    s.dev(&["click", "dropdown-export-scale"]);
+    s.dev(&["click", "menu-row-1"]);
+    s.dev(&["key", "ctrl-s"]);
+    wait(Duration::from_secs(5), || image::open(&path).ok().filter(|i| i.width() == 400 && i.height() == 200)).expect("not saved at 1x");
+}
+
 /// A black box hides what's under it in the saved file and in the project
 /// kept to edit it again, so taking the box away there shows black.
 #[test]

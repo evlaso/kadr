@@ -114,6 +114,7 @@ pub fn to_json(doc: &Doc, frame: &Frame, picture_name: &dyn Fn(usize) -> String)
         "crop": doc.crop.map(|(a, b)| json!([[a.0, a.1], [b.0, b.1]])),
         "view": { "turns": doc.view.turns, "mirrored": doc.view.mirrored },
         "scale": doc.scale,
+        "export_density": doc.export_density,
         "fill": doc.fill,
         "shapes": shapes,
     })
@@ -126,7 +127,8 @@ pub fn from_json(v: &Value, picture: &dyn Fn(&str) -> Option<RgbaImage>) -> Opti
     let view = Orientation { turns: v["view"]["turns"].as_u64().unwrap_or(0) as u8 % 4, mirrored: v["view"]["mirrored"].as_bool().unwrap_or(false) };
     let scale = v["scale"].as_f64().map_or(1., |s| (s as f32).clamp(0.05, 1.));
     let fill = v["fill"].as_array().filter(|c| c.len() == 4).map(|c| [0, 1, 2, 3].map(|i| c[i].as_u64().unwrap_or(0).min(255) as u8));
-    Some((Doc { shapes, crop, view, scale, fill }, Frame::from_json(&v["frame"])))
+    let export_density = v["export_density"].as_f64().filter(|d| *d == 1. || *d == 2.);
+    Some((Doc { shapes, crop, view, scale, export_density, fill }, Frame::from_json(&v["frame"])))
 }
 
 /// One folder per edited file.
@@ -182,7 +184,7 @@ pub fn load_unpacked(dir: &Path) -> Option<Restored> {
 pub fn save(path: &Path, output: &[u8], base: impl FnOnce() -> std::io::Result<Vec<u8>>, doc: &Doc, frame: &Frame) -> std::io::Result<()> {
     let dir = dir_for(path);
     let _ = std::fs::remove_dir_all(&dir);
-    if doc.shapes.is_empty() && doc.crop.is_none() && doc.view.is_upright() && doc.scale == 1. && !frame.on() {
+    if doc.shapes.is_empty() && doc.crop.is_none() && doc.view.is_upright() && doc.scale == 1. && doc.export_density.is_none() && !frame.on() {
         return Ok(());
     }
     write_dir(&dir, &base()?, doc, frame, json!({ "output": path.display().to_string(), "output_hash": format!("{:016x}", fnv(output)) })).map(|_| ())
@@ -284,12 +286,13 @@ mod tests {
     #[test]
     fn a_drawing_round_trips_with_its_pictures() {
         let picture = Arc::new(RgbaImage::from_pixel(3, 2, image::Rgba([1, 2, 3, 255])));
-        let mut doc = Doc { crop: Some(((0., 0.), (10., 10.))), view: Orientation { turns: 3, mirrored: true }, scale: 0.5, fill: Some([1, 2, 3, 4]), ..Doc::default() };
+        let mut doc = Doc { crop: Some(((0., 0.), (10., 10.))), view: Orientation { turns: 3, mirrored: true }, scale: 0.5, export_density: Some(2.), fill: Some([1, 2, 3, 4]), ..Doc::default() };
         doc.shapes.push(Shape { kind: Kind::Picture(picture.clone()), a: (1., 1.), b: (4., 3.), color: Rgba::WHITE, size: 1., filled: false, text: TextStyle::Plain, bend: None });
         let v = to_json(&doc, &Frame::default(), &|i| format!("picture-{i}.png"));
         assert_eq!(v["shapes"][0]["picture"], "picture-0.png");
         let (back, _) = from_json(&v, &|name| (name == "picture-0.png").then(|| (*picture).clone())).unwrap();
         assert_eq!((back.crop, back.view, back.scale, back.fill), (doc.crop, doc.view, doc.scale, doc.fill));
+        assert_eq!(back.export_density, Some(2.));
         assert!(matches!(&back.shapes[0].kind, Kind::Picture(p) if p.dimensions() == (3, 2)));
     }
 

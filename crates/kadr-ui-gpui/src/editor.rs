@@ -444,6 +444,7 @@ enum CropMenu {
     Actions,
     Aspect,
     Scale,
+    ExportScale,
     Zoom,
     /// What fills a crop past the picture.
     Fill,
@@ -2238,33 +2239,28 @@ impl Editor {
         if !copy {
             self.card_on_close = false;
         }
-        let (original, density) = (self.original.clone(), self.density);
+        let (original, density, export_density) = (self.original.clone(), self.density, self.vm.doc.export_density);
         let bundle = self.bundle.clone();
         window.remove_window();
         let hold = kit::hold(cx);
         cx.spawn(async move |_, cx| {
             let _hold = hold;
             let (drawn, framed) = (doc.clone(), frame.clone());
-            // The result keeps the original's density, less the image size.
-            let shrunk = density.map(|d| d * drawn.scale.min(1.) as f64);
             // Saved as its name says (a copy is always PNG); the project
             // keeps a PNG of the result either way.
             let format = if copy { kadr_raster::Format::Png } else { kadr_raster::Format::of(&path) };
             let rendered = cx
                 .background_executor()
                 .spawn(async move {
-                    let picture = kadr_raster::render(&src, &drawn, &framed)?;
+                    let (picture, output_density) = export_picture(&src, &drawn, &framed, density, export_density)?;
                     let png = kadr_raster::encode(&picture, kadr_raster::Format::Png)?;
+                    let png = match output_density { Some(d) => cards::with_density(png, d), None => png };
                     let file = if format == kadr_raster::Format::Png { None } else { Some(kadr_raster::encode(&picture, format)?) };
                     Some((png, file))
                 })
                 .await;
             let Some((png, file)) = rendered else {
                 return util::notify(t("common.couldnt_save"), &path.display().to_string());
-            };
-            let png = match shrunk {
-                Some(d) => cards::with_density(png, d),
-                None => png,
             };
             let file = file.unwrap_or_else(|| png.clone());
             match copy {
@@ -3084,13 +3080,23 @@ impl Editor {
         self.crop_dropdown(CropMenu::Zoom, percent(self.disp.0 / self.real.0), t("editor.zoom"), zooms, true, cx)
     }
 
+    /// Export density, independent of the crop mode's image resize.
+    fn export_scale_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let choices = [(None, t("editor.export_original").to_owned()), (Some(1.), "1×".into()), (Some(2.), "2×".into())];
+        let label = choices.iter().find(|(d, _)| *d == self.vm.doc.export_density).map(|(_, label)| label.clone()).unwrap_or_default();
+        let items = choices.into_iter().map(|(density, label)| {
+            (label, density == self.vm.doc.export_density, Rc::new(move |this: &mut Editor, _: &mut Window, _: &mut Context<Editor>| { this.checkpoint(); this.vm.doc.export_density = density; }) as MenuPick)
+        }).collect();
+        self.crop_dropdown(CropMenu::ExportScale, label, t("editor.export_scale_tip"), items, true, cx)
+    }
+
     /// The bottom bar.
     fn render_footer(&self, width: f32, cx: &mut Context<Self>) -> AnyElement {
         if self.cropping.is_some() {
             return self.render_crop_footer(width, cx);
         }
         // Drag the annotated picture out, rendered at the moment the drag starts.
-        let drag_state = self.source.clone().map(|src| (src, self.vm.doc.clone(), self.frame.clone(), self.path.clone()));
+        let drag_state = self.source.clone().map(|src| (src, self.vm.doc.clone(), self.frame.clone(), self.path.clone(), self.density, self.vm.doc.export_density));
         let drag_out = div()
             .id("drag-out")
             .flex()
@@ -3109,11 +3115,13 @@ impl Editor {
             .tip(Tooltip::text(t("editor.drag_annotated_image_into_chat")))
             .on_drag(DragOut, |_: &DragOut, _, _, cx| cx.new(|_| DragPreview))
             .external_drag_payload(move |_: &DragOut, _, _| {
-                let (src, doc, frame, path) = drag_state.as_ref()?;
-                let png = kadr_raster::render_png(src, doc, frame)?;
+                let (src, doc, frame, path, density, export_density) = drag_state.as_ref()?;
+                let (picture, density) = export_picture(src, doc, frame, *density, *export_density)?;
+                let png = kadr_raster::encode(&picture, kadr_raster::Format::Png)?;
+                let png = match density { Some(d) => cards::with_density(png, d), None => png };
                 let dir = util::runtime_dir().join("kadr-drag");
                 let _ = std::fs::create_dir_all(&dir);
-                let out = dir.join(path.file_name()?);
+                let out = dir.join(path.file_name()?).with_extension("png");
                 std::fs::write(&out, png).ok()?;
                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new([(out, false)])))
             });
@@ -3181,6 +3189,7 @@ impl Editor {
         // Save as a quieter button before Save (a project has its own above).
         let save = h_flex()
             .gap_1()
+            .child(self.export_scale_menu(cx))
             .child(
                 Button::new("save-as", t("editor.save_as"))
                     .style(ButtonStyle::Filled)
@@ -3269,11 +3278,14 @@ impl Editor {
             .into_iter()
             .enumerate()
             .map(|(i, (text, on, pick))| {
+                let id: gpui::ElementId = SharedString::from(format!("menu-row-{i}")).into();
+                let probe = crate::dev::on().then(|| crate::dev::probe(&id, "menu-item", text.clone(), false, on));
                 let icon = icons.next().flatten();
                 let with_icon = icon.is_some();
                 let check = || Icon::new(IconName::Check).size(IconSize::XSmall);
                 h_flex()
-                    .id(SharedString::from(format!("menu-row-{i}")))
+                    .id(id)
+                    .relative()
                     .w_full()
                     .gap_1p5()
                     .px_2()
@@ -3286,6 +3298,7 @@ impl Editor {
                     .children(icon.map(|icon| icon.size(IconSize::Small)))
                     .child(Label::new(text).size(LabelSize::Small))
                     .when(with_icon, |row| row.child(div().flex_1()).child(div().w(px(14.)).children(on.then(check))))
+                    .children(probe)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.crop_menu = None;
                         pick(this, window, cx);
@@ -3332,6 +3345,7 @@ impl Editor {
                 ButtonLike::new(match which {
                     CropMenu::Aspect => "dropdown-aspect",
                     CropMenu::Scale => "dropdown-scale",
+                    CropMenu::ExportScale => "dropdown-export-scale",
                     CropMenu::Zoom => "dropdown-zoom",
                     CropMenu::Tools | CropMenu::Actions | CropMenu::Fill => "dropdown",
                 })
@@ -5279,6 +5293,31 @@ fn patch_key(how: Hide, a: P, b: P, size: f32) -> u64 {
     h
 }
 
+/// The same final size for save, copy and drag-out. A missing density means
+/// one image pixel per logical pixel. The editable project keeps its source.
+fn export_picture(src: &RgbaImage, doc: &Doc, frame: &Frame, density: Option<f64>, wanted: Option<f64>) -> Option<(RgbaImage, Option<f64>)> {
+    // `source` is already turned for the canvas. Apply the drawing in that
+    // coordinate system, just as render_png does for drag-out and previews.
+    let shown = Doc { view: crop::Orientation::default(), ..doc.clone() };
+    let mut picture = kadr_raster::render(src, &shown, frame)?;
+    let native = density.filter(|d| d.is_finite() && *d > 0.).unwrap_or(1.);
+    if let Some(wanted) = wanted {
+        let factor = wanted / native;
+        let (w, h) = ((picture.width() as f64 * factor).round().max(1.), (picture.height() as f64 * factor).round().max(1.));
+        // Refuse malformed density metadata or outputs beyond a reasonable
+        // image allocation, rather than overflowing or exhausting memory.
+        if !factor.is_finite() || factor <= 0. || w * h > 100_000_000. || w > 32768. || h > 32768. {
+            return None;
+        }
+        let (w, h) = (w as u32, h as u32);
+        if picture.dimensions() != (w, h) {
+            picture = image::imageops::resize(&picture, w, h, image::imageops::FilterType::Lanczos3);
+        }
+    }
+    let output_density = wanted.or(density).map(|d| d * doc.scale.min(1.) as f64);
+    Some((picture, output_density))
+}
+
 /// The picture as taken, as the PNG a project keeps under its drawing,
 /// with the drawing's black boxes burnt in.
 fn base_png(original: Option<&RgbaImage>, density: Option<f64>, doc: &Doc) -> std::io::Result<Vec<u8>> {
@@ -5319,6 +5358,31 @@ const PATCH_PAD: u32 = 2;
 mod tests {
     use super::*;
     use kadr_raster::{framed, hide, rasterize};
+
+    #[test]
+    fn export_density_fits_hidpi_and_preserves_the_edit() {
+        let src = RgbaImage::from_pixel(800, 400, image::Rgba([40, 140, 90, 255]));
+        let doc = Doc { crop: Some(((40., 20.), (440., 220.))), scale: 0.5, ..Doc::default() };
+        let frame = Frame::default();
+        let (original, d) = export_picture(&src, &doc, &frame, Some(2.), None).unwrap();
+        assert_eq!(original.dimensions(), (200, 100));
+        assert_eq!(d, Some(1.));
+        let (one, d) = export_picture(&src, &doc, &frame, Some(2.), Some(1.)).unwrap();
+        assert_eq!(one.dimensions(), (100, 50));
+        assert_eq!(d, Some(0.5));
+        let (two, d) = export_picture(&src, &doc, &frame, Some(2.), Some(2.)).unwrap();
+        assert_eq!(two, original);
+        assert_eq!(d, Some(1.));
+        assert_eq!(doc.scale, 0.5);
+        let (two, d) = export_picture(&src, &Doc::default(), &frame, None, Some(2.)).unwrap();
+        assert_eq!(two.dimensions(), (1600, 800));
+        assert_eq!(d, Some(2.));
+        assert!(export_picture(&src, &doc, &frame, Some(0.0001), Some(2.)).is_none());
+        let turned_doc = Doc { view: crop::Orientation { turns: 1, mirrored: true }, ..Doc::default() };
+        let turned = turned_doc.view.apply(&src);
+        let (out, _) = export_picture(&turned, &turned_doc, &frame, None, Some(2.)).unwrap();
+        assert_eq!(out.dimensions(), (800, 1600), "the shown source must not turn a second time");
+    }
 
     fn scribbles(n: usize) -> Vec<Shape> {
         (0..n)
@@ -5700,6 +5764,7 @@ impl Editor {
             "image": self.source.as_ref().map(|s| [s.width(), s.height()]),
             "image_origin": [self.origin.get().0 + self.laid_margin() * self.scale(), self.origin.get().1 + self.laid_margin() * self.scale()],
             "image_scale": self.scale(),
+            "export_density": self.vm.doc.export_density,
         })
     }
 }

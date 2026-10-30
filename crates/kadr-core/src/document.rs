@@ -346,6 +346,9 @@ pub struct Doc {
     pub view: Orientation,
     /// The result's size, as a fraction of the cropped picture's.
     pub scale: f32,
+    /// Export pixels per logical pixel (1 or 2); None keeps source pixels.
+    /// The exporter resolves this against the source PNG's density.
+    pub export_density: Option<f64>,
     /// What fills a crop past the picture's edges (RGBA); None leaves it
     /// see-through.
     pub fill: Option<[u8; 4]>,
@@ -353,7 +356,7 @@ pub struct Doc {
 
 impl Default for Doc {
     fn default() -> Self {
-        Doc { shapes: Vec::new(), crop: None, view: Orientation::default(), scale: 1., fill: None }
+        Doc { shapes: Vec::new(), crop: None, view: Orientation::default(), scale: 1., export_density: None, fill: None }
     }
 }
 

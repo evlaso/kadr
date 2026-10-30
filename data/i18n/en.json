@@ -97,6 +97,8 @@
  "editor.recent_colors": "Recent",
  "editor.saved_colors": "Yours",
  "editor.drag": "Drag",
+ "editor.export_original": "Original",
+ "editor.export_scale_tip": "Export size: original pixels, 1× logical size, or 2×. Applies to saving, copying and dragging.",
  "editor.drag_annotated_image_into_chat": "Drag into a chat or folder",
  "editor.cursor": "Cursor",
  "editor.cursor_arrow": "Arrow",
