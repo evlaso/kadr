@@ -14,6 +14,7 @@ mod render;
 pub mod shapes;
 pub mod stitch;
 pub mod text;
+pub mod text_line;
 
 pub use frame::{backdrops, balanced, blurred_pixels, framed};
 pub use render::{Format, burn_redactions, encode, extent, hide, rasterize, render, render_as, render_png};

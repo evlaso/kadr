@@ -538,6 +538,53 @@ fn arrows_come_in_styles() {
     assert_eq!(state["view"]["shapes"][1]["data"], "double", "{state}");
 }
 
+/// A marker fits the screenshot's text, follows its row through pointer
+/// jitter, and stays an editable stroke through save and undo/redo.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_marker_follows_a_text_line() {
+    let s = Session::start();
+    let path = s.dir.join("text.png");
+    let mut image = RgbaImage::from_pixel(800, 500, image::Rgba([255; 4]));
+    kadr_raster::text::draw_line_into(image.as_mut(), (800, 500), "The quick brown fox jumps", (40., 250.), 24., kadr_core::color::Rgba::hex(0x202020));
+    image.save(&path).expect("fixture");
+    let (centre, height) = kadr_raster::text_line::at(&image, (60., 243.)).expect("text band");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    let state = wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("picture never loaded");
+    let view = &state["view"];
+    let scale = view["image_scale"].as_f64().unwrap();
+    let origin = &view["image_origin"];
+    let at = format!("{},{}", origin[0].as_f64().unwrap() + 60. * scale, origin[1].as_f64().unwrap() + 243. * scale);
+    s.dev(&["key", "h"]);
+    s.dev(&["drag", &at, &format!("{},{}", 180. * scale, 3. * scale)]);
+    let state = s.dev(&["state"]);
+    let shape = &state["view"]["shapes"][0];
+    assert_eq!(shape["kind"], "marker", "{state}");
+    assert!((shape["size"].as_f64().unwrap() - (height + 4.) as f64).abs() < 0.1, "{state}");
+    for point in shape["data"].as_array().unwrap() {
+        assert!((point[1].as_f64().unwrap() - centre as f64).abs() < 0.1, "{state}");
+    }
+    s.dev(&["key", "ctrl-z"]);
+    assert_eq!(s.dev(&["state"])["view"]["shapes"].as_array().unwrap().len(), 0);
+    s.dev(&["key", "ctrl-shift-z"]);
+    assert_eq!(s.dev(&["state"])["view"]["shapes"][0], *shape);
+    // Blank space keeps the usual freehand marker, including vertical movement.
+    let blank = format!("{},{}", origin[0].as_f64().unwrap() + 60. * scale, origin[1].as_f64().unwrap() + 350. * scale);
+    s.dev(&["drag", &blank, &format!("{},{}", 100. * scale, 20. * scale)]);
+    let state = s.dev(&["state"]);
+    let free = &state["view"]["shapes"][1];
+    let points = free["data"].as_array().unwrap();
+    assert!(points.last().unwrap()[1].as_f64().unwrap() - points[0][1].as_f64().unwrap() > 15., "{state}");
+    // Leaving a recognised row releases its guide as well.
+    s.dev(&["drag", &at, &format!("{},{}", 100. * scale, 60. * scale)]);
+    let state = s.dev(&["state"]);
+    let points = state["view"]["shapes"][2]["data"].as_array().unwrap();
+    assert!(points.last().unwrap()[1].as_f64().unwrap() - points[0][1].as_f64().unwrap() > 40., "{state}");
+    s.dev(&["key", "ctrl-s"]);
+    wait(Duration::from_secs(5), || image::open(&path).ok().filter(|saved| saved.to_rgba8() != image)).expect("marker wasn't saved");
+}
+
 /// A text style picked from the dropdown under the text being typed is
 /// its own and the next one's; with the text selected, another restyles it.
 #[test]

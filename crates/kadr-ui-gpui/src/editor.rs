@@ -544,6 +544,8 @@ pub struct Editor {
     /// The drawing and its undo history.
     vm: EditorVm,
     draft: Option<Shape>,
+    /// Text band followed by the current marker stroke, in image pixels.
+    marker_line: Option<(f32, f32)>,
     drag: Option<Drag>,
     selected: Option<usize>,
     /// Shapes picked together by dragging a box round them (or Ctrl+A),
@@ -808,6 +810,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 disp,
                 vm: EditorVm::new(doc),
                 draft: None,
+                marker_line: None,
                 drag: None,
                 selected: None,
                 marked: Vec::new(),
@@ -1509,6 +1512,12 @@ impl Editor {
         }
         self.selected = None;
 
+        self.marker_line = if self.tool == Tool::Marker && !e.modifiers.shift {
+            self.source.as_deref().and_then(|src| kadr_raster::text_line::at(src, p))
+        } else {
+            None
+        };
+        let p = self.marker_line.map_or(p, |(y, _)| (p.0, y));
         let color = self.current_color();
         let kind = match self.tool {
             Tool::Select => {
@@ -1548,7 +1557,7 @@ impl Editor {
         };
         let width = if self.tool == Tool::Marker { sized(WIDTHS, self.weight) * 3. } else { sized(WIDTHS, self.weight) };
         let filled = self.fill && matches!(kind, Kind::Rect | Kind::Ellipse);
-        let size = if matches!(kind, Kind::Blur(..)) { self.weight } else { width / s };
+        let size = if matches!(kind, Kind::Blur(..)) { self.weight } else { self.marker_line.map_or(width / s, |(_, height)| height + 4.) };
         self.draft = Some(Shape { kind, a: p, b: p, color, size, filled, text: TextStyle::Plain, bend: None });
         self.drag = Some(Drag::Draw);
         cx.notify();
@@ -1647,6 +1656,17 @@ impl Editor {
             Some(Drag::Draw) => {
                 let min_step = 2.5 / self.scale();
                 let Some(d) = self.draft.as_mut() else { return };
+                let p = if let Some((y, height)) = self.marker_line {
+                    if (p.1 - y).abs() <= height && !e.modifiers.shift {
+                        (p.0, y)
+                    } else {
+                        self.marker_line = None;
+                        d.size = sized(WIDTHS, self.weight) * 3. / scale;
+                        p
+                    }
+                } else {
+                    p
+                };
                 d.b = constrain(d, p, e.modifiers.shift);
                 // Sample every few screen pixels: mouse events arrive with
                 // sub-pixel jitter that otherwise turns into a ragged edge.
@@ -1662,6 +1682,7 @@ impl Editor {
     }
 
     fn mouse_up(&mut self, cx: &mut Context<Self>) {
+        self.marker_line = None;
         if self.space {
             return;
         }
@@ -5677,6 +5698,8 @@ impl Editor {
             "undo": self.vm.history.depth(),
             "redo": self.vm.history.redo_depth(),
             "image": self.source.as_ref().map(|s| [s.width(), s.height()]),
+            "image_origin": [self.origin.get().0 + self.laid_margin() * self.scale(), self.origin.get().1 + self.laid_margin() * self.scale()],
+            "image_scale": self.scale(),
         })
     }
 }
