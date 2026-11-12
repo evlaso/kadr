@@ -13,6 +13,10 @@
 <header class="top">
   <a class="wordmark" href="../../ru/">kadr</a>
   <nav>
+    <button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+      <span>Поиск</span><kbd>Ctrl K</kbd>
+    </button>
     <a href="https://github.com/evlaso/kadr">GitHub</a>
     <a href="../../history/" lang="en">English</a>
   </nav>
@@ -21,10 +25,6 @@
   <aside class="menu">
     <details class="menu-fold" open>
       <summary>Страницы</summary>
-      <div class="search" data-pagefind="../../pagefind/pagefind.js" data-nothing="Ничего не найдено">
-        <input type="search" placeholder="Поиск" aria-label="Поиск" autocomplete="off" spellcheck="false">
-        <ul class="results" hidden></ul>
-      </div>
       <ul class="pages">
         <li>
           <a href="../../ru/">Введение</a>
@@ -207,7 +207,15 @@
     <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/ru/history.md">Править страницу</a></p>
   </main>
 </div>
-<script src="../../assets/site.js" defer></script>
 
+<dialog class="palette" aria-label="Поиск" data-index="../../ru/search.json" data-base="../../ru/" data-pagefind="../../pagefind/pagefind.js">
+  <div class="palette-field">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+    <input type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="palette-list" aria-label="Поиск" placeholder="Поиск по справочнику…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
+  </div>
+  <ul class="palette-list" id="palette-list" role="listbox" aria-label="Страницы и разделы"></ul>
+  <p class="palette-none" role="status" hidden>Ничего не найдено</p>
+</dialog>
+<script src="../../assets/site.js" defer></script>
 </body>
 </html>
