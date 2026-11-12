@@ -1,83 +1,286 @@
-// The manual's menu: folded on a narrow screen, and a search over the
-// pages of this language (Pagefind's index, loaded on the first key).
+// The manual's menu: folded on a narrow screen.
 (function () {
   var fold = document.querySelector(".menu-fold");
+  if (!fold) return;
   var wide = window.matchMedia("(min-width: 72rem)");
   function place() { fold.open = wide.matches; }
   place();
   wide.addEventListener("change", place);
+})();
 
-  var box = document.querySelector(".search");
-  var input = box.querySelector("input");
-  var list = box.querySelector(".results");
-  var pages = document.querySelector(".pages");
-  var loading = null;
-  var asked = 0;
+// Search: a palette over the page. Empty, it lists this language's pages
+// and their sections (search.json, made at build time); typing keeps the
+// rows whose title matches, then adds Pagefind's full-text hits.
+(function () {
+  var dialog = document.querySelector(".palette");
+  var trigger = document.querySelector(".find");
+  if (!dialog || !trigger || typeof dialog.showModal !== "function") return;
+  var input = dialog.querySelector("input");
+  var list = dialog.querySelector(".palette-list");
+  var none = dialog.querySelector(".palette-none");
+  var base = new URL(dialog.dataset.base, location.href);
+  var index = null; // the static rows, loaded once (tried again if that failed)
+  var pagefind = null; // Pagefind's module, the same
+  var names = {}; // a page's address → its name in the menu
+  var asked = 0; // bumped by every query and by closing: older answers drop
+  var shown = []; // the rows on screen: { title, text, html, href, kind, page }
+  var active = -1;
+  var pressedOutside = false;
 
-  document.addEventListener("keydown", function (e) {
-    var typing = /INPUT|TEXTAREA/.test(document.activeElement.tagName);
-    if ((e.key === "/" && !typing) || (e.key === "k" && (e.metaKey || e.ctrlKey))) {
-      e.preventDefault();
-      fold.open = true;
+  if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
+    trigger.querySelector("kbd").textContent = "⌘K";
+  }
+  trigger.hidden = false;
+
+  function loadIndex() {
+    index = index || fetch(dialog.dataset.index)
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (rows) {
+        return rows.map(function (r) {
+          var href = new URL(r.url, base).href;
+          if (r.kind === "page") names[href] = r.title;
+          return { title: r.title, text: r.text, kind: r.kind, page: r.page, href: href };
+        });
+      })
+      .catch(function () {
+        index = null;
+        return [];
+      });
+    return index;
+  }
+
+  function loadPagefind() {
+    pagefind = pagefind || import(new URL(dialog.dataset.pagefind, location.href).href)
+      .catch(function () {
+        pagefind = null;
+        return null;
+      });
+    return pagefind;
+  }
+
+  function open() {
+    if (dialog.open) {
       input.focus();
-    } else if (e.key === "Escape" && document.activeElement === input) {
-      input.value = "";
-      asked++;
-      show(null);
-      input.blur();
-    }
-  });
-
-  input.addEventListener("input", async function () {
-    var query = input.value.trim();
-    var mine = ++asked;
-    if (!query) return show(null);
-    // One load for every key typed while it's on its way; only the newest
-    // query goes on to search, so an older one can't answer last.
-    loading = loading || import(new URL(box.dataset.pagefind, location.href));
-    var pagefind;
-    try {
-      pagefind = await loading;
-    } catch (e) {
-      loading = null;
-      return show(null);
-    }
-    if (mine !== asked) return;
-    try {
-      var found = await pagefind.debouncedSearch(query, {}, 120);
-      if (!found || mine !== asked) return;
-      var items = await Promise.all(found.results.slice(0, 8).map(function (r) { return r.data(); }));
-      if (mine === asked) show(items);
-    } catch (e) {
-      // The index didn't come: back to the list of pages.
-      if (mine === asked) show(null);
-    }
-  });
-
-  function show(items) {
-    list.textContent = "";
-    list.hidden = !items;
-    pages.hidden = !!items;
-    if (!items) return;
-    if (!items.length) {
-      var none = document.createElement("li");
-      none.textContent = box.dataset.nothing;
-      list.appendChild(none);
+      input.select();
       return;
     }
-    items.forEach(function (item) {
-      var hit = (item.sub_results || []).find(function (s) { return s.excerpt; }) || item;
-      var li = document.createElement("li");
-      var a = document.createElement("a");
-      a.href = hit.url || item.url;
-      a.textContent = hit.title && hit.title !== item.meta.title ? item.meta.title + " · " + hit.title : item.meta.title;
-      var small = document.createElement("small");
-      small.innerHTML = hit.excerpt || item.excerpt;
-      a.appendChild(small);
-      li.appendChild(a);
-      list.appendChild(li);
-    });
+    input.value = "";
+    dialog.showModal();
+    update();
+    loadPagefind();
   }
+
+  function update() {
+    var mine = ++asked;
+    var query = input.value.trim();
+    loadIndex().then(function (all) {
+      if (mine !== asked) return;
+      var rows = query ? byTitle(all, query) : all;
+      render(rows, rows.length > 0 || !query);
+      if (!query) return;
+      return loadPagefind()
+        .then(function (pf) { return pf && mine === asked ? pf.debouncedSearch(query, {}, 120) : null; })
+        .then(function (found) {
+          if (!found || mine !== asked) return null;
+          return Promise.all(found.results.slice(0, 8).map(function (r) { return r.data(); }));
+        })
+        .then(function (items) {
+          if (mine !== asked) return;
+          if (items) add(fullText(items));
+          none.hidden = shown.length > 0;
+        })
+        .catch(function () {
+          // No full text this time: what the static index found stays.
+          if (mine === asked) none.hidden = shown.length > 0;
+        });
+    }).catch(function () {});
+  }
+
+  // Rows whose title has every word typed, in any order; a section also
+  // matches by its page's name ("editor keys"), as long as one word is in
+  // its own title. Pages first, then titles that start with the query.
+  function byTitle(all, query) {
+    var q = query.toLowerCase();
+    var words = q.split(/\s+/);
+    return all.map(function (r, i) {
+      var title = r.title.toLowerCase();
+      var page = r.kind === "section" ? r.page.toLowerCase() : "";
+      var ok = words.some(function (w) { return title.indexOf(w) >= 0; }) &&
+        words.every(function (w) { return title.indexOf(w) >= 0 || page.indexOf(w) >= 0; });
+      var rank = (r.kind === "page" ? 0 : 2) + (title.indexOf(q) === 0 ? 0 : 1);
+      return ok ? { row: r, rank: rank, i: i } : null;
+    }).filter(Boolean).sort(function (a, b) { return a.rank - b.rank || a.i - b.i; })
+      .map(function (m) { return m.row; });
+  }
+
+  // Pagefind's hits as rows: the two sections of each page where the words
+  // weigh most, a dozen rows in all. Pages go by their names in the menu.
+  function fullText(items) {
+    var rows = [];
+    items.forEach(function (item) {
+      var href = new URL(item.url, location.href).href;
+      var page = names[href] || (item.meta && item.meta.title) || "";
+      var subs = (item.sub_results || []).filter(function (s) { return s.excerpt; });
+      subs.sort(function (a, b) { return weight(b) - weight(a); });
+      subs = subs.slice(0, 2);
+      if (!subs.length) subs = [{ url: item.url, excerpt: item.excerpt }];
+      subs.forEach(function (s) {
+        var url = new URL(s.url || item.url, location.href).href;
+        var section = url !== href && s.title;
+        rows.push({ title: section ? s.title : page, html: trim(s.excerpt || "", s.title), kind: section ? "section" : "page", page: page, href: url });
+      });
+    });
+    return rows.slice(0, 12);
+  }
+  // Pagefind starts a section's excerpt with its heading, which the row
+  // already shows: "Platforms. Clicks and keys…" → "Clicks and keys…".
+  function trim(excerpt, title) {
+    var span = document.createElement("span");
+    span.textContent = (title || "") + ". ";
+    var head = span.innerHTML;
+    return title && excerpt.indexOf(head) === 0 ? excerpt.slice(head.length) : excerpt;
+  }
+  function weight(sub) {
+    return (sub.weighted_locations || []).reduce(function (sum, l) { return sum + (l.balanced_score || 0); }, 0);
+  }
+
+  function render(rows, settled) {
+    shown = [];
+    list.textContent = "";
+    active = -1;
+    input.removeAttribute("aria-activedescendant");
+    add(rows);
+    none.hidden = !settled || shown.length > 0 || !input.value.trim();
+  }
+
+  function add(rows) {
+    var seen = {};
+    shown.forEach(function (r) { seen[r.href] = true; });
+    var fragment = document.createDocumentFragment();
+    rows.forEach(function (r) {
+      if (seen[r.href]) return;
+      seen[r.href] = true;
+      fragment.appendChild(item(r, shown.length));
+      shown.push(r);
+    });
+    list.appendChild(fragment);
+    if (active < 0 && shown.length) select(0, false);
+  }
+
+  function item(r, i) {
+    var li = document.createElement("li");
+    li.id = "palette-" + i;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", "false");
+    var a = document.createElement("a");
+    a.href = r.href;
+    a.tabIndex = -1;
+    var name = document.createElement("span");
+    name.className = "name";
+    if (r.kind === "section" && r.page) {
+      var page = document.createElement("span");
+      page.className = "page";
+      page.textContent = r.page + " · ";
+      name.appendChild(page);
+    }
+    name.appendChild(document.createTextNode(r.title));
+    var text = document.createElement("span");
+    text.className = "text";
+    // Pagefind's excerpt is its own escaped text with <mark> around the
+    // words found; everything else goes in as text.
+    if (r.html) text.innerHTML = r.html;
+    else text.textContent = r.text || "";
+    a.appendChild(name);
+    a.appendChild(text);
+    li.appendChild(a);
+    return li;
+  }
+
+  function select(i, scroll) {
+    if (i < 0 || i >= shown.length) return;
+    var old = list.children[active];
+    if (old) old.setAttribute("aria-selected", "false");
+    active = i;
+    var li = list.children[i];
+    li.setAttribute("aria-selected", "true");
+    input.setAttribute("aria-activedescendant", li.id);
+    if (scroll) li.scrollIntoView({ block: "nearest" });
+  }
+
+  function go(href, newTab) {
+    if (newTab) {
+      window.open(href, "_blank", "noopener");
+      return;
+    }
+    dialog.close();
+    var to = new URL(href);
+    if (to.href === location.href && to.hash) {
+      // The same place: the browser wouldn't move, so scroll there.
+      var target = document.getElementById(decodeURIComponent(to.hash.slice(1)));
+      if (target) target.scrollIntoView();
+      return;
+    }
+    location.assign(href);
+  }
+
+  input.addEventListener("input", update);
+  input.addEventListener("keydown", function (e) {
+    if (e.isComposing) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      select(Math.max(0, Math.min(shown.length - 1, active + (e.key === "ArrowDown" ? 1 : -1))), true);
+    } else if ((e.key === "PageDown" || e.key === "PageUp") && shown.length) {
+      e.preventDefault();
+      select(Math.max(0, Math.min(shown.length - 1, active + (e.key === "PageDown" ? 8 : -8))), true);
+    } else if (e.key === "Enter" && shown[active]) {
+      e.preventDefault();
+      go(shown[active].href, e.ctrlKey || e.metaKey);
+    }
+  });
+  list.addEventListener("mousemove", function (e) {
+    var li = e.target.closest("li");
+    if (li && li.parentNode === list) {
+      var i = Array.prototype.indexOf.call(list.children, li);
+      if (i !== active) select(i, false);
+    }
+  });
+  list.addEventListener("click", function (e) {
+    // A plain click leaves through the link; one that opens a new tab
+    // keeps the palette.
+    if (e.target.closest("a") && e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      go(e.target.closest("a").href, false);
+    }
+  });
+
+  // A click on the dimmed page closes; a drag that starts in the field and
+  // ends outside it doesn't.
+  function outside(e) {
+    var r = dialog.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  }
+  dialog.addEventListener("mousedown", function (e) { pressedOutside = e.target === dialog && outside(e); });
+  dialog.addEventListener("click", function (e) {
+    if (pressedOutside && e.target === dialog && outside(e)) dialog.close();
+    pressedOutside = false;
+  });
+  dialog.addEventListener("close", function () {
+    asked++;
+    input.value = "";
+    render([], false);
+  });
+
+  trigger.addEventListener("click", open);
+  document.addEventListener("keydown", function (e) {
+    if (e.defaultPrevented || e.isComposing) return;
+    var t = e.target;
+    var typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    var k = (e.key === "k" || e.key === "K" || e.code === "KeyK") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+    if (k || (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey && !dialog.open)) {
+      e.preventDefault();
+      open();
+    }
+  });
 })();
 
 // The home page's download links, from the release job's releases/latest.json.

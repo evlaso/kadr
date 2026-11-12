@@ -1,13 +1,15 @@
 /* kadr's site. One column of text, the app's own colours, nothing else. */
 :root {
   --bg: #fffcf0; --text: #100f0f; --soft: #6f6e69; --faint: #b7b5ac; --line: #e6e4d9; --tint: #f2f0e5; --accent: #205ea6;
+  --muted: #66655f; --panel: #fffcf0; --hover: #f2f0e5; --mark: #205ea6; --dim: rgb(16 15 15 / 0.24);
   --reading: 42rem; --menu: 11rem; --gap: 3.5rem;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #100f0f; --text: #cecdc3; --soft: #878580; --faint: #575653; --line: #282726; --tint: #1c1b1a; --accent: #4385be; }
+  :root { --bg: #100f0f; --text: #cecdc3; --soft: #878580; --faint: #575653; --line: #282726; --tint: #1c1b1a; --accent: #4385be;
+    --muted: #9f9d96; --panel: #1c1b1a; --hover: #282726; --mark: #66a0c8; --dim: rgb(0 0 0 / 0.6); }
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-padding-top: 1.5rem; }
@@ -20,11 +22,55 @@ a { color: inherit; text-decoration: underline; text-decoration-color: var(--fai
 a:hover { color: var(--accent); text-decoration-color: currentColor; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
-/* The top line: the name, and three links. */
+/* The top line: the name, the search, and two links. */
 .top { max-width: var(--reading); margin: 0 auto; padding: 1.5rem 1.25rem 0; display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .top a { text-decoration: none; }
 .wordmark { font-weight: 700; font-size: 1.25rem; letter-spacing: -0.03em; }
-.top nav { display: flex; gap: 1.25rem; font-size: 0.875rem; color: var(--soft); }
+.top nav { display: flex; align-items: center; gap: 1.25rem; font-size: 0.875rem; color: var(--soft); }
+
+/* Search: the button in the top line, and the palette it opens. */
+.find {
+  display: inline-flex; align-items: baseline; gap: 0.4rem; font: inherit; color: var(--muted); background: var(--tint);
+  border: 0; border-radius: 6px; padding: 0.1rem 0.3rem 0.1rem 0.5rem; cursor: pointer; white-space: nowrap;
+}
+.find[hidden] { display: none; }
+.find svg { align-self: center; }
+.find:hover { color: var(--text); }
+.find kbd { font: 0.75rem var(--sans); color: var(--muted); background: var(--bg); border-radius: 4px; padding: 0 0.3rem; }
+@media (max-width: 23rem), (hover: none) and (pointer: coarse) { .find kbd { display: none; } }
+.find svg, .palette-field svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; flex: none; }
+.palette {
+  width: min(44rem, 100% - 2rem); max-width: none; max-height: min(36rem, 100dvh - 2 * min(12vh, 6rem));
+  margin: min(12vh, 6rem) auto auto; padding: 0; border: 0; border-radius: 12px; color: var(--text); background: var(--panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 16px 48px rgb(0 0 0 / 0.18);
+}
+.palette[open] { display: flex; flex-direction: column; animation: fade 0.12s ease-out; }
+.palette::backdrop { background: var(--dim); animation: fade 0.12s ease-out; }
+@keyframes fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .palette[open], .palette::backdrop { animation: none; } }
+.palette-field { display: flex; align-items: center; gap: 0.7rem; padding: 0.9rem 1.1rem; color: var(--muted); }
+.palette-field input {
+  flex: 1; min-width: 0; font: inherit; font-size: 1.0625rem; color: var(--text); background: none; border: 0; outline: 0; padding: 0;
+}
+.palette-field input::placeholder { color: var(--muted); }
+.palette-list { list-style: none; margin: 0; padding: 0 0.5rem 0.5rem; overflow-y: auto; overscroll-behavior: contain; }
+.palette-list a {
+  display: grid; grid-template-columns: 12rem 1fr; gap: 0.15rem 1.25rem; align-items: baseline;
+  padding: 0.55rem 0.75rem; border-radius: 8px; text-decoration: none; color: inherit;
+}
+.palette-list [aria-selected="true"] a { background: var(--hover); }
+.palette-list .name { font-weight: 600; overflow-wrap: anywhere; }
+.palette-list .page { color: var(--muted); font-weight: 400; }
+.palette-list .text {
+  color: var(--muted); font-size: 0.875rem; line-height: 1.5;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
+}
+.palette-list mark { background: none; color: var(--mark); }
+.palette-none { margin: 0; padding: 0.25rem 1.25rem 1.1rem; color: var(--muted); font-size: 0.875rem; }
+@media (max-width: 34rem) {
+  .palette { margin-top: 1rem; max-height: calc(100dvh - 2rem); }
+  .palette-list a { grid-template-columns: 1fr; }
+}
 
 /* Text. */
 .prose { max-width: var(--reading); margin: 0 auto; padding: 3.5rem 1.25rem 5rem; }
@@ -56,16 +102,6 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .menu ul { list-style: none; margin: 0; padding: 0; }
 .menu .outline { margin: 0.1rem 0 0.4rem; padding-left: 0.75rem; border-left: 1px solid var(--line); }
 .menu summary { cursor: pointer; color: var(--text); font-weight: 600; padding: 0.25rem 0 0.75rem; }
-.search { position: relative; margin-bottom: 0.9rem; }
-.search input {
-  width: 100%; font: inherit; color: var(--text); background: var(--tint); border: 0; border-radius: 6px; padding: 0.4rem 0.6rem;
-  appearance: none; -webkit-appearance: none;
-}
-.search input::placeholder { color: var(--text); opacity: 0.7; }
-.search .results { margin: 0.5rem 0 0.75rem; }
-.search .results a { padding: 0.3rem 0; color: var(--text); }
-.search .results small { display: block; color: var(--soft); font-size: 0.75rem; }
-.search .results mark { background: none; color: var(--accent); }
 .turn { display: flex; justify-content: space-between; gap: 1rem; margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
 .edit { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--soft); }
 

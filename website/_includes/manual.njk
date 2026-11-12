@@ -8,10 +8,6 @@ layout: base.njk
   <aside class="menu">
     <details class="menu-fold" open>
       <summary>{{ t.pages }}</summary>
-      <div class="search" data-pagefind="{{ root }}pagefind/pagefind.js" data-nothing="{{ t.nothing }}">
-        <input type="search" placeholder="{{ t.search }}" aria-label="{{ t.search }}" autocomplete="off" spellcheck="false">
-        <ul class="results" hidden></ul>
-      </div>
       <ul class="pages">
         {%- for p in pages %}
         <li>
@@ -56,4 +52,3 @@ layout: base.njk
     <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a></p>
   </main>
 </div>
-<script src="{{ root }}assets/site.js" defer></script>
