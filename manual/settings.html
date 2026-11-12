@@ -1,0 +1,372 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Settings - kadr manual</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="kadr.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">kadr manual</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/evlaso/kadr" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/evlaso/kadr/edit/main/docs/manual/../en/settings.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="settings"><a class="header" href="#settings">Settings</a></h1>
+<p>Settings controls capture behaviour, shortcuts, the editor and studio defaults, and storage. Changes are saved right away. Search looks across sections, so you do not need to remember which section holds a row.</p>
+<h2 id="how-to-open"><a class="header" href="#how-to-open">How to open</a></h2>
+<p>Run <code>kadr settings</code>, click the tray icon, or press the assigned settings hotkey. Its default on macOS and Windows is Ctrl+Shift+5; Linux starts with your Hyprland bindings.</p>
+<p>For window shortcuts in this manual, Ctrl means Cmd on macOS. The global defaults below use Ctrl on both macOS and Windows.</p>
+<h2 id="sections"><a class="header" href="#sections">Sections</a></h2>
+<p>Type to search by a row or section name. Choose a section in the sidebar to clear the search. <strong>Thumbnails</strong> is a group inside <strong>General</strong>, and <strong>Editor</strong> is a row inside <strong>Screenshots</strong>, not a separate sidebar section.</p>
+<div class="table-wrapper"><table><thead><tr><th>Section or group</th><th>Rows and what they change</th></tr></thead><tbody>
+<tr><td>General</td><td><strong>Language</strong>, <strong>Appearance</strong>, <strong>Tray icon</strong>, <strong>Check for updates</strong>, <strong>Update channel</strong>: interface language, system/dark/light appearance, the tray and release checks.</td></tr>
+<tr><td>General → Thumbnails</td><td><strong>Thumbnail goes away after</strong>, <strong>Where to show</strong>, <strong>Thumbnails at once</strong>: 5, 10, 20 seconds or Never; Left or Right; 2, 4 or 6 cards. A hovered card stays.</td></tr>
+<tr><td>Screenshots → After a screenshot</td><td><strong>Show the thumbnail</strong>, <strong>Copy to the clipboard</strong>, <strong>Save to the folder</strong>, <strong>Open the editor</strong>, <strong>Pin on top</strong>: independent actions after capture.</td></tr>
+<tr><td>Screenshots → Files</td><td><strong>Screenshots folder</strong>, <strong>File name</strong>, <strong>Window shadow</strong>, <strong>Window background</strong>, <strong>Screenshot size</strong>, <strong>Pointer in screenshots</strong>, <strong>Self-timer</strong>: destination and naming, window look, 1× or Screen pixels, pointer and 3/5/10-second countdown.</td></tr>
+<tr><td>Screenshots → Editor</td><td><strong>Editor</strong>: Window or Over everything. This choice is Linux-only; other systems use a window.</td></tr>
+<tr><td>Recording → After a recording</td><td><strong>Show the thumbnail</strong>, <strong>Copy to the clipboard</strong>, <strong>Save to the folder</strong>, <strong>Open the studio</strong>. Copy puts the file on the clipboard. Studio mode recordings open in the studio anyway.</td></tr>
+<tr><td>Recording → Video</td><td><strong>Recordings folder</strong>, <strong>File name</strong>, <strong>Frame rate</strong>, <strong>Quality</strong>, <strong>Frame around the area</strong>. Source follows the screen's rate; the other choices are 30, 60 and 120 fps. The frame is not recorded.</td></tr>
+<tr><td>Studio</td><td><strong>Default zoom</strong>, <strong>Default background</strong>, <strong>Default padding</strong>: zooms placed on clicks and the backdrop around a video.</td></tr>
+<tr><td>Text</td><td><strong>Recognition languages</strong> lists the installed languages; <strong>Russian</strong> offers the language-data download when needed.</td></tr>
+<tr><td>Shortcuts</td><td>An action per row, with its assigned shortcuts and <strong>Add shortcut</strong>. See below.</td></tr>
+<tr><td>Storage</td><td><strong>Used</strong>, <strong>Delete old captures</strong>, <strong>Clear now</strong>: space used and old-file cleanup. See below.</td></tr>
+<tr><td>About kadr</td><td>The kadr row shows the version and <strong>Check now</strong> for updates; <strong>Interface</strong>, <strong>Source code</strong>, <strong>Settings file</strong> give app information and access to the configuration.</td></tr>
+</tbody></table>
+</div>
+<p><strong>File name</strong> is shared by screenshots and recordings. Its template accepts <code>{date}</code>, <code>{time}</code>, <code>{type}</code> and <code>{n}</code>. <strong>Window background</strong> uses a look saved in the <a href="editor.html">editor</a>. Release channels and updating are explained in <a href="install.html">Install</a>.</p>
+<h2 id="shortcuts"><a class="header" href="#shortcuts">Shortcuts</a></h2>
+<p>In <strong>Shortcuts</strong>, click <strong>Add shortcut</strong> (+) beside an action, then press the combination. Esc cancels. Click an existing shortcut to remove it. Assigning a combination already used by another action moves it to the new action.</p>
+<p>The rows are <strong>All modes on one bar</strong>, <strong>Screenshot an area</strong>, <strong>Screenshot the previous area</strong>, <strong>Screenshot a window or area</strong>, <strong>Screenshot the screen</strong>, <strong>Scrolling screenshot</strong>, <strong>Record the screen</strong>, <strong>Record the previous area</strong>, <strong>Recognize text</strong>, <strong>History</strong> and <strong>Settings</strong>.</p>
+<p>The global defaults on macOS and Windows are:</p>
+<div class="table-wrapper"><table><thead><tr><th>Keys</th><th>Does</th></tr></thead><tbody>
+<tr><td>Ctrl+Shift+1</td><td>Screenshot of an area</td></tr>
+<tr><td>Ctrl+Shift+2</td><td>Recording</td></tr>
+<tr><td>Ctrl+Shift+3</td><td>Recognize text</td></tr>
+<tr><td>Ctrl+Shift+4</td><td>History</td></tr>
+<tr><td>Ctrl+Shift+5</td><td>Settings</td></tr>
+<tr><td>Ctrl+Shift+6</td><td>Scrolling screenshot</td></tr>
+</tbody></table>
+</div>
+<p>On Linux, kadr starts with the existing Hyprland bindings. The installed <code>data/hypr/kadr.lua</code> hook loads the bindings saved from this window; see <a href="install.html">Install</a>. On macOS and Windows the tray holds the global shortcuts, so it must be running.</p>
+<h2 id="storage"><a class="header" href="#storage">Storage</a></h2>
+<p><strong>Used</strong> shows space and file counts for <strong>Screenshots</strong>, <strong>Recordings</strong> and <strong>Studio cache</strong>. <strong>Delete old captures</strong> offers Never, 7, 30 or 90 days. Automatic cleanup runs at most once a day when enabled and permanently deletes kadr's old captures, not other files in those folders.</p>
+<p>Choose a period first, then use <strong>Clear now → Clear</strong> to apply it immediately. The result reports the freed space and number of files. The file setting is <code>cleanup_days</code>; <code>0</code> disables automatic deletion. Cleanup also prunes editing data whose source capture is gone.</p>
+<h2 id="settings-file"><a class="header" href="#settings-file">Settings file</a></h2>
+<p>Settings live in <code>settings.toml</code>, under <code>~/.config/kadr</code> on Linux. Open <strong>Settings → About kadr → Settings file → Edit</strong> to edit it in the system's editor. <strong>Show in folder</strong> opens its folder.</p>
+<p>Edits by hand are picked up the next time kadr needs the setting. The settings window keeps comments and ordering and changes only the values you change there. A missing setting keeps its default; an unreadable value is ignored. If the TOML file is broken, kadr uses defaults, reports where the error is in the settings window and leaves the file alone. Window changes are not saved until it is fixed. An old <code>settings.json</code> is migrated automatically and renamed to <code>settings.json.old</code>.</p>
+<p>The groups below follow the order in the file. Some settings are available only in the file, not as rows in the window.</p>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>version</code></td><td>The file's format.</td></tr>
+</tbody></table>
+</div>
+<h3 id="general"><a class="header" href="#general">General</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>language</code></td><td><code>"en"</code> or <code>"ru"</code>.</td></tr>
+<tr><td><code>theme</code></td><td><code>"system"</code>, <code>"dark"</code> or <code>"light"</code>.</td></tr>
+<tr><td><code>tray</code></td><td>The tray icon.</td></tr>
+<tr><td><code>keep_warm</code></td><td>Keep the area picker running so it shows at once (uses some memory).</td></tr>
+<tr><td><code>check_updates</code></td><td>Look for new releases.</td></tr>
+<tr><td><code>update_channel</code></td><td><code>"stable"</code> or <code>"beta"</code>; left out, the channel of this build.</td></tr>
+</tbody></table>
+</div>
+<h3 id="captures"><a class="header" href="#captures">Captures</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>screenshot_dir</code></td><td>Where screenshots go; left out, the system's pictures folder.</td></tr>
+<tr><td><code>video_dir</code></td><td>Where recordings go; left out, the system's videos folder.</td></tr>
+<tr><td><code>name_template</code></td><td>New files' names: <code>{type}</code>, <code>{date}</code>, <code>{time}</code> and <code>{n}</code> are filled in.</td></tr>
+<tr><td><code>card_seconds</code></td><td>How long the card after a capture stays, in seconds; <code>0</code> keeps it.</td></tr>
+<tr><td><code>card_side</code></td><td>Where the cards show: <code>"left"</code> or <code>"right"</code>.</td></tr>
+<tr><td><code>max_cards</code></td><td>How many cards show at once.</td></tr>
+<tr><td><code>cleanup_days</code></td><td>Delete captures older than this many days; <code>0</code> keeps them.</td></tr>
+</tbody></table>
+</div>
+<h3 id="screenshots"><a class="header" href="#screenshots">Screenshots</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>logical_size</code></td><td>Save at 1x: a pixel of the picture is a pixel of the design.</td></tr>
+<tr><td><code>shot_cursor</code></td><td>Put the pointer in screenshots.</td></tr>
+<tr><td><code>window_shadow</code></td><td>Window shots keep the window's shadow, on a transparent background.</td></tr>
+<tr><td><code>window_backdrop</code></td><td>A look saved in the editor, by name, for window shots to go on.</td></tr>
+<tr><td><code>timer_seconds</code></td><td>The self-timer: 3, 5 or 10 seconds.</td></tr>
+<tr><td><code>editor_window</code></td><td>The editor opens as an ordinary window; <code>false</code> puts it over everything (Linux).</td></tr>
+</tbody></table>
+</div>
+<h3 id="recording"><a class="header" href="#recording">Recording</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>fps</code></td><td>Frames a second; <code>0</code> is the screen's own rate.</td></tr>
+<tr><td><code>quality</code></td><td><code>"medium"</code>, <code>"high"</code>, <code>"very_high"</code> or <code>"ultra"</code>.</td></tr>
+<tr><td><code>region_frame</code></td><td>Outline the recorded area (the outline isn't recorded).</td></tr>
+</tbody></table>
+</div>
+<h3 id="studio"><a class="header" href="#studio">Studio</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>studio_zoom</code></td><td>The zoom placed on clicks, 1 to 4.</td></tr>
+<tr><td><code>studio_backdrop</code></td><td>The background, by its place in the studio's list (from 0).</td></tr>
+<tr><td><code>studio_padding</code></td><td>How much background shows around: 0 (none) to 3.</td></tr>
+</tbody></table>
+</div>
+<h3 id="editor"><a class="header" href="#editor">Editor</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>saved_colors</code></td><td>Colours kept in the colour menu, as <code>"#rrggbb"</code>.</td></tr>
+<tr><td><code>recent_colors</code></td><td>Colours used lately, newest first; kadr keeps this list.</td></tr>
+</tbody></table>
+</div>
+<h3 id="after-a-screenshot"><a class="header" href="#after-a-screenshot">After a screenshot</a></h3>
+<p>The <code>after_shot</code> table has five independent switches:</p>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>card</code></td><td>The card in the screen's corner.</td></tr>
+<tr><td><code>copy</code></td><td>Copy it to the clipboard.</td></tr>
+<tr><td><code>save</code></td><td>Keep the file (off: only a temporary one).</td></tr>
+<tr><td><code>edit</code></td><td>Open it in the editor.</td></tr>
+<tr><td><code>pin</code></td><td>Pin a screenshot above every window.</td></tr>
+</tbody></table>
+</div>
+<h3 id="after-a-recording"><a class="header" href="#after-a-recording">After a recording</a></h3>
+<p>The <code>after_video</code> table has the same five switches. <code>pin</code> is for screenshots, not recordings; it has no recording row in the window.</p>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Comment</th></tr></thead><tbody>
+<tr><td><code>card</code></td><td>The card in the screen's corner.</td></tr>
+<tr><td><code>copy</code></td><td>Copy it to the clipboard.</td></tr>
+<tr><td><code>save</code></td><td>Keep the file (off: only a temporary one).</td></tr>
+<tr><td><code>edit</code></td><td>Open it in the studio.</td></tr>
+<tr><td><code>pin</code></td><td>Pin a screenshot above every window; does not apply to recordings.</td></tr>
+</tbody></table>
+</div>
+<h2 id="keys"><a class="header" href="#keys">Keys</a></h2>
+<p>Outside shortcut recording or file-name editing:</p>
+<div class="table-wrapper"><table><thead><tr><th>Keys</th><th>Does</th></tr></thead><tbody>
+<tr><td>Typing</td><td>Search across all sections</td></tr>
+<tr><td>Backspace</td><td>Remove the last search character</td></tr>
+<tr><td>Tab or Down</td><td>Next section</td></tr>
+<tr><td>Up</td><td>Previous section</td></tr>
+<tr><td>Esc</td><td>Clear the search; with no search, close the window</td></tr>
+<tr><td>Esc while recording a shortcut</td><td>Cancel without assigning it</td></tr>
+<tr><td>Enter, Tab or Esc while editing File name</td><td>Finish editing the name template</td></tr>
+</tbody></table>
+</div>
+<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
+<pre><code class="language-text">  kadr settings                                  settings
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="history.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="projects.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="history.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="projects.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="lang.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
