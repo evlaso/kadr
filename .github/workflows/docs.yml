@@ -10,7 +10,7 @@ on:
     branches: [main]
     paths:
       - docs/manual/**
-      - docs/site/**
+      - website/**
       - docs/images/**
       - scripts/manual.sh
       - .github/workflows/docs.yml
@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: docs/site/package-lock.json
+          cache-dependency-path: website/package-lock.json
       - run: scripts/manual.sh
       - name: Publish to gh-pages
         # The branch as it is now, with everything but releases/ replaced by

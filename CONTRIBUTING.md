@@ -52,7 +52,7 @@ a real pointer, screenshots kept as artifacts.
   in the same commit. `crates/kadr-core/tests/manual.rs` (in `just unit`)
   keeps the two languages in step and the command and settings pages true
   to the code. `scripts/manual.sh --serve` shows the site (needs Node;
-  it's built with [Eleventy](https://www.11ty.dev) from `docs/site`).
+  it's built with [Eleventy](https://www.11ty.dev) from `website`).
 
 ## Commits and pull requests
 

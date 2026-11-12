@@ -54,8 +54,7 @@ const slugify = (s) =>
 export default function (config) {
   config.ignores.add("docs/*.md");
   config.ignores.add("docs/manual/*/SUMMARY.md");
-  config.ignores.add("docs/site/**");
-  config.addPassthroughCopy({ "docs/images": "images", "docs/site/assets": "assets" });
+  config.addPassthroughCopy({ "docs/images": "images", "website/assets": "assets" });
 
   config.addGlobalData("strings", STRINGS);
   config.addGlobalData("nav", Object.fromEntries(LANGS.map((l) => [l, summary(l)])));
@@ -124,7 +123,7 @@ export default function (config) {
   config.addFilter("otherLang", (lang) => (lang === "en" ? "ru" : "en"));
 
   return {
-    dir: { input: "docs", includes: "site/_includes", data: "site/_data", output: "target/site" },
+    dir: { input: "docs", includes: "../website/_includes", output: "target/site" },
     markdownTemplateEngine: false,
     htmlTemplateEngine: "njk",
   };
