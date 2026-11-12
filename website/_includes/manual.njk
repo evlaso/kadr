@@ -62,6 +62,6 @@ layout: base.njk
       <span>{% if next %}<a href="{{ root }}{{ lang | pageUrl(next.slug) }}">{{ next.title }} →</a>{% endif %}</span>
       {%- endif %}{% endfor %}
     </footer>
-    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a> · <a href="{{ root }}{{ lang | mdUrl(slug) }}">{{ t.asMarkdown }}</a></p>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a> · <a href="{{ root }}{{ lang | mdUrl(slug) }}">{{ t.asMarkdown }}</a> · <a href="{{ root }}{{ lang | pageUrl('') }}llms-full.txt" title="{{ t.llmsTip }}">{{ t.llms }}</a></p>
   </main>
 </div>
