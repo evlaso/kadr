@@ -128,14 +128,22 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git fetch --depth 1 origin gh-pages; then
-            git worktree add pages FETCH_HEAD
-            git -C pages switch -c gh-pages
-          else
-            git worktree add --orphan -b gh-pages pages
-          fi
-          mkdir -p pages/releases
-          cp latest.json pages/releases/latest.json
-          git -C pages add releases/latest.json
-          git -C pages commit -m "chore: latest.json for $version"
-          git -C pages push origin HEAD:gh-pages
+          # The docs job writes to the same branch (everything but
+          # releases/): a push it got ahead of is done again on top of it.
+          for attempt in 1 2 3; do
+            if git fetch --depth 1 origin gh-pages; then
+              git worktree add --detach pages FETCH_HEAD
+            else
+              git worktree add --orphan -b gh-pages-new pages
+            fi
+            mkdir -p pages/releases
+            cp latest.json pages/releases/latest.json
+            git -C pages add releases/latest.json
+            git -C pages commit -m "chore: latest.json for $version"
+            if git -C pages push origin HEAD:gh-pages; then
+              exit 0
+            fi
+            git worktree remove --force pages
+            git branch -D gh-pages-new 2>/dev/null || true
+          done
+          exit 1

@@ -149,7 +149,7 @@ kadr capture                                   every mode on one bar
 kadr shot [smart|region|windows|fullscreen|all|timer|previous]
                                                take a screenshot (smart by default; all: every screen at once;
                                                previous: the last area)
-kadr shot scroll ["X,Y WxH"]                  scrolling screenshot (again to finish)
+kadr shot scroll ["X,Y WxH"]                    scrolling screenshot (again to finish)
 kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
 kadr pin <file>                                pin an image on top of windows
 kadr text [image]                              recognize text (in an area or an image) and copy it

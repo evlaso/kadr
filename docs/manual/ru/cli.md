@@ -7,14 +7,14 @@
   kadr shot [smart|region|windows|fullscreen|all|timer|previous]
                                                  take a screenshot (smart by default; all: every screen at once;
                                                  previous: the last area)
-  kadr shot scroll ["X,Y WxH"]                  scrolling screenshot (again to finish)
+  kadr shot scroll ["X,Y WxH"]                    scrolling screenshot (again to finish)
   kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
   kadr pin <file>                                pin an image on top of windows
 
   kadr record                                    the recording bar (or stop a running recording)
   kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
                                                  start recording at once (again to stop)
-  kadr record area "X,Y WxH"                   the recording bar for a given area
+  kadr record area "X,Y WxH"                     the recording bar for a given area
   kadr record previous                           the recording bar for the last area picked
   kadr record stop                               stop recording
   kadr studio <video|project.kadr> [--render]    studio: zooms, background, clicks and keys (--render exports at once)

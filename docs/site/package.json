@@ -4,8 +4,8 @@
   "type": "module",
   "description": "kadr's site: the landing page and the manual, built with Eleventy from docs/manual.",
   "scripts": {
-    "build": "eleventy --config=docs/site/eleventy.config.js",
-    "serve": "eleventy --config=docs/site/eleventy.config.js --serve"
+    "build": "../../scripts/manual.sh",
+    "serve": "../../scripts/manual.sh --serve"
   },
   "devDependencies": {
     "@11ty/eleventy": "^3.1.2",

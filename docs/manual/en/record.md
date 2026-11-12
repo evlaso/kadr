@@ -117,7 +117,7 @@ How long the card stays and where it shows are in Settings → General (see [Cap
 kadr record                                    the recording bar (or stop a running recording)
 kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
                                                start recording at once (again to stop)
-kadr record area "X,Y WxH"                   the recording bar for a given area
+kadr record area "X,Y WxH"                     the recording bar for a given area
 kadr record previous                           the recording bar for the last area picked
 kadr record stop                               stop recording
 kadr trim <video> [--from S --to S]            trim a recording (no flags: the trim window)

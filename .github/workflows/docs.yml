@@ -2,9 +2,9 @@ name: docs
 
 # The site on GitHub Pages (the manual in two languages, its first page
 # the home; scripts/manual.sh: Eleventy and Pagefind): built on every push
-# to main that touches it, and pushed to the gh-pages branch whole, with
-# releases/ carried over from what's there: the release job keeps
-# latest.json in it, which the tray's update check reads.
+# to main that touches it, and put on the gh-pages branch in place of
+# everything there but releases/: the release job keeps latest.json in it,
+# which the tray's update check reads.
 on:
   push:
     branches: [main]
@@ -19,9 +19,13 @@ on:
 permissions:
   contents: write
 
+# One docs run at a time, and one in the middle of a push isn't cancelled.
+# The release job writes to gh-pages too (releases/latest.json only): each
+# of the two starts from the branch as it is, never pushes by force, and
+# does its push again on top of the other's if it lost the race.
 concurrency:
   group: docs
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   site:
@@ -34,14 +38,39 @@ jobs:
           cache: npm
           cache-dependency-path: docs/site/package-lock.json
       - run: scripts/manual.sh
-      - name: releases/ from gh-pages
+      - name: Publish to gh-pages
+        # The branch as it is now, with everything but releases/ replaced by
+        # the build: releases/latest.json is never read here, only left
+        # where it is. Any failure stops the job before a push.
         run: |
-          if git fetch --depth 1 origin gh-pages; then
-            git archive FETCH_HEAD releases | tar x -C target/site || true
-          fi
-          touch target/site/.nojekyll
-      - uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: target/site
-          commit_message: "docs: site from"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          test ! -e target/site/releases
+          for attempt in 1 2 3; do
+            rc=0
+            git ls-remote --exit-code --heads origin gh-pages >/dev/null || rc=$?
+            if [ "$rc" = 0 ]; then
+              git fetch --depth 1 origin gh-pages
+              git worktree add --detach pages FETCH_HEAD
+            elif [ "$rc" = 2 ]; then
+              git worktree add --orphan -b gh-pages-new pages
+            else
+              exit 1
+            fi
+            find pages -mindepth 1 -maxdepth 1 ! -name .git ! -name releases -exec rm -rf {} +
+            cp -r target/site/. pages/
+            touch pages/.nojekyll
+            git -C pages add -A
+            if git -C pages diff --cached --quiet; then
+              echo "nothing changed"
+              exit 0
+            fi
+            git -C pages commit -q -m "docs: site from $GITHUB_SHA"
+            if git -C pages push origin HEAD:gh-pages; then
+              exit 0
+            fi
+            # Someone pushed in between: start again from the new branch.
+            git worktree remove --force pages
+            git branch -D gh-pages-new 2>/dev/null || true
+          done
+          exit 1
