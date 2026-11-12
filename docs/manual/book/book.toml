@@ -1,0 +1,23 @@
+# The English manual. `scripts/manual.sh` builds this and the Russian one
+# (book.ru.toml, with the same settings and src = "../ru") into target/site.
+[book]
+title = "kadr manual"
+language = "en"
+src = "../en"
+
+[build]
+build-dir = "../../../target/site/manual"
+# A page in SUMMARY.md with no file is an error, not a blank page.
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/evlaso/kadr"
+edit-url-template = "https://github.com/evlaso/kadr/edit/main/docs/manual/{path}"
+site-url = "/kadr/manual/"
+additional-css = ["kadr.css"]
+additional-js = ["lang.js"]
+
+[output.html.fold]
+enable = false

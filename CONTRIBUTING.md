@@ -47,6 +47,12 @@ a real pointer, screenshots kept as artifacts.
 - Text in the UI goes through `i18n` by key; add every new string to both
   `data/i18n/en.json` and `ru.json`.
 - Icons are Lucide; fonts are OFL. Nothing GPL.
+- What a person can see or do is in the manual, `docs/manual/{en,ru}`, one
+  page per screen, written in English and translated into Russian: a change to a screen changes its page
+  in the same commit. `crates/kadr-core/tests/manual.rs` (in `just unit`)
+  keeps the two languages in step and the command and settings pages true
+  to the code. `scripts/manual.sh --serve` shows the site (needs
+  [mdBook](https://rust-lang.github.io/mdBook/)).
 
 ## Commits and pull requests
 

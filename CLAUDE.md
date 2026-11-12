@@ -51,6 +51,16 @@ The longer story, and known debts (accessibility, menus on Linux): `docs/traps.m
 - Unusual glyphs (✦, ▣) may have no fallback font in GPUI CE. Prefer words or icons. GPUI CE doesn't fall back to other fonts for missing glyphs at all: a script the UI font lacks (e.g. Chinese) shows as boxes.
 - The UI uses the system font (`.SystemUIFont`). Text drawn onto screenshots uses the bundled IBM Plex (`kit::ANNOTATION_FONT`), on the canvas too, so it matches the editor's rasteriser.
 
+## Manual
+
+English comes first everywhere: write the English text, then translate it. Russian (the manual, the README, the changelog, `ru.json`) is a translation of the English, never the other way round, and where the two disagree the English is right.
+
+`docs/manual/{en,ru}` is the user manual, one page per screen (capture, editor, record, studio, history, settings, projects, cli, glossary, install), the same page in both languages, built with mdBook into the site on GitHub Pages (`scripts/manual.sh`; `.github/workflows/docs.yml` publishes it to `gh-pages` beside `releases/latest.json`; `scripts/manual.sh --serve` shows it on localhost:8000). It says what kadr does today, not what changed (that's the changelog) nor what's planned (the roadmap).
+
+- A `feat:` or `ui:` commit that changes what a person sees or can do also changes that screen's page in the same commit: the English page first, then the Russian one translated from it. A removed feature leaves the page too.
+- Every page has the same shape: what it's for, "How to open", the screen's own sections, "Keys" (a table of keys that exist in the code), "Settings" (the row's name and the `settings.toml` key in backticks), "Commands" (from `kadr --help`). `crates/kadr-core/tests/manual.rs` (part of `just unit`) checks that en and ru have the same pages with the same headings, code blocks, tables and shared code spans; that `cli.md` carries `cli::USAGE`'s commands word for word (change `USAGE`, change both `cli.md`); that `settings.md` names every key of `settings::KEYS`; and that links lead to pages that exist.
+- Use the UI's own words (the i18n strings) for things in the UI, keys as Ctrl+S / Esc / Enter, no code identifiers, no product names. The glossary is where a term is defined; keep UI text, docs and commits to its words.
+
 ## Conventions
 
 - Every window works down to its minimum size, and no window opens bigger than its screen (`kit::open_window` clamps both). Bars that can run out of room fold rather than overlap: what doesn't fit goes under a chevron or a "⋯" menu, labels and key hints go first. Pick the layout from what was drawn with `ui::Fit` (layouts from fullest to most compact, each part tracked) or `ui::track_width`; they redraw on the next frame, since a refresh while drawing is dropped. Check new bars at the minimum size, in Russian too (longer labels).

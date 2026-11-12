@@ -185,8 +185,9 @@ const INTRO: &str = "\
 
 /// The file's settings in the order kadr writes them, each with what it
 /// says above it and, for one that's off by default, an example. An empty
-/// key starts a group.
-const KEYS: &[(&str, &str, &str)] = &[
+/// key starts a group. The manual's settings page lists them all
+/// (`tests/manual.rs`).
+pub const KEYS: &[(&str, &str, &str)] = &[
     ("version", "The file's format.", ""),
     ("", "General", ""),
     ("language", "\"en\" or \"ru\".", ""),
@@ -224,10 +225,10 @@ const KEYS: &[(&str, &str, &str)] = &[
 ];
 
 /// The two tables at the end: what happens after a capture.
-const AFTER: [(&str, &str); 2] = [("after_shot", "a screenshot"), ("after_video", "a recording")];
+pub const AFTER: [(&str, &str); 2] = [("after_shot", "a screenshot"), ("after_video", "a recording")];
 
 /// Their switches, each with what it does.
-const AFTER_KEYS: [(&str, &str); 5] = [
+pub const AFTER_KEYS: [(&str, &str); 5] = [
     ("card", "the card in the screen's corner"),
     ("copy", "copy it to the clipboard"),
     ("save", "keep the file (off: only a temporary one)"),

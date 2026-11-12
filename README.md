@@ -4,40 +4,18 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 
 ![The editor: an arrow, a box and a caption on a screenshot, on a gradient backdrop](docs/images/editor.png)
 
-**Status:** works on Linux (Wayland, Hyprland). macOS and Windows build and pass their end-to-end test in CI (the editor, typing, the system's menus, the area overlay), but nobody has used them on a real machine yet, and recording and window picking aren't ported there. The first pre-release is [0.3.0-alpha.1](https://github.com/evlaso/kadr/releases); testers on macOS and Windows are very welcome.
+**Status:** works on Linux (Wayland, Hyprland). macOS and Windows build and pass their end-to-end test in CI (the editor, typing, the system's menus, the area overlay), but nobody has used them on a real machine yet, and the camera and the studio's click log aren't ported there. The latest pre-release is on [Releases](https://github.com/evlaso/kadr/releases); testers on macOS and Windows are very welcome.
 
 [Читать по-русски](docs/README.ru.md)
 
 ## What it does
 
-- **One bar for everything** (`kadr capture`): area, fullscreen, window, scrolling, self-timer, text recognition and recording behind a single hotkey.
-- **Screenshots** of an area, a window or the screen, and long scrolling ones (`kadr shot scroll`: pick an area and scroll, kadr stitches it). After a capture a thumbnail shows in the corner: copy, edit, pin on top, recognize text, drag the file into a chat. A click without selecting copies the color under the pointer. A window comes with rounded corners and a soft shadow on a transparent background. The selection can be kept and adjusted: handles, arrow keys, an aspect ratio (A) or a typed size; P or `kadr shot previous` takes the last area again.
-- **Screenshot editor:**
-  - arrows (bendable) and lines, rectangles and ellipses (outlined or filled), pencil, highlighter;
-  - text (plain, on a plate or outlined), step numbers, pixelation, spotlight, crop;
-  - a background in a sidebar (gradient, solid colour, wallpaper, the screenshot blurred or transparent), padding, rounding, shadow and an output format;
-  - Save, Save as…, a `.kadr` project, Copy, pin on top and text recognition from the bottom bar;
-  - presets: keep a look with “+”, pick, rename or delete it from a dropdown (the studio has the same);
-  - pictures on top: drop a file into the editor or paste with Ctrl+V;
-  - one size slider for every tool, zoomable canvas.
-- **Screen recording:**
-  - a bar by the selected area: microphone (with a level meter), system audio, camera, logged shortcuts, a countdown; the bar appears as soon as the mouse is let go, and the area stays adjustable there (handles, dragging, arrow keys, a size from the size menu or typed), and a take can be started over from the recording controls;
-  - a camera bubble you set up before recording: drag it (it snaps to corners and edges), resize it, round it;
-  - studio mode: the system cursor stays out of the video, kadr draws its own, large and smooth; the camera is recorded separately.
-- **Studio** (video editor): settings by section in a rail at the left, a timeline with a zoom lane over the filmstrip, export settings under the Export button:
-  - playback in the editor;
-  - zooms on clicks, trimming the start and end, cutting pieces out;
-  - background, padding, rounding, shadow, 16:9, 1:1, 4:5, 9:16;
-  - click rings, shortcut badges, a cursor of any size and smoothness, motion blur;
-  - the camera as a circle, rounded or square, in any of eight spots;
-  - MP4 or GIF export with compression and a file-size estimate; the progress shows on a blurred thumbnail that turns into the result.
-- **The rest:**
-  - trimming a recording and making a GIF right from its thumbnail;
-  - text recognition (English and Russian);
-  - history of captures: search, filters, drag out;
-  - settings with search, including hotkeys, theme, language, storage use and automatic clean-up of old captures; they're kept in `settings.toml`, with a comment on each, to change by hand too;
-  - a tray icon;
-  - project files: “Project” in the editor or the studio saves a `.kadr` file with the whole edit (the original picture or recording, every shape, zoom and cut), to open again later or on another computer. kadr registers the file type on its first run (`kadr install-desktop` does it by hand), so `.kadr` files open in kadr from the file manager.
+- **One bar for everything** (`kadr capture`): area, fullscreen, window, scrolling, self-timer, text recognition and recording behind a single hotkey. After a capture a thumbnail shows in the corner: copy, edit, pin on top, recognize text, drag the file into a chat.
+- **A screenshot editor:** arrows, boxes, text in seven styles, step numbers, a highlighter that follows a line of text, hiding that can't be undone, crop, a background with padding, rounding and a shadow, presets, pictures dropped in.
+- **Screen recording** with the microphone, system audio, a camera bubble and a log of clicks and keys; **a studio** that turns the recording into a video: zooms on clicks, cuts, a smooth large cursor, MP4 or GIF.
+- **The rest:** text recognition, a history of captures, `.kadr` project files, settings with search and a `settings.toml` with a comment on every line, a tray icon, updates from kadr itself.
+
+Every screen, key and setting is in the **[manual](https://evlaso.github.io/kadr/manual/)** ([по-русски](https://evlaso.github.io/kadr/manual/ru/)), also in [docs/manual](docs/manual).
 
 ## Install
 
@@ -45,7 +23,7 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 
 ### Linux (Hyprland)
 
-kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `grim` and `wl-clipboard`. On Omarchy they're either there already or come from `pacman`.
+kadr needs `gpu-screen-recorder`, `ffmpeg`, `tesseract` (with English data), `grim` and `wl-clipboard`. On Omarchy they're either there already or come from `pacman`. `mpv` is optional: the trim window's Play and the studio's Preview play through it.
 
 ```sh
 cargo build --profile dist -p kadr -p kadr-tray
@@ -114,11 +92,11 @@ kadr install-desktop                               .kadr file type, icon and men
 ## Platforms
 
 - **Linux** (Wayland, Hyprland): everything works.
-- **macOS and Windows:** the editor, the studio, screenshots, the clipboard, notifications, the tray, global hotkeys and the area overlay are written and pass the end-to-end test on CI's runners; recording, picking windows and the studio's click log aren't ported yet. Everything system-specific lives in `crates/kadr-platform`.
+- **macOS and Windows:** the editor, the studio, screenshots (window and scrolling shots too), recording through the system's capture, the clipboard, notifications, the tray, global hotkeys and the area overlay are written and pass the end-to-end test on CI's runners; the camera, choosing a microphone and the studio's click and key log aren't ported yet. Everything system-specific lives in `crates/kadr-platform`.
 
 ## Development
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has how to build and test. Where the project is heading is [docs/SPEC.ru.md](docs/SPEC.ru.md) (in Russian); the measurements are in [docs/perf.md](docs/perf.md), known debts and pitfalls in [docs/traps.md](docs/traps.md), and [CLAUDE.md](CLAUDE.md) is the guide for coding agents.
+[CONTRIBUTING.md](CONTRIBUTING.md) has how to build and test. The manual's source is [docs/manual](docs/manual). Where the project is heading is [docs/SPEC.ru.md](docs/SPEC.ru.md) (in Russian); the measurements are in [docs/perf.md](docs/perf.md), known debts and pitfalls in [docs/traps.md](docs/traps.md), and [CLAUDE.md](CLAUDE.md) is the guide for coding agents.
 
 ## License
 
