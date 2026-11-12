@@ -20,7 +20,8 @@ const STRINGS = {
   en: {
     intro: "Introduction", github: "GitHub", other: "По-русски", search: "Search", nothing: "Nothing found",
     find: "Search documentation…", results: "Pages and sections",
-    edit: "Edit this page", pages: "Pages",
+    edit: "Edit this page", pages: "Pages", asMarkdown: "This page as Markdown", llms: "For language models",
+    llmsTip: "The whole manual as plain text, to give to an AI assistant",
     headline: "Screenshots and screen recording for the desktop",
     description: "Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.",
     download: "Download", downloadNote: "Linux, macOS and Windows. Alpha.", allReleases: "all releases",
@@ -29,7 +30,8 @@ const STRINGS = {
   ru: {
     intro: "Введение", github: "GitHub", other: "English", search: "Поиск", nothing: "Ничего не найдено",
     find: "Поиск по справочнику…", results: "Страницы и разделы",
-    edit: "Править страницу", pages: "Страницы",
+    edit: "Править страницу", pages: "Страницы", asMarkdown: "Страница в Markdown", llms: "Для языковых моделей",
+    llmsTip: "Весь справочник простым текстом, чтобы дать его ИИ-помощнику",
     headline: "Скриншоты и запись экрана",
     description: "Скриншоты и запись экрана для Linux, macOS и Windows. Нативное приложение на Rust.",
     download: "Скачать", downloadNote: "Linux, macOS и Windows. Альфа.", allReleases: "все релизы",

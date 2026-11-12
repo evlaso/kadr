@@ -17,6 +17,10 @@ layout: base.njk
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
         <span>{{ t.github }}</span>
       </a>
+      <a class="out llms" href="{{ root }}{{ lang | pageUrl('') }}llms.txt" title="{{ t.llmsTip }}">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/></svg>
+        <span>llms.txt</span>
+      </a>
     </div>
     <details class="menu-fold" open>
       <summary>{{ t.pages }}</summary>
@@ -62,6 +66,6 @@ layout: base.njk
       <span>{% if next %}<a href="{{ root }}{{ lang | pageUrl(next.slug) }}">{{ next.title }} →</a>{% endif %}</span>
       {%- endif %}{% endfor %}
     </footer>
-    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a></p>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a> · <a href="{{ root }}{{ lang | mdUrl(slug) }}">{{ t.asMarkdown }}</a> · <a href="{{ root }}{{ lang | pageUrl('') }}llms-full.txt" title="{{ t.llmsTip }}">{{ t.llms }}</a></p>
   </main>
 </div>
