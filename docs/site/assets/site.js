@@ -67,3 +67,31 @@
     });
   }
 })();
+
+// The home page's download links, from the release job's releases/latest.json.
+(function () {
+  var get = document.getElementById("get");
+  if (!get) return;
+  fetch(get.dataset.latest).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+    if (!j || !j.platforms) return;
+    var names = { "linux-x86_64": "Linux", "macos-universal": "macOS", "windows-x86_64": "Windows" };
+    var ua = navigator.userAgent;
+    var mine = /Mac/.test(ua) ? "macos-universal" : /Win/.test(ua) ? "windows-x86_64" : "linux-x86_64";
+    var keys = Object.keys(names).filter(function (k) { return j.platforms[k]; });
+    if (!keys.length) return;
+    keys.sort(function (a, b) { return (b === mine) - (a === mine); });
+    get.textContent = "";
+    keys.forEach(function (k, i) {
+      var a = document.createElement("a");
+      a.href = j.platforms[k].url;
+      a.textContent = names[k];
+      if (i === 0) a.className = "button";
+      get.appendChild(a);
+    });
+    var note = document.createElement("a");
+    note.className = "note";
+    note.href = j.notes_url;
+    note.textContent = j.version + " · " + get.dataset.all;
+    get.appendChild(note);
+  }).catch(function () {});
+})();

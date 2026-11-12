@@ -6,19 +6,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if title and title != "kadr" %}{{ title }} · kadr{% else %}kadr{% endif %}</title>
-<meta name="description" content="{{ description or 'Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.' }}">
+<title>{% if slug %}{{ title }} · kadr{% else %}kadr · {{ t.headline }}{% endif %}</title>
+<meta name="description" content="{{ t.description }}">
 <link rel="icon" type="image/svg+xml" href="{{ root }}assets/kadr.svg">
 <link rel="stylesheet" href="{{ root }}assets/site.css">
-<link rel="alternate" hreflang="{{ other }}" href="{{ root }}{{ otherUrl }}">
+<link rel="alternate" hreflang="{{ other }}" href="{{ root }}{{ other | pageUrl(slug) }}">
 </head>
 <body>
 <header class="top">
-  <a class="wordmark" href="{{ root }}{% if lang != 'en' %}{{ lang }}/{% endif %}">kadr</a>
+  <a class="wordmark" href="{{ root }}{{ lang | pageUrl('') }}">kadr</a>
   <nav>
-    <a href="{{ root }}{{ (lang | manualBase).slice(1) }}"{% if slug !== undefined %} aria-current="true"{% endif %}>{{ t.manual }}</a>
     <a href="https://github.com/evlaso/kadr">{{ t.github }}</a>
-    <a href="{{ root }}{{ otherUrl }}" lang="{{ other }}">{{ t.other }}</a>
+    <a href="{{ root }}{{ other | pageUrl(slug) }}" lang="{{ other }}">{{ t.other }}</a>
   </nav>
 </header>
 {{ content | safe }}

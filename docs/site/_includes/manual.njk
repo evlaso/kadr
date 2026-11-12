@@ -3,7 +3,6 @@ layout: base.njk
 ---
 {%- set t = strings[lang] -%}
 {%- set root = page.url | root -%}
-{%- set base = root + (lang | manualBase).slice(1) -%}
 {%- set pages = nav[lang] -%}
 <div class="manual">
   <aside class="menu">
@@ -16,7 +15,7 @@ layout: base.njk
       <ul class="pages">
         {%- for p in pages %}
         <li>
-          <a href="{{ base }}{% if p.slug %}{{ p.slug }}/{% endif %}"{% if p.slug == slug %} aria-current="page"{% endif %}>{{ p.title if p.slug else t.manual }}</a>
+          <a href="{{ root }}{{ lang | pageUrl(p.slug) }}"{% if p.slug == slug %} aria-current="page"{% endif %}>{{ p.title if p.slug else t.intro }}</a>
           {%- if p.slug == slug %}
           {%- set outline = content | outline %}
           {%- if outline.length %}
@@ -33,14 +32,25 @@ layout: base.njk
     </details>
   </aside>
   <main class="prose" data-pagefind-body>
-    <h1>{{ title if slug else t.manual }}</h1>
+    {%- if slug %}
+    <h1>{{ title }}</h1>
     {{ content | withoutTitle | safe }}
+    {%- else %}
+    <h1 data-pagefind-meta="title:kadr">{{ t.headline }}</h1>
+    <div class="lead">{{ content | withoutTitle | firstParagraph | safe }}</div>
+    <p class="get" id="get" data-latest="{{ root }}releases/latest.json" data-all="{{ t.allReleases }}" data-pagefind-ignore>
+      <a class="button" href="https://github.com/evlaso/kadr/releases">{{ t.download }}</a>
+      <span class="note">{{ t.downloadNote }}</span>
+    </p>
+    <img class="shot" src="{{ root }}images/editor.png" alt="{{ t.shotAlt }}" width="1401" height="777">
+    {{ content | withoutTitle | afterFirstParagraph | safe }}
+    {%- endif %}
     <footer class="turn">
       {%- for p in pages %}{% if p.slug == slug %}
       {%- set prev = pages[loop.index0 - 1] if loop.index0 > 0 %}
       {%- set next = pages[loop.index0 + 1] %}
-      <span>{% if prev %}<a href="{{ base }}{% if prev.slug %}{{ prev.slug }}/{% endif %}">← {{ prev.title if prev.slug else t.manual }}</a>{% endif %}</span>
-      <span>{% if next %}<a href="{{ base }}{{ next.slug }}/">{{ next.title }} →</a>{% endif %}</span>
+      <span>{% if prev %}<a href="{{ root }}{{ lang | pageUrl(prev.slug) }}">← {{ prev.title if prev.slug else t.intro }}</a>{% endif %}</span>
+      <span>{% if next %}<a href="{{ root }}{{ lang | pageUrl(next.slug) }}">{{ next.title }} →</a>{% endif %}</span>
       {%- endif %}{% endfor %}
     </footer>
     <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a></p>

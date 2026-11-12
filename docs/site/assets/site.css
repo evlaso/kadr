@@ -25,7 +25,6 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .top a { text-decoration: none; }
 .wordmark { font-weight: 700; font-size: 1.25rem; letter-spacing: -0.03em; }
 .top nav { display: flex; gap: 1.25rem; font-size: 0.875rem; color: var(--soft); }
-.top nav a[aria-current] { color: var(--text); }
 
 /* Text. */
 .prose { max-width: var(--reading); margin: 0 auto; padding: 3.5rem 1.25rem 5rem; }
@@ -79,20 +78,10 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
   .menu-fold:not([open]) summary { padding-bottom: 0.25rem; }
 }
 
-/* The landing page. */
-.lead { font-size: 1.125em; color: var(--soft); margin-bottom: 1.75rem; }
-.get { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1.25rem; margin-bottom: 2.75rem; }
+/* The home page: the download and a screenshot above the introduction. */
+.lead { font-size: 1.0625em; color: var(--soft); }
+.get { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1.25rem; margin: 1.75rem 0 2.5rem; }
 .button { background: var(--text); color: var(--bg); text-decoration: none; padding: 0.5rem 1.1rem; border-radius: 8px; font-weight: 600; }
 .button:hover { color: var(--bg); background: var(--accent); }
 .note { color: var(--soft); font-size: 0.875rem; }
-.shot { display: block; width: 100%; height: auto; border-radius: 10px; margin: 0 0 3rem; border: 1px solid var(--line); }
-@media (min-width: 60rem) { .shot { width: calc(100% + 12rem); max-width: none; margin-left: -6rem; } }
-.features { margin: 0 0 3rem; }
-.features div { display: grid; grid-template-columns: 9rem 1fr; gap: 1rem; padding: 0.7rem 0; border-top: 1px solid var(--line); }
-.features dt { font-weight: 600; }
-.features dt a { text-decoration: none; }
-.features dd { margin: 0; color: var(--soft); }
-@media (max-width: 34rem) { .features div { grid-template-columns: 1fr; gap: 0.1rem; } }
-.status { color: var(--soft); }
-.foot { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 3.5rem; font-size: 0.875rem; color: var(--soft); }
-.foot a { text-decoration: none; }
+.shot { display: block; width: 100%; height: auto; border-radius: 10px; margin: 0 0 2.5rem; border: 1px solid var(--line); }

@@ -1,7 +1,7 @@
 name: docs
 
-# The site on GitHub Pages (the landing page and the manual in two
-# languages, scripts/manual.sh: Eleventy and Pagefind): built on every push
+# The site on GitHub Pages (the manual in two languages, its first page
+# the home; scripts/manual.sh: Eleventy and Pagefind): built on every push
 # to main that touches it, and pushed to the gh-pages branch whole, with
 # releases/ carried over from what's there: the release job keeps
 # latest.json in it, which the tray's update check reads.
@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: docs/site/package-lock.json
       - run: scripts/manual.sh

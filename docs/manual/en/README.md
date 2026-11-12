@@ -1,6 +1,6 @@
 # kadr
 
-Screenshots and screen recording for the desktop: capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video. Written in Rust on GPUI CE. Made first for Linux on Omarchy (Arch, Hyprland, Wayland), coming to macOS and Windows. English and Russian; dark and light themes follow the system.
+kadr takes screenshots and records the screen. Capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video. Written in Rust on GPUI CE. Made first for Linux on Omarchy (Arch, Hyprland, Wayland), coming to macOS and Windows. English and Russian; dark and light themes follow the system.
 
 This manual says what kadr does today, screen by screen. Each page has the same shape: what the screen is for, how to open it, what's on it, its keys, the settings that change it and the commands that start it. What changed between versions is in the [changelog](https://github.com/evlaso/kadr/blob/main/CHANGELOG.md); where the project is going is the [roadmap](https://github.com/evlaso/kadr/blob/main/docs/ROADMAP.ru.md) (in Russian).
 

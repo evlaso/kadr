@@ -1,6 +1,7 @@
-// kadr's site: the landing page (docs/site/pages) and the manual
-// (docs/manual/{en,ru}, plain Markdown that also reads well on GitHub),
-// into target/site. Run from the repository's root: scripts/manual.sh.
+// kadr's site is its manual: docs/manual/{en,ru}, plain Markdown that also
+// reads well on GitHub, into target/site. The first page (README.md) is
+// the site's home, where the layout adds the download and a screenshot.
+// English is at the root, Russian under /ru/. Run from the repository's root: scripts/manual.sh.
 // Every URL in the output is relative, so the site works under any path
 // (github.io/kadr today, its own domain later).
 import fs from "node:fs";
@@ -13,12 +14,20 @@ const LANGS = ["en", "ru"];
 // What the layouts say, by language. English first; Russian translates it.
 const STRINGS = {
   en: {
-    manual: "Manual", github: "GitHub", other: "По-русски", search: "Search", nothing: "Nothing found",
-    previous: "Previous", next: "Next", edit: "Edit this page", onThisPage: "On this page", pages: "Pages",
+    intro: "Introduction", github: "GitHub", other: "По-русски", search: "Search", nothing: "Nothing found",
+    edit: "Edit this page", pages: "Pages",
+    headline: "Screenshots and screen recording for the desktop",
+    description: "Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.",
+    download: "Download", downloadNote: "Linux, macOS and Windows. Alpha.", allReleases: "all releases",
+    shotAlt: "The editor: an arrow, a box and a caption on a screenshot, on a gradient backdrop",
   },
   ru: {
-    manual: "Справочник", github: "GitHub", other: "English", search: "Поиск", nothing: "Ничего не найдено",
-    previous: "Назад", next: "Дальше", edit: "Править страницу", onThisPage: "На этой странице", pages: "Страницы",
+    intro: "Введение", github: "GitHub", other: "English", search: "Поиск", nothing: "Ничего не найдено",
+    edit: "Править страницу", pages: "Страницы",
+    headline: "Скриншоты и запись экрана",
+    description: "Скриншоты и запись экрана для Linux, macOS и Windows. Нативное приложение на Rust.",
+    download: "Скачать", downloadNote: "Linux, macOS и Windows. Альфа.", allReleases: "все релизы",
+    shotAlt: "Редактор: стрелка, рамка и подпись на скриншоте, фон градиентом",
   },
 };
 
@@ -32,7 +41,7 @@ function summary(lang) {
 }
 
 const manualLang = (inputPath) => LANGS.find((l) => inputPath.includes(`/manual/${l}/`));
-const manualBase = (lang) => (lang === "en" ? "/manual/" : `/manual/${lang}/`);
+const manualBase = (lang) => (lang === "en" ? "/" : `/${lang}/`);
 const slugOf = (inputPath) => {
   const name = path.basename(inputPath, ".md");
   return name === "README" ? "" : name;
@@ -45,14 +54,14 @@ const slugify = (s) =>
 export default function (config) {
   config.ignores.add("docs/*.md");
   config.ignores.add("docs/manual/*/SUMMARY.md");
-  config.ignores.add("docs/site/node_modules/**");
+  config.ignores.add("docs/site/**");
   config.addPassthroughCopy({ "docs/images": "images", "docs/site/assets": "assets" });
 
   config.addGlobalData("strings", STRINGS);
   config.addGlobalData("nav", Object.fromEntries(LANGS.map((l) => [l, summary(l)])));
   config.addGlobalData("eleventyComputed", {
     lang: (data) => manualLang(data.page.inputPath) ?? data.lang ?? "en",
-    layout: (data) => (manualLang(data.page.inputPath) ? "manual.njk" : data.layout),
+    layout: () => "manual.njk",
     slug: (data) => (manualLang(data.page.inputPath) ? slugOf(data.page.inputPath) : undefined),
     permalink: (data) => {
       const lang = manualLang(data.page.inputPath);
@@ -71,7 +80,7 @@ export default function (config) {
       const lang = manualLang(data.page.inputPath);
       if (!lang) return data.title;
       const slug = slugOf(data.page.inputPath);
-      return summary(lang).find((p) => p.slug === slug)?.title ?? slug;
+      return slug ? (summary(lang).find((p) => p.slug === slug)?.title ?? slug) : STRINGS[lang].intro;
     },
   });
 
@@ -98,6 +107,8 @@ export default function (config) {
 
   // "/manual/ru/editor/" → "../../../": the way back to the site's root.
   config.addFilter("root", (url) => "../".repeat(url.split("/").filter(Boolean).length) || "./");
+  // A page of a language from the site's root: ("ru", "editor") → "ru/editor/".
+  config.addFilter("pageUrl", (lang, slug) => manualBase(lang).slice(1) + (slug ? `${slug}/` : ""));
   // The page's h2 headings, for the outline under its name in the menu.
   config.addFilter("outline", (html) =>
     [...(html ?? "").matchAll(/<h2 id="([^"]+)"[^>]*>(.*?)<\/h2>/g)].map(([, id, inner]) => ({
@@ -107,7 +118,9 @@ export default function (config) {
   );
   // The first heading is the page's title, which the layout draws itself.
   config.addFilter("withoutTitle", (html) => (html ?? "").replace(/^\s*<h1[^>]*>.*?<\/h1>/s, ""));
-  config.addFilter("manualBase", manualBase);
+  // The home page puts the download between the first paragraph and the rest.
+  config.addFilter("firstParagraph", (html) => /<p>.*?<\/p>/s.exec(html ?? "")?.[0] ?? "");
+  config.addFilter("afterFirstParagraph", (html) => (html ?? "").replace(/<p>.*?<\/p>/s, ""));
   config.addFilter("otherLang", (lang) => (lang === "en" ? "ru" : "en"));
 
   return {

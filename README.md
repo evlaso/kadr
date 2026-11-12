@@ -15,7 +15,7 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 - **Screen recording** with the microphone, system audio, a camera bubble and a log of clicks and keys; **a studio** that turns the recording into a video: zooms on clicks, cuts, a smooth large cursor, MP4 or GIF.
 - **The rest:** text recognition, a history of captures, `.kadr` project files, settings with search and a `settings.toml` with a comment on every line, a tray icon, updates from kadr itself.
 
-Every screen, key and setting is in the **[manual](https://evlaso.github.io/kadr/manual/)** ([по-русски](https://evlaso.github.io/kadr/manual/ru/)), also in [docs/manual](docs/manual).
+Every screen, key and setting is in the **[manual](https://evlaso.github.io/kadr/)** ([по-русски](https://evlaso.github.io/kadr/ru/)), also in [docs/manual](docs/manual).
 
 ## Install
 
