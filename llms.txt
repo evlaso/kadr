@@ -1,0 +1,31 @@
+# kadr
+
+> kadr takes screenshots and records the screen. Capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video.
+
+This manual says what kadr does today, screen by screen. Each page has the same shape: what the screen is for, how to open it, what's on it, its keys, the settings that change it and the commands that start it. What changed between versions is in the [changelog](https://github.com/evlaso/kadr/blob/main/CHANGELOG.md); where the project is going is the [roadmap](https://github.com/evlaso/kadr/blob/main/docs/ROADMAP.ru.md) (in Russian).
+
+kadr is alpha software. Where it works today:
+
+- **Linux** (Wayland, Hyprland): everything works, and this is where kadr is used every day.
+- **macOS and Windows:** the editor, the studio, screenshots (window and scrolling shots too), recording through the system's capture, the clipboard, notifications, the tray, global hotkeys and the area overlay are written and pass the end-to-end test on CI's runners. The camera, choosing a microphone and the studio's click and key log aren't ported yet, and nobody has run kadr on a real machine there: testers are very welcome.
+
+## Pages
+
+- [Introduction](https://evlaso.github.io/kadr/index.md): kadr takes screenshots and records the screen. Sections: Pages, Platforms, Help.
+- [Install](https://evlaso.github.io/kadr/install.md): Use a release build, or build kadr from source with Rust 1.95 or newer. Sections: Downloads, Linux (Hyprland), macOS and Windows, Updating, Commands.
+- [Capture](https://evlaso.github.io/kadr/capture.md): Everything that takes a picture of the screen: an area, a window, the whole screen or every screen, a long scrolling shot, a shot on a self-timer. Sections: How to open, The capture bar, Picking an area, Windows, screens and scrolling, The card after a capture, Pinning, Text recognition, Keys, Settings, Commands.
+- [Editor](https://evlaso.github.io/kadr/editor.md): The editor is where a screenshot gets its arrows, boxes, text and step numbers, where private details are hidden, and where the picture is cropped and put on a background. Sections: How to open, Tools, Colour, size and a shape's options, Background and presets, Crop, The canvas and the bottom bar, Keys, Settings, Commands.
+- [Recording](https://evlaso.github.io/kadr/record.md): Records an area or the whole screen to an MP4, with the microphone, the computer's sound, your camera and the shortcuts you press. Sections: How to open, The recording bar, While recording, The camera bubble, After recording, On macOS and Windows, Keys, Settings, Commands.
+- [Studio](https://evlaso.github.io/kadr/studio.md): The studio turns a screen recording into a finished video: it zooms in where you clicked, cuts out the dull parts, draws a large smooth cursor, puts the video on a background with the camera in a corner, and exports MP4 or GIF. Sections: How to open, The window, Zooms and cuts, Cursor, shortcuts, camera and audio, Background and export, Platforms, Keys, Settings, Commands.
+- [History](https://evlaso.github.io/kadr/history.md): Every screenshot, recording and GIF in your screenshots and recordings folders, newest first, as a grid of thumbnails. Sections: How to open, Finding a capture, Selecting, Actions, Keys, Settings, Commands.
+- [Settings](https://evlaso.github.io/kadr/settings.md): Settings controls capture behaviour, shortcuts, the editor and studio defaults, and storage. Sections: How to open, Sections, Shortcuts, Storage, Settings file, Keys, Commands.
+- [Project files](https://evlaso.github.io/kadr/projects.md): A .kadr project keeps an edit, not just its finished picture or video. Sections: How to open, Saving, Inside the file, Keys, Commands.
+- [Command line](https://evlaso.github.io/kadr/cli.md): Run kadr --help to see the command list. Sections: Screenshots, Recording, Editing, Other commands.
+- [Glossary](https://evlaso.github.io/kadr/glossary.md): The words this manual and kadr use.
+
+## Optional
+
+- [Full manual](https://evlaso.github.io/kadr/llms-full.txt): every page above in one file, in reading order.
+- [Russian manual](https://evlaso.github.io/kadr/ru/llms.txt): the same pages in Russian.
+- [Source code](https://github.com/evlaso/kadr): the Rust source, issues and releases.
+- [Changelog](https://github.com/evlaso/kadr/blob/main/CHANGELOG.md): what changed in each version.

@@ -1,0 +1,1053 @@
+# kadr: the complete manual
+
+> kadr takes screenshots and records the screen. Capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video.
+
+Every page of kadr's user manual in one file, in reading order. Each page starts with its own top-level heading and the address it has on the site; links between pages point at those addresses.
+
+Site: https://evlaso.github.io/kadr/
+Built: 2026-11-12
+
+---
+
+# kadr
+
+On the site: https://evlaso.github.io/kadr/
+
+kadr takes screenshots and records the screen. Capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video. Written in Rust on GPUI CE. Made first for Linux on Omarchy (Arch, Hyprland, Wayland), coming to macOS and Windows. English and Russian; dark and light themes follow the system.
+
+This manual says what kadr does today, screen by screen. Each page has the same shape: what the screen is for, how to open it, what's on it, its keys, the settings that change it and the commands that start it. What changed between versions is in the [changelog](https://github.com/evlaso/kadr/blob/main/CHANGELOG.md); where the project is going is the [roadmap](https://github.com/evlaso/kadr/blob/main/docs/ROADMAP.ru.md) (in Russian).
+
+## Pages
+
+- [Install](https://evlaso.github.io/kadr/install/): the builds, what kadr needs on each system, the Hyprland hook.
+- [Capture](https://evlaso.github.io/kadr/capture/): the capture bar, picking an area, window and screen shots, scrolling shots, the self-timer, the card after a capture, pinning, text recognition.
+- [Editor](https://evlaso.github.io/kadr/editor/): annotating a screenshot: tools, text styles, hiding, crop, backgrounds, presets, saving.
+- [Recording](https://evlaso.github.io/kadr/record/): the recording bar, the microphone and system audio, the camera bubble, studio mode, trimming and GIFs.
+- [Studio](https://evlaso.github.io/kadr/studio/): turning a recording into a video: zooms, cuts, the cursor, the camera, export.
+- [History](https://evlaso.github.io/kadr/history/): every capture, with search and filters.
+- [Settings](https://evlaso.github.io/kadr/settings/): the settings window, hotkeys and the `settings.toml` file.
+- [Project files](https://evlaso.github.io/kadr/projects/): `.kadr` files that keep an edit.
+- [Command line](https://evlaso.github.io/kadr/cli/): every `kadr` command.
+- [Glossary](https://evlaso.github.io/kadr/glossary/): the words this manual and kadr use.
+
+## Platforms
+
+- **Linux** (Wayland, Hyprland): everything works, and this is where kadr is used every day.
+- **macOS and Windows:** the editor, the studio, screenshots (window and scrolling shots too), recording through the system's capture, the clipboard, notifications, the tray, global hotkeys and the area overlay are written and pass the end-to-end test on CI's runners. The camera, choosing a microphone and the studio's click and key log aren't ported yet, and nobody has run kadr on a real machine there: testers are very welcome.
+
+## Help
+
+Bugs and questions go to [GitHub issues](https://github.com/evlaso/kadr/issues). A crash leaves `crash.log` in kadr's cache folder; attach it. Developers start at [CONTRIBUTING.md](https://github.com/evlaso/kadr/blob/main/CONTRIBUTING.md).
+
+---
+
+# Install
+
+On the site: https://evlaso.github.io/kadr/install/
+
+Use a release build, or build kadr from source with Rust 1.95 or newer. Linux on Wayland with Hyprland is the main platform.
+
+## Downloads
+
+[Releases](https://github.com/evlaso/kadr/releases) has a Linux `.tar.xz` with `INSTALL.md`, a macOS `.dmg` containing `Kadr.app` for Apple silicon or Intel, and a Windows installer or portable `.exe`.
+
+The builds are not signed yet. After copying the macOS app to Applications, run:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Kadr.app
+```
+
+## Linux (Hyprland)
+
+Install `gpu-screen-recorder`, `ffmpeg`, `tesseract` with English language data, `grim` and `wl-clipboard`. On Omarchy they may already be installed; otherwise use `pacman`. `mpv` is optional: the trim window's Play and the studio's Preview play through it.
+
+To build from source and install the two programs:
+
+```sh
+cargo build --profile dist -p kadr -p kadr-tray
+install -m755 target/dist/kadr target/dist/kadr-tray ~/.local/bin/
+```
+
+Copy the Hyprland hook from the source tree:
+
+```sh
+cp data/hypr/kadr.lua ~/.config/hypr/kadr.lua
+```
+
+Add `require("hypr.kadr")` to `~/.config/hypr/hyprland.lua`. The hook floats kadr's windows, loads the shortcuts saved in [Settings](https://evlaso.github.io/kadr/settings/), and logs clicks and shortcut keys while recording for the studio. Linux starts with your existing Hyprland bindings, not the global defaults used on the other systems.
+
+Start `kadr-tray` at login. In Omarchy's `autostart.lua`, add:
+
+```lua
+o.launch_on_start("kadr-tray")
+```
+
+On its first run, kadr registers the `.kadr` project file type, icon and menu entry on Linux. Run `kadr install-desktop` to do it by hand.
+
+## macOS and Windows
+
+For a source build, build all three programs and keep `kadr`, `kadr-tray` and `kadr-overlay` side by side:
+
+```sh
+cargo build --profile dist -p kadr -p kadr-tray -p kadr-overlay
+```
+
+The tray holds the global shortcuts, so start `kadr-tray` at login. The defaults and how to change them are in [Settings](https://evlaso.github.io/kadr/settings/). The Windows installer sets up the tray at login and the `.kadr` file association; the portable build is a single `kadr.exe`.
+
+Unsigned builds are also attached to manually started [Actions](https://github.com/evlaso/kadr/actions) runs. For those standalone macOS programs, remove quarantine before opening them:
+
+```sh
+xattr -d com.apple.quarantine kadr kadr-tray kadr-overlay
+```
+
+Screenshots, window shots, the editor, studio and recording through the system's capture are implemented on macOS and Windows. Scrolling screenshots are available there too. These systems have CI tests, but have not yet been tried on a real machine. The Hyprland click/key log is Linux-only.
+
+## Updating
+
+With **General → Check for updates** on in Settings, the tray checks once a day. A new release appears on an update card. **Release page** opens its notes and downloads; **Update** downloads the release, verifies its release signature and replaces the installed files. The tray restarts on the new version. A version that fails to start three times in a row is replaced by the previous one. Package-manager installations are updated through their manager instead.
+
+Choose **Update channel** in **General**: **Stable** gets finished versions only; **Beta** also gets alpha, beta and release-candidate versions. A pre-release build uses Beta until you change it.
+
+To check immediately, open **Settings → About kadr → Check now**. The same row shows the result and offers the update. `kadr update` shows the result on a card instead.
+
+## Commands
+
+```text
+  kadr settings                                  settings
+  kadr update                                    look for a newer release now
+  kadr tray                                      tray icon (for autostart)
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+```
+
+`kadr install-desktop` is Linux-only. See [Command line](https://evlaso.github.io/kadr/cli/) for all commands.
+
+---
+
+# Capture
+
+On the site: https://evlaso.github.io/kadr/capture/
+
+Everything that takes a picture of the screen: an area, a window, the whole screen or every screen, a long scrolling shot, a shot on a self-timer. After a capture a card shows in the corner of the screen, where you copy the picture, open it in the [Editor](https://evlaso.github.io/kadr/editor/), pin it on top of your windows or read the text in it. Text recognition and pinning live here too.
+
+## How to open
+
+- **The capture bar** (`kadr capture`) puts every mode on one bar, so one hotkey is enough. It has no default hotkey: set one in Settings → Shortcuts → All modes on one bar.
+- **Hotkeys.** On macOS and Windows the defaults are Ctrl+Shift+1 for an area, Ctrl+Shift+3 to recognize text and Ctrl+Shift+6 for a scrolling screenshot. On Linux kadr starts from your Hyprland bindings. More actions (the previous area, a window or area, the screen) can get a hotkey in Settings → Shortcuts.
+- **The tray menu:** Screenshot, Recognize text, Scrolling screenshot.
+- **Commands:** `kadr shot`, `kadr shot scroll`, `kadr text`, `kadr pin`; see [Commands](https://evlaso.github.io/kadr/capture/#commands).
+
+## The capture bar
+
+The bar shows near the bottom of the screen with eight modes in three groups:
+
+| Key | Mode | Does |
+|---|---|---|
+| 1 | Area | Pick an area |
+| 2 | Previous | Take the last area again, as it is now |
+| 3 | Fullscreen | The whole screen the focus is on |
+| 4 | Window | Point at a window and click it |
+| 5 | Scrolling | A long scrolling shot |
+| 6 | Timer | The whole screen, after a countdown |
+| 7 | Text | Pick an area and recognize the text in it |
+| 8 | Recording | The recording bar (see [Recording](https://evlaso.github.io/kadr/record/)) |
+
+Click a mode, press its digit, or move with the left and right arrows and press Enter. Esc, a click outside the bar or the same hotkey again closes it.
+
+## Picking an area
+
+The screen freezes, and you drag a box over it. A hint bar says what the keys do at each moment.
+
+- **Drag** to draw the area; it's taken when you let go. Shift while dragging makes a square. Holding Space while dragging moves the whole box instead.
+- **Click** without dragging: over a window it takes that window; over nothing it copies the colour under the pointer as a hex code (#RRGGBB) and kadr says "Color copied".
+- **Space** switches to windows only: a click takes the window under the pointer, and nothing is drawn. Space again goes back to drawing an area.
+- **Keep the area to adjust it.** Press an arrow, A or P, or a digit, while the box is there, and it stays after you let go of the mouse. Then drag its handles to resize it, drag it from inside to move it, or double-click inside it to take it.
+- **Arrows** move the area a pixel, Shift+arrows ten. **Alt+arrows** grow or shrink it from the right and bottom edges.
+- **A** steps through aspect ratios: Free, 1:1, 4:3, 16:9, 9:16.
+- **Digits** type an exact size in screen pixels: the width, then X (or Tab or Space) and the height, then Enter. Left without a height, it follows the aspect ratio.
+- **P** brings back the last area picked on this screen, to adjust. Enter with nothing drawn takes that area straight away.
+- **Enter** takes the area; **Esc** cancels.
+
+The Area mode and `kadr shot region` don't snap to windows: a click there only copies a colour.
+
+## Windows, screens and scrolling
+
+- **A window** comes by itself, whatever covers it, with rounded corners and a soft shadow on a transparent background. Window shadow in the settings turns the shadow off. Window background puts it straight onto a background saved in the editor instead; the editor opens it with that background, still to change. Window shots work on Linux, macOS and Windows.
+- **Fullscreen** takes the screen the focus is on.
+- **Every screen at once** (`kadr shot all`): all monitors in one picture, laid out as your desktop has them.
+- **The self-timer** counts 3, 5 or 10 seconds over the screen (Self-timer in the settings), then takes it. Esc cancels the countdown.
+- **The pointer** can be in the picture: turn on Pointer in screenshots.
+
+**A scrolling shot:** pick an area, then scroll it yourself. kadr keeps grabbing the area and stitches what comes into view into one long picture. It works down a page and sideways, to the right (a timeline, a wide table), which makes one wide picture.
+
+A frame shows round the area, and a bar by it says "Scroll — kadr stitches it" with the length so far in pixels. Press Done, or the same hotkey again, to save it; Cancel throws it away. Scrolling shots work on Linux, macOS and Windows.
+
+## The card after a capture
+
+A card with the picture slides in at the corner of the screen. By default the screenshot is also copied to the clipboard right away. Hover over the card for its buttons:
+
+- **Copy**: puts the picture on the clipboard and closes the card.
+- **Edit**: opens it in the [Editor](https://evlaso.github.io/kadr/editor/). A double-click on the card does the same.
+- **Pin on top** (top right): keeps it above every window, see below.
+- **Recognize text** (bottom right): reads the text in the picture.
+- **Show in folder** (bottom right).
+- **Delete file** (bottom left): moves the file to the trash.
+- **Close** (top left).
+
+Drag the card into a chat, a browser or a file manager to drop the file there. Swipe it toward the screen edge to put it away.
+
+A card goes after 10 seconds by default, and stays while the pointer is over it. How long, which corner and how many cards at once are in Settings → General.
+
+## Pinning
+
+A pinned picture floats above every window, at its real size, so you can keep a reference in sight while you work. Pin a screenshot from its card, from the editor's bottom bar, from [History](https://evlaso.github.io/kadr/history/) (P), with `kadr pin`, or have every screenshot pinned (Pin on top under After a screenshot).
+
+- Drag it to move it; arrows nudge it a pixel, Shift+arrows ten.
+- Scroll to zoom it; Alt+scroll or Ctrl+scroll changes its opacity.
+- **L** lets clicks through to the windows below it. Only the lock in its corner still takes clicks; press it, or L, to catch clicks again.
+- Esc, a double-click or a right-click closes it.
+
+## Text recognition
+
+`kadr text` freezes the screen; pick an area, and its text goes to the clipboard. A card shows what was found, with Copy again and, when the text holds a link, Open link. QR codes are read too, when zbar is installed. With a picture (`kadr text <image>`, or Recognize text on a card) kadr reads the whole picture.
+
+kadr reads English and Russian, and Ukrainian, German, French and Spanish too when Tesseract has them. Russian needs Tesseract's Russian data: on Arch it's the `tesseract-data-rus` package, or Settings → Text → Russian downloads it (15 MB) into kadr's own folder, without sudo.
+
+## Keys
+
+### The capture bar
+
+| Keys | Does |
+|---|---|
+| 1–8 | Run that mode |
+| Left, Right | Move between modes (Tab moves right too) |
+| Enter or Space | Run the chosen mode |
+| Esc | Close the bar |
+
+### Picking an area
+
+| Keys | Does |
+|---|---|
+| Enter | Take the area (or the previous one, if it's shown) |
+| Esc | Cancel |
+| Space | Windows only, or back to drawing an area |
+| Space, held while dragging | Move the box being drawn |
+| Shift, while dragging | A square |
+| A | Next aspect ratio |
+| P | The previous area |
+| Arrows | Move the area a pixel |
+| Shift+arrows | Move it ten pixels |
+| Alt+arrows | Resize it from the right and bottom edges |
+| Digits, then X and digits, then Enter | An exact size |
+
+### A pinned picture
+
+| Keys | Does |
+|---|---|
+| Esc | Close it |
+| L | Let clicks through, or catch them again |
+| Arrows | Move it a pixel |
+| Shift+arrows | Move it ten pixels |
+
+## Settings
+
+| Setting | Key | Does |
+|---|---|---|
+| General → Thumbnail goes away after | `card_seconds` | 5, 10 or 20 seconds, or Never |
+| General → Where to show | `card_side` | The left or right corner |
+| General → Thumbnails at once | `max_cards` | 2, 4 or 6; old ones leave as new ones come |
+| Screenshots → Show the thumbnail | `after_shot.card` | The card after a screenshot |
+| Screenshots → Copy to the clipboard | `after_shot.copy` | Copy the screenshot right away |
+| Screenshots → Save to the folder | `after_shot.save` | Off, the file goes to a temporary folder and is gone after a restart |
+| Screenshots → Open the editor | `after_shot.edit` | Annotate right after the capture |
+| Screenshots → Pin on top | `after_shot.pin` | Every screenshot floats above all windows |
+| Screenshots → Screenshots folder | `screenshot_dir` | Where screenshots go |
+| Screenshots → Window shadow | `window_shadow` | A window shot's shadow, on a transparent background |
+| Screenshots → Window background | `window_backdrop` | A background saved in the editor, by name, for window shots |
+| Screenshots → Screenshot size | `logical_size` | 1× (a pixel of the picture is a pixel of the design) or Screen pixels |
+| Screenshots → Pointer in screenshots | `shot_cursor` | The pointer is taken where it was |
+| Screenshots → Self-timer | `timer_seconds` | 3, 5 or 10 seconds |
+
+Text recognition's languages are in Settings → Text.
+
+## Commands
+
+```
+kadr capture                                   every mode on one bar
+kadr shot [smart|region|windows|fullscreen|all|timer|previous]
+                                               take a screenshot (smart by default; all: every screen at once;
+                                               previous: the last area)
+kadr shot scroll ["X,Y WxH"]                    scrolling screenshot (again to finish)
+kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
+kadr pin <file>                                pin an image on top of windows
+kadr text [image]                              recognize text (in an area or an image) and copy it
+```
+
+---
+
+# Editor
+
+On the site: https://evlaso.github.io/kadr/editor/
+
+The editor is where a screenshot gets its arrows, boxes, text and step numbers, where private details are hidden, and where the picture is cropped and put on a background. What you draw stays editable: open the saved file in the editor again and every shape comes back.
+
+It opens PNG, JPEG and WebP pictures, and `.kadr` project files.
+
+## How to open
+
+- **From the card** after a screenshot: **Edit**.
+- **Right after every screenshot:** turn on Settings → Screenshots → **Open the editor**.
+- **From History:** select a screenshot and press E, or click **Edit**.
+- **From the command line:** `kadr edit <image|project.kadr>`. `kadr open` with a `.kadr` file opens its project too.
+- **From the file manager:** `.kadr` files open in kadr (see [Project files](https://evlaso.github.io/kadr/projects/)).
+
+On Linux the editor opens as an ordinary window by default; it can cover the whole screen instead (see Settings below). On macOS and Windows it's always a window.
+
+## Tools
+
+The tools sit in the top bar, in groups. Each has a letter; the tooltip says the tool's name. When the window is narrow, the last tools fold under **More tools**.
+
+| Key | Tool | What it does |
+|---|---|---|
+| V | Select and move | Click a shape to select it, drag it to move it, pull its handles to resize it. Drag on empty space to select several. |
+| A | Arrow | Draws an arrow. Drag its middle handle to bend it. Styles: **Arrow** (a filled head), **Open head**, **Both ends**, **Tapered** (thin at the tail, wide at the head). |
+| L | Line | A straight line; it bends like an arrow. |
+| R | Rectangle | A box, **Outline** or **Fill**. |
+| O | Ellipse | An ellipse, **Outline** or **Fill**. |
+| P | Pencil | Freehand drawing. |
+| H | Highlighter | A see-through marker. Over a line of text it fits the line's height and stays level; leave the line, or hold Shift, to draw freely. |
+| T | Text | Click to type. Click an existing text to edit it; drag it to move it. Seven styles: **Plain text**, **On a plate**, **Outlined**, **With a shadow**, **Highlighted**, **In a pill**, **Label**. |
+| N | Step numbers | Each click puts the next number: 1, 2, 3… |
+| M | Cursor | Stamps a pointer: **Arrow**, **Pointing hand**, **Text**, **Open hand**, **Closed hand**, **Crosshair**, **Busy**, **Not allowed**. They are your system's own pointer pictures. |
+| B | Hide | Covers an area: **Pixelate**, **Blur**, or a black box. |
+| S | Spotlight | Dims everything around the area you draw. |
+| C | Crop | Crop, turn and resize the picture (see Crop below). |
+
+Hold Shift while drawing for squares, circles, and lines and arrows at 45° steps.
+
+**Hide** is built to stay hidden: the blur and the pixelation are mixed with noise so the text can't be brought back, and with the black box what's under it is gone from the saved file altogether. With the hide tool picked, **Hide sensitive** in the top bar finds e-mails, keys, card and phone numbers in the picture and covers each one the way picked; one undo takes them all off. It reads the picture with tesseract, which has to be installed.
+
+## Colour, size and a shape's options
+
+- **Colour and size** stay in the top bar's corner. They apply to the next shape, and to the selected one.
+- **The colour menu** has kadr's eight colours (keys 1–8), the pipette (I: click the picture to take a colour from it), **Recent** colours, and **Yours**: + keeps the current colour there, right-click one to remove it.
+- **A shape's own options** float in a bar under the selected shape: an arrow's style, a box's fill, a text's style, how an area is hidden, a pointer's look. An arrow, a box, an ellipse or a hidden area stays selected after you draw it, so its bar is right there. The next shape takes what you picked last.
+- **Undo and redo** are in the top bar too.
+
+## Background and presets
+
+The background button in the top bar opens a sidebar:
+
+- **Presets** at the top: + saves the current look as a preset, the dropdown picks one, and each can be renamed or deleted from there.
+- **None**, **Gradients** (**Show more** for the rest), **Wallpapers** (the Omarchy themes' backgrounds, where there are any, plus **Your own image…**), **Blurred** (the screenshot itself, blurred), **Plain color** (including **Transparent**).
+- **Padding**, **Corners** and **Shadow** sliders.
+- **Aspect ratio:** **Auto**, 16:9, 4:3, 1:1 or 9:16. The final size shows under it.
+- **Position:** where the picture sits on a 3×3 grid. Off the middle it sits flush with that edge or corner. **Even margins** trims the screenshot's plain margins to match, so what's in it sits in the middle.
+
+**Pictures** can be added to a screenshot:
+
+- dropped on the screenshot, or pasted with Ctrl+V, or picked with **Add a picture on top**, a picture goes on top as a shape;
+- dropped past the screenshot's edge, it joins the screenshot on that side, as tall (or as wide) as it. While you drag, the editor shows where it will go. On a background, the joined pictures make one card with one shadow.
+
+## Crop
+
+C (or the crop button in the top bar) opens the crop mode. Drag the crop's edges and corners; they snap to edges in the picture while **Snap to edges** is on (hold Ctrl to do the opposite for a moment). Its top bar:
+
+- **Aspect ratio:** **Freeform**, **Original**, 1:1, 16:9, 9:16, 4:3, 3:2, 4:5, 21:9.
+- **Width and height** in pixels: click one and type; Tab moves to the other.
+- **Swap width and height**, **Rotate 90° clockwise**, **Flip horizontally**.
+- **Fill past the picture:** a crop can reach past the picture; this picks what fills that room (transparent, white, black or a pen colour).
+- **Image size:** save a smaller picture: 100%, 75%, 50%, 33% or 25%.
+- **Cancel** and **Crop**.
+
+At the bottom: the zoom, **Snap to edges** and **Revert to Original**. Once cropped, **Uncrop** in the editor's bottom bar brings the whole picture back.
+
+## The canvas and the bottom bar
+
+The canvas zooms: Ctrl and the mouse wheel zoom at the pointer, the wheel alone or Space with a drag pans. The zoom menu at the bottom left has **Fit**, 25%, 50%, 100% and 200%. A file reopened with its drawing gets **Start over** there, to go back to the clean picture.
+
+The bottom bar, left to right:
+
+- **Drag**: drag the finished picture into a chat or a folder.
+- **Text recognition** (the scan button): recognizes the text in the picture and copies it. It needs tesseract.
+- **Pin on top of the windows**: the finished picture floats above every window.
+- **Save as a .kadr project** (the project button): saves a `.kadr` file with the whole edit in the screenshots folder, and the editor stays open. See [Project files](https://evlaso.github.io/kadr/projects/).
+- **Copy** (Ctrl+C): puts the finished picture on the clipboard and closes the editor.
+- **Export size:** **Original** (the picture's own pixels), **1×** (its size on screen) or **2×**. It applies to saving, copying and dragging.
+- **Save as…** (Ctrl+Shift+S): a file of your choice. The name's extension picks the format: PNG, JPEG (white where the picture is transparent) or WebP (lossless); a name ending in `.kadr` saves a project.
+- **Save** (Ctrl+S): writes over the file you opened (a JPEG stays a JPEG), copies it, closes the editor and shows the result's card.
+
+When the window is narrow, text recognition, pinning, the project and copying fold into a **More** menu.
+
+## Keys
+
+Ctrl is Cmd on macOS.
+
+| Keys | Does |
+|---|---|
+| V, A, L, R, O, P, H, T, N, M, B, S, C | Pick a tool (see Tools) |
+| 1–8 | Pick one of kadr's colours |
+| I | Take a colour from the picture |
+| Shift while drawing | Squares, circles, 45° lines; with the highlighter, draw freely |
+| Arrows | Move the selected shape by a pixel; Shift+arrows by ten |
+| Delete, Backspace | Delete the selected shapes |
+| Ctrl+D | Duplicate the selected shape |
+| Ctrl+A | Select every shape |
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z, Ctrl+Y | Redo |
+| Ctrl+C | Copy the picture and close |
+| Ctrl+V | Paste a picture on top |
+| Ctrl+S | Save |
+| Ctrl+Shift+S | Save as |
+| Ctrl+= and Ctrl+- | Zoom in and out |
+| Ctrl+0 | Fit the picture in the window |
+| Space (held) | Pan the canvas with the mouse |
+| Enter, Esc | While typing: finish the text (Shift+Enter starts a new line) |
+| Enter, C | In crop mode: crop |
+| Esc | Close a menu, let go of the selection; with nothing to let go of, close the editor. In crop mode: cancel |
+| Delete | In crop mode: remove the crop |
+
+## Settings
+
+- **Open the editor** (Settings → Screenshots → After a screenshot): open every new screenshot in the editor. In `settings.toml`: `after_shot.edit`.
+- **Editor** (Settings → Screenshots, Linux only): **Window**, or **Over everything** to cover the screen. In `settings.toml`: `editor_window`.
+- **Window background** (Settings → Screenshots): a preset saved in the editor that window shots go onto; the editor can still change it. In `settings.toml`: `window_backdrop`.
+- Your colours and the recent ones live in `settings.toml` as `saved_colors` and `recent_colors`.
+
+## Commands
+
+```
+kadr edit <image|project.kadr>                 editor: arrows, text, highlighter, blur…
+kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
+```
+
+---
+
+# Recording
+
+On the site: https://evlaso.github.io/kadr/record/
+
+Records an area or the whole screen to an MP4, with the microphone, the computer's sound, your camera and the shortcuts you press. In studio mode the recording opens straight in the [Studio](https://evlaso.github.io/kadr/studio/), which turns it into a finished video. Smaller jobs, trimming and making a GIF, are done right from the card after a recording.
+
+## How to open
+
+- **The hotkey.** On macOS and Windows the default is Ctrl+Shift+2; on Linux kadr starts from your Hyprland bindings. Record the previous area can get a hotkey of its own in Settings → Shortcuts.
+- **The capture bar** (`kadr capture`): Recording, or 8. See [Capture](https://evlaso.github.io/kadr/capture/).
+- **The tray menu:** Record the screen.
+- **The command** `kadr record`. Pressing the hotkey (or running `kadr record`) again closes the recording bar, or stops a recording that's running.
+
+First you pick the area, the same way as for a screenshot (see [Capture](https://evlaso.github.io/kadr/capture/)): drag a box, or click a window to record it, or click elsewhere to record the whole screen. The recording bar then shows by the area as soon as you let go of the mouse.
+
+## The recording bar
+
+The bar sits under the area (or above it, or inside it, where there's no room), and the rest of the screen is dimmed. From the left:
+
+- **Cancel** (Esc).
+- **Area size:** the area's size in pixels. Click it for a menu of sizes: 640 × 480, 1280 × 720, 1920 × 1080, 1080 × 1080, 1080 × 1920, or Fullscreen.
+- **Microphone:** a click turns it on or off. While it's on, the button fills from the bottom with how loud you are, so you can see you're heard. The arrow beside it chooses the microphone (the system's default, or another one).
+- **System audio:** what the computer plays.
+- **Camera:** shows the camera bubble over the area (see below).
+- **Keyboard shortcuts:** logs the shortcuts you press, for the studio to show as badges.
+- **Studio mode:** on by default, see below.
+- **Countdown before recording:** off, 3 or 5 seconds, counted over the area. Esc during the count cancels.
+- **Another area** (R): pick the area again.
+- **Fullscreen** (F): record the whole screen instead.
+- **Record** (Enter).
+
+The area stays adjustable while the bar is up: drag the knobs on its corners and edges, drag it from inside, move it with the arrows, or resize it with Alt+arrows. The bar remembers its choices for the next recording.
+
+**Studio mode** records for the [Studio](https://evlaso.github.io/kadr/studio/): the system cursor stays out of the video, and kadr logs the pointer, so the studio draws its own cursor, large and smooth, and places zooms on your clicks. The camera is recorded separately. When you stop, the recording opens in the studio instead of showing a card.
+
+## While recording
+
+A small bar stays by the area, outside it, so it isn't recorded. It shows a red dot and the time, the microphone's level, and:
+
+- **Pause** and **Resume**: the paused time is left out of the file.
+- **Stop and save**.
+- **Start over**: throws the take away and records the same area again.
+- **Stop and delete**.
+
+A red frame marks the recorded area and the rest of the screen is dimmed; neither is recorded, and clicks go through to the windows below. Frame around the area in the settings turns this off.
+
+When the whole screen is recorded, the bar goes to another monitor. With only one monitor there's nowhere to put it: stop with the hotkey, or `kadr record stop`.
+
+## The camera bubble
+
+Turn on Camera in the recording bar, and a live picture of your camera shows over the area. Set it up before recording:
+
+- Drag it: it snaps to a corner or to the middle of an edge.
+- Hover over it for Smaller, Bigger and Shape. Shape steps through a circle, rounded corners and a square.
+- Scroll over it, or drag the band round it, to resize it.
+
+kadr remembers the look for the next recording, and the studio starts from it. Without studio mode the bubble is recorded where you put it. In studio mode the camera goes to a file of its own, and the studio shapes, sizes and places it.
+
+## After recording
+
+Without studio mode a card shows in the corner of the screen, with the recording's length. The file is copied to the clipboard by default, to paste into a chat or a folder. Hover over the card for:
+
+- **Copy**: the file, to the clipboard.
+- **Studio**: opens the [Studio](https://evlaso.github.io/kadr/studio/). Its tooltip says what you'll get: "Zooms follow your clicks" when kadr logged them, "Background and zooms by hand" when it didn't.
+- **Trim** (top right): the trim window, below.
+- **GIF** (bottom right): Save as GIF, the whole recording, 720 pixels wide at 15 fps.
+- **Show in folder**, **Delete file** (to the trash) and **Close**.
+
+A double-click opens the recording in your video player. Drag the card into a chat or a file manager to drop the file there. While a GIF or a trim is being made, a card shows its progress, with Cancel, and then turns into the result's card.
+
+### The trim window
+
+The trim window (`kadr trim`) shows a frame of the video over a filmstrip. Drag the start and end handles on the filmstrip; a click moves the nearer one there. The frame follows, and "Selected" shows the length.
+
+- **Play** (Space) plays the selected piece in mpv.
+- **Save** (Ctrl+S, Cmd on macOS) cuts it into a new file with "-trim" in its name; it works once something is trimmed. The original stays.
+- **Save GIF** (G) makes a GIF of the selected piece: 480, 720 or 960 pixels wide, at 10, 15 or 24 fps.
+- **Cancel** (Esc).
+
+`kadr trim <video> --from S --to S` trims without the window, and `kadr gif <video>` makes a GIF of the whole recording, 720 pixels wide at 15 fps.
+
+## On macOS and Windows
+
+Recording there goes through the system's own capture and encoder, with the system's sound and the default microphone. Choosing another microphone, its level meter and the camera are Linux-only for now. So is the click and key log, which comes from the Hyprland hook: the studio places zooms on clicks only on Linux. Nobody has recorded on a real Mac or Windows machine yet.
+
+## Keys
+
+| Keys | Does |
+|---|---|
+| Enter | Record (in the recording bar) |
+| Esc | Cancel the recording bar (or close its size menu first), cancel the countdown, or close the trim window |
+| R | Another area |
+| F | The whole screen |
+| Arrows | Move the area a pixel |
+| Shift+arrows | Move it ten pixels |
+| Alt+arrows | Resize it from the right and bottom edges |
+| Space | Play the selection (trim window) |
+| G | Save a GIF (trim window) |
+| Ctrl+S (Cmd+S on macOS) | Save the trimmed piece (trim window) |
+
+## Settings
+
+| Setting | Key | Does |
+|---|---|---|
+| Recording → Show the thumbnail | `after_video.card` | The card after a recording |
+| Recording → Copy to the clipboard | `after_video.copy` | Copy the file right away |
+| Recording → Save to the folder | `after_video.save` | Off, the file goes to a temporary folder and is gone after a restart |
+| Recording → Open the studio | `after_video.edit` | Open every recording in the studio; studio mode recordings always open in it |
+| Recording → Recordings folder | `video_dir` | Where recordings go |
+| Recording → Frame rate | `fps` | Source (the screen's refresh rate), 30, 60 or 120 fps |
+| Recording → Quality | `quality` | Medium, High, Very high or Maximum; higher keeps small text sharp but makes bigger files |
+| Recording → Frame around the area | `region_frame` | Outline the recorded area (the outline isn't recorded) |
+
+How long the card stays and where it shows are in Settings → General (see [Capture](https://evlaso.github.io/kadr/capture/)).
+
+## Commands
+
+```
+kadr record                                    the recording bar (or stop a running recording)
+kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
+                                               start recording at once (again to stop)
+kadr record area "X,Y WxH"                     the recording bar for a given area
+kadr record previous                           the recording bar for the last area picked
+kadr record stop                               stop recording
+kadr trim <video> [--from S --to S]            trim a recording (no flags: the trim window)
+kadr gif <video>                               save a recording as GIF (720px, 15 fps)
+```
+
+---
+
+# Studio
+
+On the site: https://evlaso.github.io/kadr/studio/
+
+The studio turns a screen recording into a finished video: it zooms in where you clicked, cuts out the dull parts, draws a large smooth cursor, puts the video on a background with the camera in a corner, and exports MP4 or GIF.
+
+It works best with a recording made in studio mode (the sparkle button on the recording bar): then the system's cursor stays out of the video, kadr draws its own, and the camera is recorded separately, so all of them can be changed here. See [Recording](https://evlaso.github.io/kadr/record/).
+
+kadr keeps your edit as you go: open the same recording again and it's all there. **Edited** next to the name in the title bar says it's changed. **Project** saves the recording with its edit as a `.kadr` file, next to the recordings (see [Project files](https://evlaso.github.io/kadr/projects/)).
+
+## How to open
+
+- **From the card** after a recording: **Studio**.
+- **After a studio mode recording** the studio opens by itself.
+- **After every recording:** turn on Settings → Recording → **Open the studio**.
+- **From History:** select a recording and press E, or click **Studio**.
+- **From the command line:** `kadr studio <video|project.kadr>`. With `--render` kadr exports right away with the saved edit, without opening the window.
+- **From the file manager:** a `.kadr` project of a recording opens in the studio.
+
+## The window
+
+- **The rail** at the left has the sections: Zoom, Cursor, Keyboard shortcuts, Audio, Camera, Background, and Cut apart at the bottom. A click opens a section's settings beside the rail.
+- **The stage** in the middle plays the video as it will look, with every effect.
+- **The timeline** at the bottom: the ruler, the filmstrip, the zoom track under it and the cut row at the very bottom. A click on the ruler or the filmstrip moves the playhead. Above it: **To the start**, play and pause, **To the end**, and two **Timeline zoom** buttons.
+- **The title bar:** the file's name, **Project** and **Export**.
+
+## Zooms and cuts
+
+**Zoom.** A studio mode recording comes with zooms already placed on your clicks; for any other recording, add them yourself.
+
+- Click the zoom track to add a zoom. Drag a zoom to move it, drag its edges to make it longer or shorter.
+- **Zoom level** sets how close the selected zoom gets (100% to 400%); **Apply zoom level to all** gives every zoom the same level.
+- **Zoom mode** of the selected zoom: **Follow cursor**, or **Manual**: then click the video where to zoom.
+- **Delete zoom** (or Delete) removes the selected one.
+- **Automatic → Zooms on clicks** places zooms on the clicks again, in place of the ones there. It needs a recording with clicks.
+- **Motion blur:** **Off**, **Light** or **Strong**, on zooms, camera moves and a fast cursor. It shows in the preview and the export.
+
+**Cut.**
+
+- The filmstrip's yellow edges trim the start and the end.
+- Drag across the cut row to cut that piece out. Drag a cut to move it, drag its edges to change it. X cuts a second at the playhead.
+- With a cut selected, the Cut section says what it removes; **Restore the piece** (or Delete) brings it back. **Restore the whole video** drops the trim and every cut.
+
+## Cursor, shortcuts, camera and audio
+
+**Cursor:**
+
+- For a studio mode recording: **Show the cursor**, its **Size** (0.5× to 3×), **Style** (**Arrow**, **Light arrow** or **Dot**) and **Motion** (**Natural** or **Smooth**). Any other recording keeps the cursor as it was recorded.
+- **Clicks:** **Ripple animation** (rings where you clicked), and with kadr's own cursor, **Press effect** (the cursor reacts to a click).
+
+**Keyboard shortcuts:** **Show shortcuts** puts a badge with the shortcuts you pressed on the video, at the **Bottom** or the **Top**, in size S, M or L. It needs a recording made with **Keyboard shortcuts** on in the recording bar.
+
+**Camera** (when the recording has one): **Show the camera**, its **Size**, **Rounding** from a square to a circle, and where it sits: one of eight spots round the edge.
+
+**Audio** (when the recording has sound): **Audio** on or off, **Volume** (up to 200%), **Channels**: **Stereo** or **Mono**. GIFs have no audio.
+
+## Background and export
+
+**Background:**
+
+- **Presets** at the top: + saves the current look (background, padding, cursor, export), the dropdown picks, renames or deletes one.
+- **Gradients**, **Wallpapers** (the Omarchy themes' backgrounds, where there are any, plus **Your own image…**) and **Plain color**.
+- **Aspect ratio:** **Auto** (the recording's own), 1:1, 5:4, 4:3, 3:2, 16:9, and the tall 4:5, 3:4, 9:16.
+- **Padding**, **Corners** and **Shadow**.
+
+**Export.** The **Export** button opens the export settings:
+
+- **Format:** MP4 or GIF.
+- **Size:** 720p, 1080p, 1440p or 4K.
+- **FPS:** **Source** (as recorded), 30, 60 or 120.
+- **Quality** (MP4 only): **Best**, **High**, **Medium** or **Small**.
+- Under them, the video's size and length and how big the file will be.
+- **Preview** builds a quick 720p video with every effect and plays it in mpv. **Export** (or Ctrl+S) closes the studio and makes the video, saved next to the recording with `-studio` added to its name. Its progress shows on a card over a blurred frame, with a cancel button, and the card becomes the result.
+
+A new recording starts with the look you used last in the studio.
+
+## Platforms
+
+Clicks and keys are logged by kadr's Hyprland hook, so on Linux only for now. On macOS and Windows a recording has no click or key log yet: zooms go in by hand, and click rings and shortcut badges have nothing to show.
+
+## Keys
+
+Ctrl is Cmd on macOS.
+
+| Keys | Does |
+|---|---|
+| Space | Play or pause |
+| ← and → | Back or forward half a second |
+| Home, End | To the start or the end |
+| X | Cut a second at the playhead |
+| Delete, Backspace | Delete the selected zoom, or restore the selected cut |
+| Ctrl+S | Export |
+| Esc | Close the export settings or the aspect ratio menu, stop placing a zoom, let go of the selection; with nothing to let go of, close the studio |
+
+## Settings
+
+The Studio section of the settings sets where a new edit starts:
+
+- **Default zoom** for zooms placed on clicks: ×1.25, ×1.5, ×1.8, ×2.2 or ×3. In `settings.toml`: `studio_zoom`.
+- **Default background:** one of the studio's gradients or colours. In `settings.toml`: `studio_backdrop`.
+- **Default padding:** None, S, M or L. In `settings.toml`: `studio_padding`.
+
+Once you've edited something in the studio, the look you used last wins over the default background and padding.
+
+- **Open the studio** (Settings → Recording → After a recording): open every new recording in the studio. Studio mode recordings always open in it. In `settings.toml`: `after_video.edit`.
+
+## Commands
+
+```
+kadr studio <video|project.kadr> [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+```
+
+---
+
+# History
+
+On the site: https://evlaso.github.io/kadr/history/
+
+Every screenshot, recording and GIF in your screenshots and recordings folders, newest first, as a grid of thumbnails. Find one by typing, then open, copy, pin or delete it, or drag it out into a chat.
+
+## How to open
+
+- **The hotkey.** On macOS and Windows the default is Ctrl+Shift+4; on Linux kadr starts from your Hyprland bindings. Set it in Settings → Shortcuts → History.
+- **The command** `kadr history`.
+
+## Finding a capture
+
+Typing is the main way through the history: just start typing, there's no field to click. The search matches the file's name and its date as the tiles show it, such as "today", "yesterday" or "12 Oct". Backspace takes a letter back; Esc clears the search.
+
+Under each thumbnail are its day and time (a capture from an earlier year shows the year instead) and its kind: PNG, MP4 or GIF. A recording shows its length on the thumbnail.
+
+The filters at the top show one kind at a time, with how many there are: All, Screenshots, Recordings and GIF. Tab steps through them. In a narrow window they fold into a dropdown.
+
+The history shows the 300 newest captures. With nothing found it says "Nothing found"; with nothing captured yet, "Nothing captured yet".
+
+## Selecting
+
+The current tile has an accent ring round it. Move it with the arrow keys, or click a tile.
+
+- Ctrl+click adds a tile to the selection, or takes it out (Cmd+click on macOS).
+- Shift+click selects every tile from the current one to the one clicked.
+- Ctrl+A selects every tile shown.
+
+With several selected, the bottom bar says how many, and Copy, Delete and Pin work on all of them. Esc lets go of the selection.
+
+## Actions
+
+- **Open** (Enter, or a double-click): a screenshot opens in the [Editor](https://evlaso.github.io/kadr/editor/), a recording in the [Studio](https://evlaso.github.io/kadr/studio/), a GIF in your system's viewer.
+- **Editor / studio** (E): the same, for a screenshot or a recording.
+- **Copy** (Ctrl+C): one screenshot goes on the clipboard as a picture; a recording, a GIF or several captures go as files. The window closes.
+- **Pin** (P): pins the selected screenshots on top of every window (see [Capture](https://evlaso.github.io/kadr/capture/)).
+- **Delete** (Del): moves the selected captures to the trash.
+
+Hover over a tile for the same as buttons: Copy and Edit (Studio for a recording) in the middle, Show in folder at the top right, Delete at the bottom right and, for a screenshot, Pin on top at the bottom left.
+
+Drag a tile into a chat, a browser or a file manager to drop the file there.
+
+The gear at the top right opens [Settings](https://evlaso.github.io/kadr/settings/). The bottom bar lists the keys, and drops the less used ones in a narrow window.
+
+## Keys
+
+Ctrl is Cmd on macOS.
+
+| Keys | Does |
+|---|---|
+| Typing | Search |
+| Backspace | Erase a letter of the search |
+| Arrows | Move between tiles |
+| Enter | Open |
+| E | Open in the editor or the studio (when not searching) |
+| P | Pin the selected screenshots (when not searching) |
+| Ctrl+C | Copy and close |
+| Del | Delete to the trash |
+| Tab | Next filter |
+| Ctrl+A | Select every tile shown |
+| Ctrl+click | Add a tile to the selection, or take it out |
+| Shift+click | Select a range |
+| Esc | Clear the search, then the selection, then close |
+
+## Settings
+
+| Setting | Key | Does |
+|---|---|---|
+| Screenshots → Screenshots folder | `screenshot_dir` | One of the two folders the history shows |
+| Recording → Recordings folder | `video_dir` | The other one |
+| Storage → Delete old captures | `cleanup_days` | Never, or after 7, 30 or 90 days: for good, once a day, only kadr's files |
+
+Storage → Clear now deletes what's older than the chosen period at once.
+
+## Commands
+
+```
+kadr history                                   history of screenshots and recordings
+```
+
+---
+
+# Settings
+
+On the site: https://evlaso.github.io/kadr/settings/
+
+Settings controls capture behaviour, shortcuts, the editor and studio defaults, and storage. Changes are saved right away. Search looks across sections, so you do not need to remember which section holds a row.
+
+## How to open
+
+Run `kadr settings`, click the tray icon, or press the assigned settings hotkey. Its default on macOS and Windows is Ctrl+Shift+5; Linux starts with your Hyprland bindings.
+
+For window shortcuts in this manual, Ctrl means Cmd on macOS. The global defaults below use Ctrl on both macOS and Windows.
+
+## Sections
+
+Type to search by a row or section name. Choose a section in the sidebar to clear the search. **Thumbnails** is a group inside **General**, and **Editor** is a row inside **Screenshots**, not a separate sidebar section.
+
+| Section or group | Rows and what they change |
+|---|---|
+| General | **Language**, **Appearance**, **Tray icon**, **Check for updates**, **Update channel**: interface language, system/dark/light appearance, the tray and release checks. |
+| General → Thumbnails | **Thumbnail goes away after**, **Where to show**, **Thumbnails at once**: 5, 10, 20 seconds or Never; Left or Right; 2, 4 or 6 cards. A hovered card stays. |
+| Screenshots → After a screenshot | **Show the thumbnail**, **Copy to the clipboard**, **Save to the folder**, **Open the editor**, **Pin on top**: independent actions after capture. |
+| Screenshots → Files | **Screenshots folder**, **File name**, **Window shadow**, **Window background**, **Screenshot size**, **Pointer in screenshots**, **Self-timer**: destination and naming, window look, 1× or Screen pixels, pointer and 3/5/10-second countdown. |
+| Screenshots → Editor | **Editor**: Window or Over everything. This choice is Linux-only; other systems use a window. |
+| Recording → After a recording | **Show the thumbnail**, **Copy to the clipboard**, **Save to the folder**, **Open the studio**. Copy puts the file on the clipboard. Studio mode recordings open in the studio anyway. |
+| Recording → Video | **Recordings folder**, **File name**, **Frame rate**, **Quality**, **Frame around the area**. Source follows the screen's rate; the other choices are 30, 60 and 120 fps. The frame is not recorded. |
+| Studio | **Default zoom**, **Default background**, **Default padding**: zooms placed on clicks and the backdrop around a video. |
+| Text | **Recognition languages** lists the installed languages; **Russian** offers the language-data download when needed. |
+| Shortcuts | An action per row, with its assigned shortcuts and **Add shortcut**. See below. |
+| Storage | **Used**, **Delete old captures**, **Clear now**: space used and old-file cleanup. See below. |
+| About kadr | The kadr row shows the version and **Check now** for updates; **Interface**, **Source code**, **Settings file** give app information and access to the configuration. |
+
+**File name** is shared by screenshots and recordings. Its template accepts `{date}`, `{time}`, `{type}` and `{n}`. **Window background** uses a look saved in the [editor](https://evlaso.github.io/kadr/editor/). Release channels and updating are explained in [Install](https://evlaso.github.io/kadr/install/).
+
+## Shortcuts
+
+In **Shortcuts**, click **Add shortcut** (+) beside an action, then press the combination. Esc cancels. Click an existing shortcut to remove it. Assigning a combination already used by another action moves it to the new action.
+
+The rows are **All modes on one bar**, **Screenshot an area**, **Screenshot the previous area**, **Screenshot a window or area**, **Screenshot the screen**, **Scrolling screenshot**, **Record the screen**, **Record the previous area**, **Recognize text**, **History** and **Settings**.
+
+The global defaults on macOS and Windows are:
+
+| Keys | Does |
+|---|---|
+| Ctrl+Shift+1 | Screenshot of an area |
+| Ctrl+Shift+2 | Recording |
+| Ctrl+Shift+3 | Recognize text |
+| Ctrl+Shift+4 | History |
+| Ctrl+Shift+5 | Settings |
+| Ctrl+Shift+6 | Scrolling screenshot |
+
+On Linux, kadr starts with the existing Hyprland bindings. The installed `data/hypr/kadr.lua` hook loads the bindings saved from this window; see [Install](https://evlaso.github.io/kadr/install/). On macOS and Windows the tray holds the global shortcuts, so it must be running.
+
+## Storage
+
+**Used** shows space and file counts for **Screenshots**, **Recordings** and **Studio cache**. **Delete old captures** offers Never, 7, 30 or 90 days. Automatic cleanup runs at most once a day when enabled and permanently deletes kadr's old captures, not other files in those folders.
+
+Choose a period first, then use **Clear now → Clear** to apply it immediately. The result reports the freed space and number of files. The file setting is `cleanup_days`; `0` disables automatic deletion. Cleanup also prunes editing data whose source capture is gone.
+
+## Settings file
+
+Settings live in `settings.toml`, under `~/.config/kadr` on Linux. Open **Settings → About kadr → Settings file → Edit** to edit it in the system's editor. **Show in folder** opens its folder.
+
+Edits by hand are picked up the next time kadr needs the setting. The settings window keeps comments and ordering and changes only the values you change there. A missing setting keeps its default; an unreadable value is ignored. If the TOML file is broken, kadr uses defaults, reports where the error is in the settings window and leaves the file alone. Window changes are not saved until it is fixed. An old `settings.json` is migrated automatically and renamed to `settings.json.old`.
+
+The groups below follow the order in the file. Some settings are available only in the file, not as rows in the window.
+
+| Key | Comment |
+|---|---|
+| `version` | The file's format. |
+
+### General
+
+| Key | Comment |
+|---|---|
+| `language` | `"en"` or `"ru"`. |
+| `theme` | `"system"`, `"dark"` or `"light"`. |
+| `tray` | The tray icon. |
+| `keep_warm` | Keep the area picker running so it shows at once (uses some memory). |
+| `check_updates` | Look for new releases. |
+| `update_channel` | `"stable"` or `"beta"`; left out, the channel of this build. |
+
+### Captures
+
+| Key | Comment |
+|---|---|
+| `screenshot_dir` | Where screenshots go; left out, the system's pictures folder. |
+| `video_dir` | Where recordings go; left out, the system's videos folder. |
+| `name_template` | New files' names: `{type}`, `{date}`, `{time}` and `{n}` are filled in. |
+| `card_seconds` | How long the card after a capture stays, in seconds; `0` keeps it. |
+| `card_side` | Where the cards show: `"left"` or `"right"`. |
+| `max_cards` | How many cards show at once. |
+| `cleanup_days` | Delete captures older than this many days; `0` keeps them. |
+
+### Screenshots
+
+| Key | Comment |
+|---|---|
+| `logical_size` | Save at 1x: a pixel of the picture is a pixel of the design. |
+| `shot_cursor` | Put the pointer in screenshots. |
+| `window_shadow` | Window shots keep the window's shadow, on a transparent background. |
+| `window_backdrop` | A look saved in the editor, by name, for window shots to go on. |
+| `timer_seconds` | The self-timer: 3, 5 or 10 seconds. |
+| `editor_window` | The editor opens as an ordinary window; `false` puts it over everything (Linux). |
+
+### Recording
+
+| Key | Comment |
+|---|---|
+| `fps` | Frames a second; `0` is the screen's own rate. |
+| `quality` | `"medium"`, `"high"`, `"very_high"` or `"ultra"`. |
+| `region_frame` | Outline the recorded area (the outline isn't recorded). |
+
+### Studio
+
+| Key | Comment |
+|---|---|
+| `studio_zoom` | The zoom placed on clicks, 1 to 4. |
+| `studio_backdrop` | The background, by its place in the studio's list (from 0). |
+| `studio_padding` | How much background shows around: 0 (none) to 3. |
+
+### Editor
+
+| Key | Comment |
+|---|---|
+| `saved_colors` | Colours kept in the colour menu, as `"#rrggbb"`. |
+| `recent_colors` | Colours used lately, newest first; kadr keeps this list. |
+
+### After a screenshot
+
+The `after_shot` table has five independent switches:
+
+| Key | Comment |
+|---|---|
+| `card` | The card in the screen's corner. |
+| `copy` | Copy it to the clipboard. |
+| `save` | Keep the file (off: only a temporary one). |
+| `edit` | Open it in the editor. |
+| `pin` | Pin a screenshot above every window. |
+
+### After a recording
+
+The `after_video` table has the same five switches. `pin` is for screenshots, not recordings; it has no recording row in the window.
+
+| Key | Comment |
+|---|---|
+| `card` | The card in the screen's corner. |
+| `copy` | Copy it to the clipboard. |
+| `save` | Keep the file (off: only a temporary one). |
+| `edit` | Open it in the studio. |
+| `pin` | Pin a screenshot above every window; does not apply to recordings. |
+
+## Keys
+
+Outside shortcut recording or file-name editing:
+
+| Keys | Does |
+|---|---|
+| Typing | Search across all sections |
+| Backspace | Remove the last search character |
+| Tab or Down | Next section |
+| Up | Previous section |
+| Esc | Clear the search; with no search, close the window |
+| Esc while recording a shortcut | Cancel without assigning it |
+| Enter, Tab or Esc while editing File name | Finish editing the name template |
+
+## Commands
+
+```text
+  kadr settings                                  settings
+```
+
+---
+
+# Project files
+
+On the site: https://evlaso.github.io/kadr/projects/
+
+A `.kadr` project keeps an edit, not just its finished picture or video. You can reopen it later or move it to another computer and keep working.
+
+## How to open
+
+Use `kadr open <file>` to open a project in the editor or studio, according to its contents. `kadr edit <image|project.kadr>` opens a screenshot project; `kadr studio <video|project.kadr>` opens a recording project.
+
+You can also open a `.kadr` file from the file manager once the file type is registered. On Linux kadr registers it on first run; `kadr install-desktop` repeats that setup. The Windows installer registers the association. See [Install](https://evlaso.github.io/kadr/install/).
+
+## Saving
+
+Use **Project** in the [editor](https://evlaso.github.io/kadr/editor/) or [studio](https://evlaso.github.io/kadr/studio/) to save the original picture or recording and its edit together. The screenshot project keeps every shape; the recording project keeps zooms, cuts and trimming along with the other studio choices.
+
+When you open a project, saving it rewrites the same `.kadr` file. In the editor, **Save** also updates that opened project; in the studio, **Export** does so before making the video. Keep a separate copy first if you want to keep an earlier edit.
+
+## Inside the file
+
+A project is a tar archive with the media and editing information together:
+
+- A screenshot project holds the source picture, added pictures, the drawing and a preview. Black boxes permanently remove what they cover from the editable source too.
+- A recording project holds the video, its click/key/cursor log, the studio edit, and the separate camera recording and wallpaper when present.
+
+Opening unpacks the project into kadr's cache. You do not need to unpack it yourself or keep its source files beside it.
+
+## Keys
+
+Ctrl, Cmd on macOS.
+
+| Keys | Does |
+|---|---|
+| Ctrl+S in the editor | Save the picture and update its opened project |
+| Ctrl+S in the studio | Export the video and update its opened project |
+
+## Commands
+
+```text
+  kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
+  kadr studio <video|project.kadr> [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+  kadr edit <image|project.kadr>                 editor: arrows, text, highlighter, blur…
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+```
+
+`kadr install-desktop` is Linux-only.
+
+---
+
+# Command line
+
+On the site: https://evlaso.github.io/kadr/cli/
+
+Run `kadr --help` to see the command list. If kadr is already running, later capture, editing and settings commands go to that instance instead of starting another UI process.
+
+```text
+  kadr capture                                   every mode on one bar
+  kadr shot [smart|region|windows|fullscreen|all|timer|previous]
+                                                 take a screenshot (smart by default; all: every screen at once;
+                                                 previous: the last area)
+  kadr shot scroll ["X,Y WxH"]                    scrolling screenshot (again to finish)
+  kadr open <file>                               show the thumbnail for an existing image (a .kadr opens its project)
+  kadr pin <file>                                pin an image on top of windows
+
+  kadr record                                    the recording bar (or stop a running recording)
+  kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
+                                                 start recording at once (again to stop)
+  kadr record area "X,Y WxH"                     the recording bar for a given area
+  kadr record previous                           the recording bar for the last area picked
+  kadr record stop                               stop recording
+  kadr studio <video|project.kadr> [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+  kadr edit <image|project.kadr>                 editor: arrows, text, highlighter, blur…
+  kadr trim <video> [--from S --to S]            trim a recording (no flags: the trim window)
+  kadr gif <video>                               save a recording as GIF (720px, 15 fps)
+  kadr history                                   history of screenshots and recordings
+  kadr settings                                  settings
+  kadr update                                    look for a newer release now
+  kadr tray                                      tray icon (for autostart)
+  kadr dev <command>                             test hooks of a kadr started with KADR_DEV=1
+                                                 (windows, dump, find, click, drag, key, type, state, shot, mem)
+  kadr text [image]                              recognize text (in an area or an image) and copy it
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+  kadr --version                                 the version
+```
+
+## Screenshots
+
+`kadr capture` opens the bar with every capture mode. `kadr shot` starts smart selection by default; choose an area, windows, a screen, every screen, the self-timer or the previous area explicitly. `kadr shot scroll` starts a scrolling screenshot and finishes it when called again. `kadr open <file>` shows an existing image on a card; `kadr pin <file>` keeps it above other windows. See [Capture](https://evlaso.github.io/kadr/capture/).
+
+## Recording
+
+`kadr record` opens the recording bar, or stops the current recording. The region and fullscreen forms start immediately, with optional microphone, system audio, camera, shortcut display and studio mode. The area and previous forms open the bar for a given or last-picked area. `kadr record stop` stops explicitly. See [Recording](https://evlaso.github.io/kadr/record/); the Hyprland click/key log is Linux-only.
+
+## Editing
+
+`kadr edit <image|project.kadr>` opens the [editor](https://evlaso.github.io/kadr/editor/); `kadr studio <video|project.kadr>` opens the [studio](https://evlaso.github.io/kadr/studio/), and its render flag exports immediately. `kadr open <file>` opens a project in the right editor. `kadr trim <video>` opens trimming, or trims directly with times in seconds; a start time requires an end time. `kadr gif <video>` makes a 720px, 15 fps GIF. See [Project files](https://evlaso.github.io/kadr/projects/) for keeping an edit.
+
+## Other commands
+
+Open [History](https://evlaso.github.io/kadr/history/) with `kadr history` or [Settings](https://evlaso.github.io/kadr/settings/) with `kadr settings`. `kadr text [image]` recognizes text in an image, or asks for an area, and copies it. `kadr update` checks for a release now; `kadr tray` runs the tray for autostart. `kadr install-desktop` registers project files on Linux. `kadr --version` prints the version. The development command is for test hooks, not normal capture work.
+
+---
+
+# Glossary
+
+On the site: https://evlaso.github.io/kadr/glossary/
+
+| Term | Meaning |
+|---|---|
+| Capture bar | The bar that chooses a screenshot, text recognition or recording mode. |
+| Area; picker (overlay) | An area is the rectangle to capture; the picker is the overlay where you select and adjust it. |
+| Thumbnail (card) | The small preview after a capture, with actions such as Copy and Edit. |
+| Pin on top | Keep a screenshot floating above other windows. |
+| Editor | The window for drawing on a screenshot and setting its background. |
+| Canvas | The editor's work area, where the picture and shapes are shown. |
+| Tool | A way to select, draw or change something in the editor, such as Arrow or Text. |
+| Preset | A saved look you can apply again in the editor or studio. |
+| Background | The backdrop around a picture or video, with padding, corners and shadow. |
+| Hide | Cover part of a picture with pixelation, blur or a black box. |
+| Studio; Studio mode | Studio edits recordings; Studio mode records the cursor and camera separately so their look can be changed there. |
+| Zoom | A studio interval that brings part of the recording closer. |
+| Cut | A piece left out of the studio's exported video. |
+| Trim | Shorten a recording at its beginning or end. |
+| Filmstrip | The row of video frames on the studio timeline; its yellow edges trim the recording. |
+| Camera bubble | The camera preview placed over the recording, with an adjustable size and shape. |
+| Project (.kadr) | A file that keeps the source media and the whole edit for reopening. |
+| Tray icon | The desktop icon that opens settings and has a capture menu; it also holds global hotkeys on macOS and Windows. |
+| History | The searchable list of screenshots and recordings. |
+| Shortcut (hotkey) | A key combination for an action; global shortcuts work outside kadr's windows too. |
