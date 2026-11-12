@@ -2,7 +2,7 @@
 // pages of this language (Pagefind's index, loaded on the first key).
 (function () {
   var fold = document.querySelector(".menu-fold");
-  var wide = window.matchMedia("(min-width: 68rem)");
+  var wide = window.matchMedia("(min-width: 72rem)");
   function place() { fold.open = wide.matches; }
   place();
   wide.addEventListener("change", place);
@@ -11,7 +11,7 @@
   var input = box.querySelector("input");
   var list = box.querySelector(".results");
   var pages = document.querySelector(".pages");
-  var pagefind = null;
+  var loading = null;
   var asked = 0;
 
   document.addEventListener("keydown", function (e) {
@@ -22,6 +22,7 @@
       input.focus();
     } else if (e.key === "Escape" && document.activeElement === input) {
       input.value = "";
+      asked++;
       show(null);
       input.blur();
     }
@@ -31,15 +32,26 @@
     var query = input.value.trim();
     var mine = ++asked;
     if (!query) return show(null);
+    // One load for every key typed while it's on its way; only the newest
+    // query goes on to search, so an older one can't answer last.
+    loading = loading || import(new URL(box.dataset.pagefind, location.href));
+    var pagefind;
     try {
-      pagefind = pagefind || (await import(new URL(box.dataset.pagefind, location.href)));
+      pagefind = await loading;
     } catch (e) {
+      loading = null;
       return show(null);
     }
-    var found = await pagefind.debouncedSearch(query, {}, 120);
-    if (!found || mine !== asked) return;
-    var items = await Promise.all(found.results.slice(0, 8).map(function (r) { return r.data(); }));
-    if (mine === asked) show(items);
+    if (mine !== asked) return;
+    try {
+      var found = await pagefind.debouncedSearch(query, {}, 120);
+      if (!found || mine !== asked) return;
+      var items = await Promise.all(found.results.slice(0, 8).map(function (r) { return r.data(); }));
+      if (mine === asked) show(items);
+    } catch (e) {
+      // The index didn't come: back to the list of pages.
+      if (mine === asked) show(null);
+    }
   });
 
   function show(items) {

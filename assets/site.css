@@ -47,7 +47,8 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
   .prose td:first-child:has(code) { white-space: normal; }
 }
 
-/* The manual: its menu hangs to the left of the text on a wide screen. */
+/* The manual: its menu hangs to the left of the text on a screen wide
+   enough for the text and a menu's width on both sides (72rem). */
 .manual { position: relative; max-width: var(--reading); margin: 0 auto; }
 .menu { font-size: 0.8125rem; line-height: 1.4; color: var(--soft); padding: 2rem 1.25rem 0; }
 .menu a { text-decoration: none; display: block; padding: 0.22rem 0; }
@@ -60,7 +61,7 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
   width: 100%; font: inherit; color: var(--text); background: var(--tint); border: 0; border-radius: 6px; padding: 0.4rem 0.6rem;
   appearance: none; -webkit-appearance: none;
 }
-.search input::placeholder { color: var(--soft); }
+.search input::placeholder { color: var(--text); opacity: 0.7; }
 .search .results { margin: 0.5rem 0 0.75rem; }
 .search .results a { padding: 0.3rem 0; color: var(--text); }
 .search .results small { display: block; color: var(--soft); font-size: 0.75rem; }
@@ -68,12 +69,12 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .turn { display: flex; justify-content: space-between; gap: 1rem; margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
 .edit { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--soft); }
 
-@media (min-width: 68rem) {
+@media (min-width: 72rem) {
   .menu { position: absolute; top: 0; bottom: 0; right: 100%; width: var(--menu); margin-right: var(--gap); padding: 3.9rem 0 0; }
   .menu-fold { position: sticky; top: 1.5rem; max-height: calc(100vh - 3rem); overflow-y: auto; }
   .menu summary { display: none; }
 }
-@media (max-width: 67.99rem) {
+@media (max-width: 71.99rem) {
   .manual .prose { padding-top: 1.5rem; }
   .menu-fold:not([open]) summary { padding-bottom: 0.25rem; }
 }
