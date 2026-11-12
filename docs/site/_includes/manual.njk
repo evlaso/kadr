@@ -1,0 +1,49 @@
+---
+layout: base.njk
+---
+{%- set t = strings[lang] -%}
+{%- set root = page.url | root -%}
+{%- set base = root + (lang | manualBase).slice(1) -%}
+{%- set pages = nav[lang] -%}
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>{{ t.pages }}</summary>
+      <div class="search" data-pagefind="{{ root }}pagefind/pagefind.js" data-nothing="{{ t.nothing }}">
+        <input type="search" placeholder="{{ t.search }}" aria-label="{{ t.search }}" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        {%- for p in pages %}
+        <li>
+          <a href="{{ base }}{% if p.slug %}{{ p.slug }}/{% endif %}"{% if p.slug == slug %} aria-current="page"{% endif %}>{{ p.title if p.slug else t.manual }}</a>
+          {%- if p.slug == slug %}
+          {%- set outline = content | outline %}
+          {%- if outline.length %}
+          <ul class="outline">
+            {%- for h in outline %}
+            <li><a href="#{{ h.id }}">{{ h.title }}</a></li>
+            {%- endfor %}
+          </ul>
+          {%- endif %}
+          {%- endif %}
+        </li>
+        {%- endfor %}
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>{{ title if slug else t.manual }}</h1>
+    {{ content | withoutTitle | safe }}
+    <footer class="turn">
+      {%- for p in pages %}{% if p.slug == slug %}
+      {%- set prev = pages[loop.index0 - 1] if loop.index0 > 0 %}
+      {%- set next = pages[loop.index0 + 1] %}
+      <span>{% if prev %}<a href="{{ base }}{% if prev.slug %}{{ prev.slug }}/{% endif %}">← {{ prev.title if prev.slug else t.manual }}</a>{% endif %}</span>
+      <span>{% if next %}<a href="{{ base }}{{ next.slug }}/">{{ next.title }} →</a>{% endif %}</span>
+      {%- endif %}{% endfor %}
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a></p>
+  </main>
+</div>
+<script src="{{ root }}assets/site.js" defer></script>

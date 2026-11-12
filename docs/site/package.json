@@ -1,0 +1,15 @@
+{
+  "name": "kadr-site",
+  "private": true,
+  "type": "module",
+  "description": "kadr's site: the landing page and the manual, built with Eleventy from docs/manual.",
+  "scripts": {
+    "build": "eleventy --config=docs/site/eleventy.config.js",
+    "serve": "eleventy --config=docs/site/eleventy.config.js --serve"
+  },
+  "devDependencies": {
+    "@11ty/eleventy": "^3.1.2",
+    "markdown-it-anchor": "^9.2.0",
+    "pagefind": "^1.4.0"
+  }
+}

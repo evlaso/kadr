@@ -1,0 +1,98 @@
+/* kadr's site. One column of text, the app's own colours, nothing else. */
+:root {
+  --bg: #fffcf0; --text: #100f0f; --soft: #6f6e69; --faint: #b7b5ac; --line: #e6e4d9; --tint: #f2f0e5; --accent: #205ea6;
+  --reading: 42rem; --menu: 11rem; --gap: 3.5rem;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #100f0f; --text: #cecdc3; --soft: #878580; --faint: #575653; --line: #282726; --tint: #1c1b1a; --accent: #4385be; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 1.5rem; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: clamp(1rem, 0.94rem + 0.2vw, 1.0625rem)/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+a { color: inherit; text-decoration: underline; text-decoration-color: var(--faint); text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
+a:hover { color: var(--accent); text-decoration-color: currentColor; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* The top line: the name, and three links. */
+.top { max-width: var(--reading); margin: 0 auto; padding: 1.5rem 1.25rem 0; display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.top a { text-decoration: none; }
+.wordmark { font-weight: 700; font-size: 1.25rem; letter-spacing: -0.03em; }
+.top nav { display: flex; gap: 1.25rem; font-size: 0.875rem; color: var(--soft); }
+.top nav a[aria-current] { color: var(--text); }
+
+/* Text. */
+.prose { max-width: var(--reading); margin: 0 auto; padding: 3.5rem 1.25rem 5rem; }
+.prose h1 { font-size: clamp(1.9rem, 4vw, 2.4rem); line-height: 1.15; letter-spacing: -0.03em; font-weight: 700; margin: 0 0 1.25rem; }
+.prose h2 { font-size: 1.25rem; line-height: 1.3; letter-spacing: -0.015em; font-weight: 650; margin: 3rem 0 0.75rem; }
+.prose h3 { font-size: 1rem; font-weight: 650; margin: 2rem 0 0.5rem; }
+.prose p, .prose ul, .prose ol, .prose pre, .prose table { margin: 0 0 1.1rem; }
+.prose ul, .prose ol { padding-left: 1.25rem; }
+.prose li { margin: 0.3rem 0; }
+.prose li::marker { color: var(--faint); }
+.prose strong { font-weight: 600; }
+.prose code { font: 0.875em var(--mono); background: var(--tint); padding: 0.1em 0.35em; border-radius: 4px; }
+.prose pre { background: var(--tint); padding: 0.9rem 1rem; border-radius: 8px; overflow-x: auto; line-height: 1.55; }
+.prose pre code { background: none; padding: 0; font-size: 0.8125rem; }
+.prose table { width: 100%; border-collapse: collapse; font-size: 0.9375em; display: block; overflow-x: auto; }
+.prose th { text-align: left; font-weight: 500; color: var(--soft); font-size: 0.8125rem; }
+.prose th, .prose td { padding: 0.5rem 1rem 0.5rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+@media (min-width: 40rem) {
+  .prose td:first-child { white-space: nowrap; }
+  .prose td:first-child:has(code) { white-space: normal; }
+}
+
+/* The manual: its menu hangs to the left of the text on a wide screen. */
+.manual { position: relative; max-width: var(--reading); margin: 0 auto; }
+.menu { font-size: 0.8125rem; line-height: 1.4; color: var(--soft); padding: 2rem 1.25rem 0; }
+.menu a { text-decoration: none; display: block; padding: 0.22rem 0; }
+.menu a[aria-current] { color: var(--text); font-weight: 600; }
+.menu ul { list-style: none; margin: 0; padding: 0; }
+.menu .outline { margin: 0.1rem 0 0.4rem; padding-left: 0.75rem; border-left: 1px solid var(--line); }
+.menu summary { cursor: pointer; color: var(--text); font-weight: 600; padding: 0.25rem 0 0.75rem; }
+.search { position: relative; margin-bottom: 0.9rem; }
+.search input {
+  width: 100%; font: inherit; color: var(--text); background: var(--tint); border: 0; border-radius: 6px; padding: 0.4rem 0.6rem;
+  appearance: none; -webkit-appearance: none;
+}
+.search input::placeholder { color: var(--soft); }
+.search .results { margin: 0.5rem 0 0.75rem; }
+.search .results a { padding: 0.3rem 0; color: var(--text); }
+.search .results small { display: block; color: var(--soft); font-size: 0.75rem; }
+.search .results mark { background: none; color: var(--accent); }
+.turn { display: flex; justify-content: space-between; gap: 1rem; margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
+.edit { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--soft); }
+
+@media (min-width: 68rem) {
+  .menu { position: absolute; top: 0; bottom: 0; right: 100%; width: var(--menu); margin-right: var(--gap); padding: 3.9rem 0 0; }
+  .menu-fold { position: sticky; top: 1.5rem; max-height: calc(100vh - 3rem); overflow-y: auto; }
+  .menu summary { display: none; }
+}
+@media (max-width: 67.99rem) {
+  .manual .prose { padding-top: 1.5rem; }
+  .menu-fold:not([open]) summary { padding-bottom: 0.25rem; }
+}
+
+/* The landing page. */
+.lead { font-size: 1.125em; color: var(--soft); margin-bottom: 1.75rem; }
+.get { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1.25rem; margin-bottom: 2.75rem; }
+.button { background: var(--text); color: var(--bg); text-decoration: none; padding: 0.5rem 1.1rem; border-radius: 8px; font-weight: 600; }
+.button:hover { color: var(--bg); background: var(--accent); }
+.note { color: var(--soft); font-size: 0.875rem; }
+.shot { display: block; width: 100%; height: auto; border-radius: 10px; margin: 0 0 3rem; border: 1px solid var(--line); }
+@media (min-width: 60rem) { .shot { width: calc(100% + 12rem); max-width: none; margin-left: -6rem; } }
+.features { margin: 0 0 3rem; }
+.features div { display: grid; grid-template-columns: 9rem 1fr; gap: 1rem; padding: 0.7rem 0; border-top: 1px solid var(--line); }
+.features dt { font-weight: 600; }
+.features dt a { text-decoration: none; }
+.features dd { margin: 0; color: var(--soft); }
+@media (max-width: 34rem) { .features div { grid-template-columns: 1fr; gap: 0.1rem; } }
+.status { color: var(--soft); }
+.foot { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 3.5rem; font-size: 0.875rem; color: var(--soft); }
+.foot a { text-decoration: none; }

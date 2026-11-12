@@ -51,8 +51,8 @@ a real pointer, screenshots kept as artifacts.
   page per screen, written in English and translated into Russian: a change to a screen changes its page
   in the same commit. `crates/kadr-core/tests/manual.rs` (in `just unit`)
   keeps the two languages in step and the command and settings pages true
-  to the code. `scripts/manual.sh --serve` shows the site (needs
-  [mdBook](https://rust-lang.github.io/mdBook/)).
+  to the code. `scripts/manual.sh --serve` shows the site (needs Node;
+  it's built with [Eleventy](https://www.11ty.dev) from `docs/site`).
 
 ## Commits and pull requests
 

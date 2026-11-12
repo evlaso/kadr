@@ -1,0 +1,54 @@
+---
+layout: base.njk
+---
+{%- set root = page.url | root -%}
+{%- set manual = root + (lang | manualBase).slice(1) -%}
+<main class="landing prose">
+  <h1>{{ headline }}</h1>
+  <p class="lead">{{ lead }}</p>
+  <p class="get" id="get" data-latest="{{ root }}releases/latest.json" data-all="{{ allReleases }}">
+    <a class="button" href="https://github.com/evlaso/kadr/releases">{{ download }}</a>
+    <span class="note">{{ downloadNote }}</span>
+  </p>
+  <img class="shot" src="{{ root }}images/editor.png" alt="{{ shotAlt }}" width="1401" height="777">
+  <dl class="features">
+    {%- for f in features %}
+    <div><dt><a href="{{ manual }}{{ f.page }}/">{{ f.name }}</a></dt><dd>{{ f.text }}</dd></div>
+    {%- endfor %}
+  </dl>
+  <p class="status">{{ status }} <a href="{{ manual }}">{{ statusLink }}</a></p>
+  <footer class="foot">
+    <a href="{{ manual }}">{{ strings[lang].manual }}</a>
+    <a href="{{ changelog }}">{{ changelogName }}</a>
+    <a href="https://github.com/evlaso/kadr/issues">{{ issues }}</a>
+    <a href="https://github.com/evlaso/kadr/blob/main/LICENSE">MIT</a>
+  </footer>
+</main>
+<script>
+  // The download links, from the release job's releases/latest.json.
+  (function () {
+    var get = document.getElementById("get");
+    fetch(get.dataset.latest).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || !j.platforms) return;
+      var names = { "linux-x86_64": "Linux", "macos-universal": "macOS", "windows-x86_64": "Windows" };
+      var ua = navigator.userAgent;
+      var mine = /Mac/.test(ua) ? "macos-universal" : /Win/.test(ua) ? "windows-x86_64" : "linux-x86_64";
+      var keys = Object.keys(names).filter(function (k) { return j.platforms[k]; });
+      if (!keys.length) return;
+      keys.sort(function (a, b) { return (b === mine) - (a === mine); });
+      get.textContent = "";
+      keys.forEach(function (k, i) {
+        var a = document.createElement("a");
+        a.href = j.platforms[k].url;
+        a.textContent = names[k];
+        if (i === 0) a.className = "button";
+        get.appendChild(a);
+      });
+      var note = document.createElement("a");
+      note.className = "note";
+      note.href = j.notes_url;
+      note.textContent = j.version + " · " + get.dataset.all;
+      get.appendChild(note);
+    }).catch(function () {});
+  })();
+</script>
