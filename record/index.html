@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/record/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/record/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/" aria-current="page">Recording</a>
+          <ul class="outline">
+            <li><a href="#how-to-open">How to open</a></li>
+            <li><a href="#the-recording-bar">The recording bar</a></li>
+            <li><a href="#while-recording">While recording</a></li>
+            <li><a href="#the-camera-bubble">The camera bubble</a></li>
+            <li><a href="#after-recording">After recording</a></li>
+            <li><a href="#on-macos-and-windows">On macOS and Windows</a></li>
+            <li><a href="#keys">Keys</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#commands">Commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Recording</h1>
+    
+<p>Records an area or the whole screen to an MP4, with the microphone, the computer's sound, your camera and the shortcuts you press. In studio mode the recording opens straight in the <a href="../studio/">Studio</a>, which turns it into a finished video. Smaller jobs, trimming and making a GIF, are done right from the card after a recording.</p>
+<h2 id="how-to-open">How to open</h2>
+<ul>
+<li><strong>The hotkey.</strong> On macOS and Windows the default is Ctrl+Shift+2; on Linux kadr starts from your Hyprland bindings. Record the previous area can get a hotkey of its own in Settings → Shortcuts.</li>
+<li><strong>The capture bar</strong> (<code>kadr capture</code>): Recording, or 8. See <a href="../capture/">Capture</a>.</li>
+<li><strong>The tray menu:</strong> Record the screen.</li>
+<li><strong>The command</strong> <code>kadr record</code>. Pressing the hotkey (or running <code>kadr record</code>) again closes the recording bar, or stops a recording that's running.</li>
+</ul>
+<p>First you pick the area, the same way as for a screenshot (see <a href="../capture/">Capture</a>): drag a box, or click a window to record it, or click elsewhere to record the whole screen. The recording bar then shows by the area as soon as you let go of the mouse.</p>
+<h2 id="the-recording-bar">The recording bar</h2>
+<p>The bar sits under the area (or above it, or inside it, where there's no room), and the rest of the screen is dimmed. From the left:</p>
+<ul>
+<li><strong>Cancel</strong> (Esc).</li>
+<li><strong>Area size:</strong> the area's size in pixels. Click it for a menu of sizes: 640 × 480, 1280 × 720, 1920 × 1080, 1080 × 1080, 1080 × 1920, or Fullscreen.</li>
+<li><strong>Microphone:</strong> a click turns it on or off. While it's on, the button fills from the bottom with how loud you are, so you can see you're heard. The arrow beside it chooses the microphone (the system's default, or another one).</li>
+<li><strong>System audio:</strong> what the computer plays.</li>
+<li><strong>Camera:</strong> shows the camera bubble over the area (see below).</li>
+<li><strong>Keyboard shortcuts:</strong> logs the shortcuts you press, for the studio to show as badges.</li>
+<li><strong>Studio mode:</strong> on by default, see below.</li>
+<li><strong>Countdown before recording:</strong> off, 3 or 5 seconds, counted over the area. Esc during the count cancels.</li>
+<li><strong>Another area</strong> (R): pick the area again.</li>
+<li><strong>Fullscreen</strong> (F): record the whole screen instead.</li>
+<li><strong>Record</strong> (Enter).</li>
+</ul>
+<p>The area stays adjustable while the bar is up: drag the knobs on its corners and edges, drag it from inside, move it with the arrows, or resize it with Alt+arrows. The bar remembers its choices for the next recording.</p>
+<p><strong>Studio mode</strong> records for the <a href="../studio/">Studio</a>: the system cursor stays out of the video, and kadr logs the pointer, so the studio draws its own cursor, large and smooth, and places zooms on your clicks. The camera is recorded separately. When you stop, the recording opens in the studio instead of showing a card.</p>
+<h2 id="while-recording">While recording</h2>
+<p>A small bar stays by the area, outside it, so it isn't recorded. It shows a red dot and the time, the microphone's level, and:</p>
+<ul>
+<li><strong>Pause</strong> and <strong>Resume</strong>: the paused time is left out of the file.</li>
+<li><strong>Stop and save</strong>.</li>
+<li><strong>Start over</strong>: throws the take away and records the same area again.</li>
+<li><strong>Stop and delete</strong>.</li>
+</ul>
+<p>A red frame marks the recorded area and the rest of the screen is dimmed; neither is recorded, and clicks go through to the windows below. Frame around the area in the settings turns this off.</p>
+<p>When the whole screen is recorded, the bar goes to another monitor. With only one monitor there's nowhere to put it: stop with the hotkey, or <code>kadr record stop</code>.</p>
+<h2 id="the-camera-bubble">The camera bubble</h2>
+<p>Turn on Camera in the recording bar, and a live picture of your camera shows over the area. Set it up before recording:</p>
+<ul>
+<li>Drag it: it snaps to a corner or to the middle of an edge.</li>
+<li>Hover over it for Smaller, Bigger and Shape. Shape steps through a circle, rounded corners and a square.</li>
+<li>Scroll over it, or drag the band round it, to resize it.</li>
+</ul>
+<p>kadr remembers the look for the next recording, and the studio starts from it. Without studio mode the bubble is recorded where you put it. In studio mode the camera goes to a file of its own, and the studio shapes, sizes and places it.</p>
+<h2 id="after-recording">After recording</h2>
+<p>Without studio mode a card shows in the corner of the screen, with the recording's length. The file is copied to the clipboard by default, to paste into a chat or a folder. Hover over the card for:</p>
+<ul>
+<li><strong>Copy</strong>: the file, to the clipboard.</li>
+<li><strong>Studio</strong>: opens the <a href="../studio/">Studio</a>. Its tooltip says what you'll get: &quot;Zooms follow your clicks&quot; when kadr logged them, &quot;Background and zooms by hand&quot; when it didn't.</li>
+<li><strong>Trim</strong> (top right): the trim window, below.</li>
+<li><strong>GIF</strong> (bottom right): Save as GIF, the whole recording, 720 pixels wide at 15 fps.</li>
+<li><strong>Show in folder</strong>, <strong>Delete file</strong> (to the trash) and <strong>Close</strong>.</li>
+</ul>
+<p>A double-click opens the recording in your video player. Drag the card into a chat or a file manager to drop the file there. While a GIF or a trim is being made, a card shows its progress, with Cancel, and then turns into the result's card.</p>
+<h3 id="the-trim-window">The trim window</h3>
+<p>The trim window (<code>kadr trim</code>) shows a frame of the video over a filmstrip. Drag the start and end handles on the filmstrip; a click moves the nearer one there. The frame follows, and &quot;Selected&quot; shows the length.</p>
+<ul>
+<li><strong>Play</strong> (Space) plays the selected piece in mpv.</li>
+<li><strong>Save</strong> (Ctrl+S, Cmd on macOS) cuts it into a new file with &quot;-trim&quot; in its name; it works once something is trimmed. The original stays.</li>
+<li><strong>Save GIF</strong> (G) makes a GIF of the selected piece: 480, 720 or 960 pixels wide, at 10, 15 or 24 fps.</li>
+<li><strong>Cancel</strong> (Esc).</li>
+</ul>
+<p><code>kadr trim &lt;video&gt; --from S --to S</code> trims without the window, and <code>kadr gif &lt;video&gt;</code> makes a GIF of the whole recording, 720 pixels wide at 15 fps.</p>
+<h2 id="on-macos-and-windows">On macOS and Windows</h2>
+<p>Recording there goes through the system's own capture and encoder, with the system's sound and the default microphone. Choosing another microphone, its level meter and the camera are Linux-only for now. So is the click and key log, which comes from the Hyprland hook: the studio places zooms on clicks only on Linux. Nobody has recorded on a real Mac or Windows machine yet.</p>
+<h2 id="keys">Keys</h2>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Enter</td>
+<td>Record (in the recording bar)</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Cancel the recording bar (or close its size menu first), cancel the countdown, or close the trim window</td>
+</tr>
+<tr>
+<td>R</td>
+<td>Another area</td>
+</tr>
+<tr>
+<td>F</td>
+<td>The whole screen</td>
+</tr>
+<tr>
+<td>Arrows</td>
+<td>Move the area a pixel</td>
+</tr>
+<tr>
+<td>Shift+arrows</td>
+<td>Move it ten pixels</td>
+</tr>
+<tr>
+<td>Alt+arrows</td>
+<td>Resize it from the right and bottom edges</td>
+</tr>
+<tr>
+<td>Space</td>
+<td>Play the selection (trim window)</td>
+</tr>
+<tr>
+<td>G</td>
+<td>Save a GIF (trim window)</td>
+</tr>
+<tr>
+<td>Ctrl+S (Cmd+S on macOS)</td>
+<td>Save the trimmed piece (trim window)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="settings">Settings</h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Key</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Recording → Show the thumbnail</td>
+<td><code>after_video.card</code></td>
+<td>The card after a recording</td>
+</tr>
+<tr>
+<td>Recording → Copy to the clipboard</td>
+<td><code>after_video.copy</code></td>
+<td>Copy the file right away</td>
+</tr>
+<tr>
+<td>Recording → Save to the folder</td>
+<td><code>after_video.save</code></td>
+<td>Off, the file goes to a temporary folder and is gone after a restart</td>
+</tr>
+<tr>
+<td>Recording → Open the studio</td>
+<td><code>after_video.edit</code></td>
+<td>Open every recording in the studio; studio mode recordings always open in it</td>
+</tr>
+<tr>
+<td>Recording → Recordings folder</td>
+<td><code>video_dir</code></td>
+<td>Where recordings go</td>
+</tr>
+<tr>
+<td>Recording → Frame rate</td>
+<td><code>fps</code></td>
+<td>Source (the screen's refresh rate), 30, 60 or 120 fps</td>
+</tr>
+<tr>
+<td>Recording → Quality</td>
+<td><code>quality</code></td>
+<td>Medium, High, Very high or Maximum; higher keeps small text sharp but makes bigger files</td>
+</tr>
+<tr>
+<td>Recording → Frame around the area</td>
+<td><code>region_frame</code></td>
+<td>Outline the recorded area (the outline isn't recorded)</td>
+</tr>
+</tbody>
+</table>
+<p>How long the card stays and where it shows are in Settings → General (see <a href="../capture/">Capture</a>).</p>
+<h2 id="commands">Commands</h2>
+<pre><code>kadr record                                    the recording bar (or stop a running recording)
+kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
+                                               start recording at once (again to stop)
+kadr record area &quot;X,Y WxH&quot;                   the recording bar for a given area
+kadr record previous                           the recording bar for the last area picked
+kadr record stop                               stop recording
+kadr trim &lt;video&gt; [--from S --to S]            trim a recording (no flags: the trim window)
+kadr gif &lt;video&gt;                               save a recording as GIF (720px, 15 fps)
+</code></pre>
+
+    <footer class="turn">
+      <span><a href="../editor/">← Editor</a></span>
+      <span><a href="../studio/">Studio →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/record.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>

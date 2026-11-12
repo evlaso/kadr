@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command line · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/cli/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/cli/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/" aria-current="page">Command line</a>
+          <ul class="outline">
+            <li><a href="#screenshots">Screenshots</a></li>
+            <li><a href="#recording">Recording</a></li>
+            <li><a href="#editing">Editing</a></li>
+            <li><a href="#other-commands">Other commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Command line</h1>
+    
+<p>Run <code>kadr --help</code> to see the command list. If kadr is already running, later capture, editing and settings commands go to that instance instead of starting another UI process.</p>
+<pre><code class="language-text">  kadr capture                                   every mode on one bar
+  kadr shot [smart|region|windows|fullscreen|all|timer|previous]
+                                                 take a screenshot (smart by default; all: every screen at once;
+                                                 previous: the last area)
+  kadr shot scroll [&quot;X,Y WxH&quot;]                  scrolling screenshot (again to finish)
+  kadr open &lt;file&gt;                               show the thumbnail for an existing image (a .kadr opens its project)
+  kadr pin &lt;file&gt;                                pin an image on top of windows
+
+  kadr record                                    the recording bar (or stop a running recording)
+  kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
+                                                 start recording at once (again to stop)
+  kadr record area &quot;X,Y WxH&quot;                   the recording bar for a given area
+  kadr record previous                           the recording bar for the last area picked
+  kadr record stop                               stop recording
+  kadr studio &lt;video|project.kadr&gt; [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+  kadr edit &lt;image|project.kadr&gt;                 editor: arrows, text, highlighter, blur…
+  kadr trim &lt;video&gt; [--from S --to S]            trim a recording (no flags: the trim window)
+  kadr gif &lt;video&gt;                               save a recording as GIF (720px, 15 fps)
+  kadr history                                   history of screenshots and recordings
+  kadr settings                                  settings
+  kadr update                                    look for a newer release now
+  kadr tray                                      tray icon (for autostart)
+  kadr dev &lt;command&gt;                             test hooks of a kadr started with KADR_DEV=1
+                                                 (windows, dump, find, click, drag, key, type, state, shot, mem)
+  kadr text [image]                              recognize text (in an area or an image) and copy it
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+  kadr --version                                 the version
+</code></pre>
+<h2 id="screenshots">Screenshots</h2>
+<p><code>kadr capture</code> opens the bar with every capture mode. <code>kadr shot</code> starts smart selection by default; choose an area, windows, a screen, every screen, the self-timer or the previous area explicitly. <code>kadr shot scroll</code> starts a scrolling screenshot and finishes it when called again. <code>kadr open &lt;file&gt;</code> shows an existing image on a card; <code>kadr pin &lt;file&gt;</code> keeps it above other windows. See <a href="../capture/">Capture</a>.</p>
+<h2 id="recording">Recording</h2>
+<p><code>kadr record</code> opens the recording bar, or stops the current recording. The region and fullscreen forms start immediately, with optional microphone, system audio, camera, shortcut display and studio mode. The area and previous forms open the bar for a given or last-picked area. <code>kadr record stop</code> stops explicitly. See <a href="../record/">Recording</a>; the Hyprland click/key log is Linux-only.</p>
+<h2 id="editing">Editing</h2>
+<p><code>kadr edit &lt;image|project.kadr&gt;</code> opens the <a href="../editor/">editor</a>; <code>kadr studio &lt;video|project.kadr&gt;</code> opens the <a href="../studio/">studio</a>, and its render flag exports immediately. <code>kadr open &lt;file&gt;</code> opens a project in the right editor. <code>kadr trim &lt;video&gt;</code> opens trimming, or trims directly with times in seconds; a start time requires an end time. <code>kadr gif &lt;video&gt;</code> makes a 720px, 15 fps GIF. See <a href="../projects/">Project files</a> for keeping an edit.</p>
+<h2 id="other-commands">Other commands</h2>
+<p>Open <a href="../history/">History</a> with <code>kadr history</code> or <a href="../settings/">Settings</a> with <code>kadr settings</code>. <code>kadr text [image]</code> recognizes text in an image, or asks for an area, and copies it. <code>kadr update</code> checks for a release now; <code>kadr tray</code> runs the tray for autostart. <code>kadr install-desktop</code> registers project files on Linux. <code>kadr --version</code> prints the version. The development command is for test hooks, not normal capture work.</p>
+
+    <footer class="turn">
+      <span><a href="../projects/">← Project files</a></span>
+      <span><a href="../glossary/">Glossary →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/cli.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>

@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/editor/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/editor/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/" aria-current="page">Editor</a>
+          <ul class="outline">
+            <li><a href="#how-to-open">How to open</a></li>
+            <li><a href="#tools">Tools</a></li>
+            <li><a href="#colour-size-and-a-shape-s-options">Colour, size and a shape&#39;s options</a></li>
+            <li><a href="#background-and-presets">Background and presets</a></li>
+            <li><a href="#crop">Crop</a></li>
+            <li><a href="#the-canvas-and-the-bottom-bar">The canvas and the bottom bar</a></li>
+            <li><a href="#keys">Keys</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#commands">Commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Editor</h1>
+    
+<p>The editor is where a screenshot gets its arrows, boxes, text and step numbers, where private details are hidden, and where the picture is cropped and put on a background. What you draw stays editable: open the saved file in the editor again and every shape comes back.</p>
+<p>It opens PNG, JPEG and WebP pictures, and <code>.kadr</code> project files.</p>
+<h2 id="how-to-open">How to open</h2>
+<ul>
+<li><strong>From the card</strong> after a screenshot: <strong>Edit</strong>.</li>
+<li><strong>Right after every screenshot:</strong> turn on Settings → Screenshots → <strong>Open the editor</strong>.</li>
+<li><strong>From History:</strong> select a screenshot and press E, or click <strong>Edit</strong>.</li>
+<li><strong>From the command line:</strong> <code>kadr edit &lt;image|project.kadr&gt;</code>. <code>kadr open</code> with a <code>.kadr</code> file opens its project too.</li>
+<li><strong>From the file manager:</strong> <code>.kadr</code> files open in kadr (see <a href="../projects/">Project files</a>).</li>
+</ul>
+<p>On Linux the editor opens as an ordinary window by default; it can cover the whole screen instead (see Settings below). On macOS and Windows it's always a window.</p>
+<h2 id="tools">Tools</h2>
+<p>The tools sit in the top bar, in groups. Each has a letter; the tooltip says the tool's name. When the window is narrow, the last tools fold under <strong>More tools</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Tool</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>V</td>
+<td>Select and move</td>
+<td>Click a shape to select it, drag it to move it, pull its handles to resize it. Drag on empty space to select several.</td>
+</tr>
+<tr>
+<td>A</td>
+<td>Arrow</td>
+<td>Draws an arrow. Drag its middle handle to bend it. Styles: <strong>Arrow</strong> (a filled head), <strong>Open head</strong>, <strong>Both ends</strong>, <strong>Tapered</strong> (thin at the tail, wide at the head).</td>
+</tr>
+<tr>
+<td>L</td>
+<td>Line</td>
+<td>A straight line; it bends like an arrow.</td>
+</tr>
+<tr>
+<td>R</td>
+<td>Rectangle</td>
+<td>A box, <strong>Outline</strong> or <strong>Fill</strong>.</td>
+</tr>
+<tr>
+<td>O</td>
+<td>Ellipse</td>
+<td>An ellipse, <strong>Outline</strong> or <strong>Fill</strong>.</td>
+</tr>
+<tr>
+<td>P</td>
+<td>Pencil</td>
+<td>Freehand drawing.</td>
+</tr>
+<tr>
+<td>H</td>
+<td>Highlighter</td>
+<td>A see-through marker. Over a line of text it fits the line's height and stays level; leave the line, or hold Shift, to draw freely.</td>
+</tr>
+<tr>
+<td>T</td>
+<td>Text</td>
+<td>Click to type. Click an existing text to edit it; drag it to move it. Seven styles: <strong>Plain text</strong>, <strong>On a plate</strong>, <strong>Outlined</strong>, <strong>With a shadow</strong>, <strong>Highlighted</strong>, <strong>In a pill</strong>, <strong>Label</strong>.</td>
+</tr>
+<tr>
+<td>N</td>
+<td>Step numbers</td>
+<td>Each click puts the next number: 1, 2, 3…</td>
+</tr>
+<tr>
+<td>M</td>
+<td>Cursor</td>
+<td>Stamps a pointer: <strong>Arrow</strong>, <strong>Pointing hand</strong>, <strong>Text</strong>, <strong>Open hand</strong>, <strong>Closed hand</strong>, <strong>Crosshair</strong>, <strong>Busy</strong>, <strong>Not allowed</strong>. They are your system's own pointer pictures.</td>
+</tr>
+<tr>
+<td>B</td>
+<td>Hide</td>
+<td>Covers an area: <strong>Pixelate</strong>, <strong>Blur</strong>, or a black box.</td>
+</tr>
+<tr>
+<td>S</td>
+<td>Spotlight</td>
+<td>Dims everything around the area you draw.</td>
+</tr>
+<tr>
+<td>C</td>
+<td>Crop</td>
+<td>Crop, turn and resize the picture (see Crop below).</td>
+</tr>
+</tbody>
+</table>
+<p>Hold Shift while drawing for squares, circles, and lines and arrows at 45° steps.</p>
+<p><strong>Hide</strong> is built to stay hidden: the blur and the pixelation are mixed with noise so the text can't be brought back, and with the black box what's under it is gone from the saved file altogether. With the hide tool picked, <strong>Hide sensitive</strong> in the top bar finds e-mails, keys, card and phone numbers in the picture and covers each one the way picked; one undo takes them all off. It reads the picture with tesseract, which has to be installed.</p>
+<h2 id="colour-size-and-a-shape-s-options">Colour, size and a shape's options</h2>
+<ul>
+<li><strong>Colour and size</strong> stay in the top bar's corner. They apply to the next shape, and to the selected one.</li>
+<li><strong>The colour menu</strong> has kadr's eight colours (keys 1–8), the pipette (I: click the picture to take a colour from it), <strong>Recent</strong> colours, and <strong>Yours</strong>: + keeps the current colour there, right-click one to remove it.</li>
+<li><strong>A shape's own options</strong> float in a bar under the selected shape: an arrow's style, a box's fill, a text's style, how an area is hidden, a pointer's look. An arrow, a box, an ellipse or a hidden area stays selected after you draw it, so its bar is right there. The next shape takes what you picked last.</li>
+<li><strong>Undo and redo</strong> are in the top bar too.</li>
+</ul>
+<h2 id="background-and-presets">Background and presets</h2>
+<p>The background button in the top bar opens a sidebar:</p>
+<ul>
+<li><strong>Presets</strong> at the top: + saves the current look as a preset, the dropdown picks one, and each can be renamed or deleted from there.</li>
+<li><strong>None</strong>, <strong>Gradients</strong> (<strong>Show more</strong> for the rest), <strong>Wallpapers</strong> (the Omarchy themes' backgrounds, where there are any, plus <strong>Your own image…</strong>), <strong>Blurred</strong> (the screenshot itself, blurred), <strong>Plain color</strong> (including <strong>Transparent</strong>).</li>
+<li><strong>Padding</strong>, <strong>Corners</strong> and <strong>Shadow</strong> sliders.</li>
+<li><strong>Aspect ratio:</strong> <strong>Auto</strong>, 16:9, 4:3, 1:1 or 9:16. The final size shows under it.</li>
+<li><strong>Position:</strong> where the picture sits on a 3×3 grid. Off the middle it sits flush with that edge or corner. <strong>Even margins</strong> trims the screenshot's plain margins to match, so what's in it sits in the middle.</li>
+</ul>
+<p><strong>Pictures</strong> can be added to a screenshot:</p>
+<ul>
+<li>dropped on the screenshot, or pasted with Ctrl+V, or picked with <strong>Add a picture on top</strong>, a picture goes on top as a shape;</li>
+<li>dropped past the screenshot's edge, it joins the screenshot on that side, as tall (or as wide) as it. While you drag, the editor shows where it will go. On a background, the joined pictures make one card with one shadow.</li>
+</ul>
+<h2 id="crop">Crop</h2>
+<p>C (or the crop button in the top bar) opens the crop mode. Drag the crop's edges and corners; they snap to edges in the picture while <strong>Snap to edges</strong> is on (hold Ctrl to do the opposite for a moment). Its top bar:</p>
+<ul>
+<li><strong>Aspect ratio:</strong> <strong>Freeform</strong>, <strong>Original</strong>, 1:1, 16:9, 9:16, 4:3, 3:2, 4:5, 21:9.</li>
+<li><strong>Width and height</strong> in pixels: click one and type; Tab moves to the other.</li>
+<li><strong>Swap width and height</strong>, <strong>Rotate 90° clockwise</strong>, <strong>Flip horizontally</strong>.</li>
+<li><strong>Fill past the picture:</strong> a crop can reach past the picture; this picks what fills that room (transparent, white, black or a pen colour).</li>
+<li><strong>Image size:</strong> save a smaller picture: 100%, 75%, 50%, 33% or 25%.</li>
+<li><strong>Cancel</strong> and <strong>Crop</strong>.</li>
+</ul>
+<p>At the bottom: the zoom, <strong>Snap to edges</strong> and <strong>Revert to Original</strong>. Once cropped, <strong>Uncrop</strong> in the editor's bottom bar brings the whole picture back.</p>
+<h2 id="the-canvas-and-the-bottom-bar">The canvas and the bottom bar</h2>
+<p>The canvas zooms: Ctrl and the mouse wheel zoom at the pointer, the wheel alone or Space with a drag pans. The zoom menu at the bottom left has <strong>Fit</strong>, 25%, 50%, 100% and 200%. A file reopened with its drawing gets <strong>Start over</strong> there, to go back to the clean picture.</p>
+<p>The bottom bar, left to right:</p>
+<ul>
+<li><strong>Drag</strong>: drag the finished picture into a chat or a folder.</li>
+<li><strong>Text recognition</strong> (the scan button): recognizes the text in the picture and copies it. It needs tesseract.</li>
+<li><strong>Pin on top of the windows</strong>: the finished picture floats above every window.</li>
+<li><strong>Save as a .kadr project</strong> (the project button): saves a <code>.kadr</code> file with the whole edit in the screenshots folder, and the editor stays open. See <a href="../projects/">Project files</a>.</li>
+<li><strong>Copy</strong> (Ctrl+C): puts the finished picture on the clipboard and closes the editor.</li>
+<li><strong>Export size:</strong> <strong>Original</strong> (the picture's own pixels), <strong>1×</strong> (its size on screen) or <strong>2×</strong>. It applies to saving, copying and dragging.</li>
+<li><strong>Save as…</strong> (Ctrl+Shift+S): a file of your choice. The name's extension picks the format: PNG, JPEG (white where the picture is transparent) or WebP (lossless); a name ending in <code>.kadr</code> saves a project.</li>
+<li><strong>Save</strong> (Ctrl+S): writes over the file you opened (a JPEG stays a JPEG), copies it, closes the editor and shows the result's card.</li>
+</ul>
+<p>When the window is narrow, text recognition, pinning, the project and copying fold into a <strong>More</strong> menu.</p>
+<h2 id="keys">Keys</h2>
+<p>Ctrl is Cmd on macOS.</p>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>V, A, L, R, O, P, H, T, N, M, B, S, C</td>
+<td>Pick a tool (see Tools)</td>
+</tr>
+<tr>
+<td>1–8</td>
+<td>Pick one of kadr's colours</td>
+</tr>
+<tr>
+<td>I</td>
+<td>Take a colour from the picture</td>
+</tr>
+<tr>
+<td>Shift while drawing</td>
+<td>Squares, circles, 45° lines; with the highlighter, draw freely</td>
+</tr>
+<tr>
+<td>Arrows</td>
+<td>Move the selected shape by a pixel; Shift+arrows by ten</td>
+</tr>
+<tr>
+<td>Delete, Backspace</td>
+<td>Delete the selected shapes</td>
+</tr>
+<tr>
+<td>Ctrl+D</td>
+<td>Duplicate the selected shape</td>
+</tr>
+<tr>
+<td>Ctrl+A</td>
+<td>Select every shape</td>
+</tr>
+<tr>
+<td>Ctrl+Z</td>
+<td>Undo</td>
+</tr>
+<tr>
+<td>Ctrl+Shift+Z, Ctrl+Y</td>
+<td>Redo</td>
+</tr>
+<tr>
+<td>Ctrl+C</td>
+<td>Copy the picture and close</td>
+</tr>
+<tr>
+<td>Ctrl+V</td>
+<td>Paste a picture on top</td>
+</tr>
+<tr>
+<td>Ctrl+S</td>
+<td>Save</td>
+</tr>
+<tr>
+<td>Ctrl+Shift+S</td>
+<td>Save as</td>
+</tr>
+<tr>
+<td>Ctrl+= and Ctrl+-</td>
+<td>Zoom in and out</td>
+</tr>
+<tr>
+<td>Ctrl+0</td>
+<td>Fit the picture in the window</td>
+</tr>
+<tr>
+<td>Space (held)</td>
+<td>Pan the canvas with the mouse</td>
+</tr>
+<tr>
+<td>Enter, Esc</td>
+<td>While typing: finish the text (Shift+Enter starts a new line)</td>
+</tr>
+<tr>
+<td>Enter, C</td>
+<td>In crop mode: crop</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Close a menu, let go of the selection; with nothing to let go of, close the editor. In crop mode: cancel</td>
+</tr>
+<tr>
+<td>Delete</td>
+<td>In crop mode: remove the crop</td>
+</tr>
+</tbody>
+</table>
+<h2 id="settings">Settings</h2>
+<ul>
+<li><strong>Open the editor</strong> (Settings → Screenshots → After a screenshot): open every new screenshot in the editor. In <code>settings.toml</code>: <code>after_shot.edit</code>.</li>
+<li><strong>Editor</strong> (Settings → Screenshots, Linux only): <strong>Window</strong>, or <strong>Over everything</strong> to cover the screen. In <code>settings.toml</code>: <code>editor_window</code>.</li>
+<li><strong>Window background</strong> (Settings → Screenshots): a preset saved in the editor that window shots go onto; the editor can still change it. In <code>settings.toml</code>: <code>window_backdrop</code>.</li>
+<li>Your colours and the recent ones live in <code>settings.toml</code> as <code>saved_colors</code> and <code>recent_colors</code>.</li>
+</ul>
+<h2 id="commands">Commands</h2>
+<pre><code>kadr edit &lt;image|project.kadr&gt;                 editor: arrows, text, highlighter, blur…
+kadr open &lt;file&gt;                               show the thumbnail for an existing image (a .kadr opens its project)
+</code></pre>
+
+    <footer class="turn">
+      <span><a href="../capture/">← Capture</a></span>
+      <span><a href="../record/">Recording →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/editor.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>

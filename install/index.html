@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/install/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/install/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/" aria-current="page">Install</a>
+          <ul class="outline">
+            <li><a href="#downloads">Downloads</a></li>
+            <li><a href="#linux-hyprland">Linux (Hyprland)</a></li>
+            <li><a href="#macos-and-windows">macOS and Windows</a></li>
+            <li><a href="#updating">Updating</a></li>
+            <li><a href="#commands">Commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Install</h1>
+    
+<p>Use a release build, or build kadr from source with Rust 1.95 or newer. Linux on Wayland with Hyprland is the main platform.</p>
+<h2 id="downloads">Downloads</h2>
+<p><a href="https://github.com/evlaso/kadr/releases">Releases</a> has a Linux <code>.tar.xz</code> with <code>INSTALL.md</code>, a macOS <code>.dmg</code> containing <code>Kadr.app</code> for Apple silicon or Intel, and a Windows installer or portable <code>.exe</code>.</p>
+<p>The builds are not signed yet. After copying the macOS app to Applications, run:</p>
+<pre><code class="language-sh">xattr -dr com.apple.quarantine /Applications/Kadr.app
+</code></pre>
+<h2 id="linux-hyprland">Linux (Hyprland)</h2>
+<p>Install <code>gpu-screen-recorder</code>, <code>ffmpeg</code>, <code>tesseract</code> with English language data, <code>grim</code> and <code>wl-clipboard</code>. On Omarchy they may already be installed; otherwise use <code>pacman</code>. <code>mpv</code> is optional: the trim window's Play and the studio's Preview play through it.</p>
+<p>To build from source and install the two programs:</p>
+<pre><code class="language-sh">cargo build --profile dist -p kadr -p kadr-tray
+install -m755 target/dist/kadr target/dist/kadr-tray ~/.local/bin/
+</code></pre>
+<p>Copy the Hyprland hook from the source tree:</p>
+<pre><code class="language-sh">cp data/hypr/kadr.lua ~/.config/hypr/kadr.lua
+</code></pre>
+<p>Add <code>require(&quot;hypr.kadr&quot;)</code> to <code>~/.config/hypr/hyprland.lua</code>. The hook floats kadr's windows, loads the shortcuts saved in <a href="../settings/">Settings</a>, and logs clicks and shortcut keys while recording for the studio. Linux starts with your existing Hyprland bindings, not the global defaults used on the other systems.</p>
+<p>Start <code>kadr-tray</code> at login. In Omarchy's <code>autostart.lua</code>, add:</p>
+<pre><code class="language-lua">o.launch_on_start(&quot;kadr-tray&quot;)
+</code></pre>
+<p>On its first run, kadr registers the <code>.kadr</code> project file type, icon and menu entry on Linux. Run <code>kadr install-desktop</code> to do it by hand.</p>
+<h2 id="macos-and-windows">macOS and Windows</h2>
+<p>For a source build, build all three programs and keep <code>kadr</code>, <code>kadr-tray</code> and <code>kadr-overlay</code> side by side:</p>
+<pre><code class="language-sh">cargo build --profile dist -p kadr -p kadr-tray -p kadr-overlay
+</code></pre>
+<p>The tray holds the global shortcuts, so start <code>kadr-tray</code> at login. The defaults and how to change them are in <a href="../settings/">Settings</a>. The Windows installer sets up the tray at login and the <code>.kadr</code> file association; the portable build is a single <code>kadr.exe</code>.</p>
+<p>Unsigned builds are also attached to manually started <a href="https://github.com/evlaso/kadr/actions">Actions</a> runs. For those standalone macOS programs, remove quarantine before opening them:</p>
+<pre><code class="language-sh">xattr -d com.apple.quarantine kadr kadr-tray kadr-overlay
+</code></pre>
+<p>Screenshots, window shots, the editor, studio and recording through the system's capture are implemented on macOS and Windows. Scrolling screenshots are available there too. These systems have CI tests, but have not yet been tried on a real machine. The Hyprland click/key log is Linux-only.</p>
+<h2 id="updating">Updating</h2>
+<p>With <strong>General → Check for updates</strong> on in Settings, the tray checks once a day. A new release appears on an update card. <strong>Release page</strong> opens its notes and downloads; <strong>Update</strong> downloads the release, verifies its release signature and replaces the installed files. The tray restarts on the new version. A version that fails to start three times in a row is replaced by the previous one. Package-manager installations are updated through their manager instead.</p>
+<p>Choose <strong>Update channel</strong> in <strong>General</strong>: <strong>Stable</strong> gets finished versions only; <strong>Beta</strong> also gets alpha, beta and release-candidate versions. A pre-release build uses Beta until you change it.</p>
+<p>To check immediately, open <strong>Settings → About kadr → Check now</strong>. The same row shows the result and offers the update. <code>kadr update</code> shows the result on a card instead.</p>
+<h2 id="commands">Commands</h2>
+<pre><code class="language-text">  kadr settings                                  settings
+  kadr update                                    look for a newer release now
+  kadr tray                                      tray icon (for autostart)
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+</code></pre>
+<p><code>kadr install-desktop</code> is Linux-only. See <a href="../cli/">Command line</a> for all commands.</p>
+
+    <footer class="turn">
+      <span><a href="../">← Introduction</a></span>
+      <span><a href="../capture/">Capture →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/install.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>

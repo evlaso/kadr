@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/studio/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/studio/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/" aria-current="page">Studio</a>
+          <ul class="outline">
+            <li><a href="#how-to-open">How to open</a></li>
+            <li><a href="#the-window">The window</a></li>
+            <li><a href="#zooms-and-cuts">Zooms and cuts</a></li>
+            <li><a href="#cursor-shortcuts-camera-and-audio">Cursor, shortcuts, camera and audio</a></li>
+            <li><a href="#background-and-export">Background and export</a></li>
+            <li><a href="#platforms">Platforms</a></li>
+            <li><a href="#keys">Keys</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#commands">Commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Studio</h1>
+    
+<p>The studio turns a screen recording into a finished video: it zooms in where you clicked, cuts out the dull parts, draws a large smooth cursor, puts the video on a background with the camera in a corner, and exports MP4 or GIF.</p>
+<p>It works best with a recording made in studio mode (the sparkle button on the recording bar): then the system's cursor stays out of the video, kadr draws its own, and the camera is recorded separately, so all of them can be changed here. See <a href="../record/">Recording</a>.</p>
+<p>kadr keeps your edit as you go: open the same recording again and it's all there. <strong>Edited</strong> next to the name in the title bar says it's changed. <strong>Project</strong> saves the recording with its edit as a <code>.kadr</code> file, next to the recordings (see <a href="../projects/">Project files</a>).</p>
+<h2 id="how-to-open">How to open</h2>
+<ul>
+<li><strong>From the card</strong> after a recording: <strong>Studio</strong>.</li>
+<li><strong>After a studio mode recording</strong> the studio opens by itself.</li>
+<li><strong>After every recording:</strong> turn on Settings → Recording → <strong>Open the studio</strong>.</li>
+<li><strong>From History:</strong> select a recording and press E, or click <strong>Studio</strong>.</li>
+<li><strong>From the command line:</strong> <code>kadr studio &lt;video|project.kadr&gt;</code>. With <code>--render</code> kadr exports right away with the saved edit, without opening the window.</li>
+<li><strong>From the file manager:</strong> a <code>.kadr</code> project of a recording opens in the studio.</li>
+</ul>
+<h2 id="the-window">The window</h2>
+<ul>
+<li><strong>The rail</strong> at the left has the sections: Zoom, Cursor, Keyboard shortcuts, Audio, Camera, Background, and Cut apart at the bottom. A click opens a section's settings beside the rail.</li>
+<li><strong>The stage</strong> in the middle plays the video as it will look, with every effect.</li>
+<li><strong>The timeline</strong> at the bottom: the ruler, the filmstrip, the zoom track under it and the cut row at the very bottom. A click on the ruler or the filmstrip moves the playhead. Above it: <strong>To the start</strong>, play and pause, <strong>To the end</strong>, and two <strong>Timeline zoom</strong> buttons.</li>
+<li><strong>The title bar:</strong> the file's name, <strong>Project</strong> and <strong>Export</strong>.</li>
+</ul>
+<h2 id="zooms-and-cuts">Zooms and cuts</h2>
+<p><strong>Zoom.</strong> A studio mode recording comes with zooms already placed on your clicks; for any other recording, add them yourself.</p>
+<ul>
+<li>Click the zoom track to add a zoom. Drag a zoom to move it, drag its edges to make it longer or shorter.</li>
+<li><strong>Zoom level</strong> sets how close the selected zoom gets (100% to 400%); <strong>Apply zoom level to all</strong> gives every zoom the same level.</li>
+<li><strong>Zoom mode</strong> of the selected zoom: <strong>Follow cursor</strong>, or <strong>Manual</strong>: then click the video where to zoom.</li>
+<li><strong>Delete zoom</strong> (or Delete) removes the selected one.</li>
+<li><strong>Automatic → Zooms on clicks</strong> places zooms on the clicks again, in place of the ones there. It needs a recording with clicks.</li>
+<li><strong>Motion blur:</strong> <strong>Off</strong>, <strong>Light</strong> or <strong>Strong</strong>, on zooms, camera moves and a fast cursor. It shows in the preview and the export.</li>
+</ul>
+<p><strong>Cut.</strong></p>
+<ul>
+<li>The filmstrip's yellow edges trim the start and the end.</li>
+<li>Drag across the cut row to cut that piece out. Drag a cut to move it, drag its edges to change it. X cuts a second at the playhead.</li>
+<li>With a cut selected, the Cut section says what it removes; <strong>Restore the piece</strong> (or Delete) brings it back. <strong>Restore the whole video</strong> drops the trim and every cut.</li>
+</ul>
+<h2 id="cursor-shortcuts-camera-and-audio">Cursor, shortcuts, camera and audio</h2>
+<p><strong>Cursor:</strong></p>
+<ul>
+<li>For a studio mode recording: <strong>Show the cursor</strong>, its <strong>Size</strong> (0.5× to 3×), <strong>Style</strong> (<strong>Arrow</strong>, <strong>Light arrow</strong> or <strong>Dot</strong>) and <strong>Motion</strong> (<strong>Natural</strong> or <strong>Smooth</strong>). Any other recording keeps the cursor as it was recorded.</li>
+<li><strong>Clicks:</strong> <strong>Ripple animation</strong> (rings where you clicked), and with kadr's own cursor, <strong>Press effect</strong> (the cursor reacts to a click).</li>
+</ul>
+<p><strong>Keyboard shortcuts:</strong> <strong>Show shortcuts</strong> puts a badge with the shortcuts you pressed on the video, at the <strong>Bottom</strong> or the <strong>Top</strong>, in size S, M or L. It needs a recording made with <strong>Keyboard shortcuts</strong> on in the recording bar.</p>
+<p><strong>Camera</strong> (when the recording has one): <strong>Show the camera</strong>, its <strong>Size</strong>, <strong>Rounding</strong> from a square to a circle, and where it sits: one of eight spots round the edge.</p>
+<p><strong>Audio</strong> (when the recording has sound): <strong>Audio</strong> on or off, <strong>Volume</strong> (up to 200%), <strong>Channels</strong>: <strong>Stereo</strong> or <strong>Mono</strong>. GIFs have no audio.</p>
+<h2 id="background-and-export">Background and export</h2>
+<p><strong>Background:</strong></p>
+<ul>
+<li><strong>Presets</strong> at the top: + saves the current look (background, padding, cursor, export), the dropdown picks, renames or deletes one.</li>
+<li><strong>Gradients</strong>, <strong>Wallpapers</strong> (the Omarchy themes' backgrounds, where there are any, plus <strong>Your own image…</strong>) and <strong>Plain color</strong>.</li>
+<li><strong>Aspect ratio:</strong> <strong>Auto</strong> (the recording's own), 1:1, 5:4, 4:3, 3:2, 16:9, and the tall 4:5, 3:4, 9:16.</li>
+<li><strong>Padding</strong>, <strong>Corners</strong> and <strong>Shadow</strong>.</li>
+</ul>
+<p><strong>Export.</strong> The <strong>Export</strong> button opens the export settings:</p>
+<ul>
+<li><strong>Format:</strong> MP4 or GIF.</li>
+<li><strong>Size:</strong> 720p, 1080p, 1440p or 4K.</li>
+<li><strong>FPS:</strong> <strong>Source</strong> (as recorded), 30, 60 or 120.</li>
+<li><strong>Quality</strong> (MP4 only): <strong>Best</strong>, <strong>High</strong>, <strong>Medium</strong> or <strong>Small</strong>.</li>
+<li>Under them, the video's size and length and how big the file will be.</li>
+<li><strong>Preview</strong> builds a quick 720p video with every effect and plays it in mpv. <strong>Export</strong> (or Ctrl+S) closes the studio and makes the video, saved next to the recording with <code>-studio</code> added to its name. Its progress shows on a card over a blurred frame, with a cancel button, and the card becomes the result.</li>
+</ul>
+<p>A new recording starts with the look you used last in the studio.</p>
+<h2 id="platforms">Platforms</h2>
+<p>Clicks and keys are logged by kadr's Hyprland hook, so on Linux only for now. On macOS and Windows a recording has no click or key log yet: zooms go in by hand, and click rings and shortcut badges have nothing to show.</p>
+<h2 id="keys">Keys</h2>
+<p>Ctrl is Cmd on macOS.</p>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Space</td>
+<td>Play or pause</td>
+</tr>
+<tr>
+<td>← and →</td>
+<td>Back or forward half a second</td>
+</tr>
+<tr>
+<td>Home, End</td>
+<td>To the start or the end</td>
+</tr>
+<tr>
+<td>X</td>
+<td>Cut a second at the playhead</td>
+</tr>
+<tr>
+<td>Delete, Backspace</td>
+<td>Delete the selected zoom, or restore the selected cut</td>
+</tr>
+<tr>
+<td>Ctrl+S</td>
+<td>Export</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Close the export settings or the aspect ratio menu, stop placing a zoom, let go of the selection; with nothing to let go of, close the studio</td>
+</tr>
+</tbody>
+</table>
+<h2 id="settings">Settings</h2>
+<p>The Studio section of the settings sets where a new edit starts:</p>
+<ul>
+<li><strong>Default zoom</strong> for zooms placed on clicks: ×1.25, ×1.5, ×1.8, ×2.2 or ×3. In <code>settings.toml</code>: <code>studio_zoom</code>.</li>
+<li><strong>Default background:</strong> one of the studio's gradients or colours. In <code>settings.toml</code>: <code>studio_backdrop</code>.</li>
+<li><strong>Default padding:</strong> None, S, M or L. In <code>settings.toml</code>: <code>studio_padding</code>.</li>
+</ul>
+<p>Once you've edited something in the studio, the look you used last wins over the default background and padding.</p>
+<ul>
+<li><strong>Open the studio</strong> (Settings → Recording → After a recording): open every new recording in the studio. Studio mode recordings always open in it. In <code>settings.toml</code>: <code>after_video.edit</code>.</li>
+</ul>
+<h2 id="commands">Commands</h2>
+<pre><code>kadr studio &lt;video|project.kadr&gt; [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+</code></pre>
+
+    <footer class="turn">
+      <span><a href="../record/">← Recording</a></span>
+      <span><a href="../history/">History →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/studio.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>

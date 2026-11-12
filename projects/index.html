@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project files · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/projects/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/projects/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/" aria-current="page">Project files</a>
+          <ul class="outline">
+            <li><a href="#how-to-open">How to open</a></li>
+            <li><a href="#saving">Saving</a></li>
+            <li><a href="#inside-the-file">Inside the file</a></li>
+            <li><a href="#keys">Keys</a></li>
+            <li><a href="#commands">Commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Project files</h1>
+    
+<p>A <code>.kadr</code> project keeps an edit, not just its finished picture or video. You can reopen it later or move it to another computer and keep working.</p>
+<h2 id="how-to-open">How to open</h2>
+<p>Use <code>kadr open &lt;file&gt;</code> to open a project in the editor or studio, according to its contents. <code>kadr edit &lt;image|project.kadr&gt;</code> opens a screenshot project; <code>kadr studio &lt;video|project.kadr&gt;</code> opens a recording project.</p>
+<p>You can also open a <code>.kadr</code> file from the file manager once the file type is registered. On Linux kadr registers it on first run; <code>kadr install-desktop</code> repeats that setup. The Windows installer registers the association. See <a href="../install/">Install</a>.</p>
+<h2 id="saving">Saving</h2>
+<p>Use <strong>Project</strong> in the <a href="../editor/">editor</a> or <a href="../studio/">studio</a> to save the original picture or recording and its edit together. The screenshot project keeps every shape; the recording project keeps zooms, cuts and trimming along with the other studio choices.</p>
+<p>When you open a project, saving it rewrites the same <code>.kadr</code> file. In the editor, <strong>Save</strong> also updates that opened project; in the studio, <strong>Export</strong> does so before making the video. Keep a separate copy first if you want to keep an earlier edit.</p>
+<h2 id="inside-the-file">Inside the file</h2>
+<p>A project is a tar archive with the media and editing information together:</p>
+<ul>
+<li>A screenshot project holds the source picture, added pictures, the drawing and a preview. Black boxes permanently remove what they cover from the editable source too.</li>
+<li>A recording project holds the video, its click/key/cursor log, the studio edit, and the separate camera recording and wallpaper when present.</li>
+</ul>
+<p>Opening unpacks the project into kadr's cache. You do not need to unpack it yourself or keep its source files beside it.</p>
+<h2 id="keys">Keys</h2>
+<p>Ctrl, Cmd on macOS.</p>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ctrl+S in the editor</td>
+<td>Save the picture and update its opened project</td>
+</tr>
+<tr>
+<td>Ctrl+S in the studio</td>
+<td>Export the video and update its opened project</td>
+</tr>
+</tbody>
+</table>
+<h2 id="commands">Commands</h2>
+<pre><code class="language-text">  kadr open &lt;file&gt;                               show the thumbnail for an existing image (a .kadr opens its project)
+  kadr studio &lt;video|project.kadr&gt; [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+  kadr edit &lt;image|project.kadr&gt;                 editor: arrows, text, highlighter, blur…
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+</code></pre>
+<p><code>kadr install-desktop</code> is Linux-only.</p>
+
+    <footer class="turn">
+      <span><a href="../settings/">← Settings</a></span>
+      <span><a href="../cli/">Command line →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/projects.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>

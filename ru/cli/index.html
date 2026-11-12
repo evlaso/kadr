@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Командная строка · kadr</title>
+<meta name="description" content="Скриншоты и запись экрана для Linux, macOS и Windows. Нативное приложение на Rust.">
+<link rel="icon" type="image/svg+xml" href="../../assets/kadr.svg">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="alternate" hreflang="en" href="../../cli/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../../ru/">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../../cli/" lang="en">English</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Страницы</summary>
+      <div class="search" data-pagefind="../../pagefind/pagefind.js" data-nothing="Ничего не найдено">
+        <input type="search" placeholder="Поиск" aria-label="Поиск" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../../ru/">Введение</a>
+        </li>
+        <li>
+          <a href="../../ru/install/">Установка</a>
+        </li>
+        <li>
+          <a href="../../ru/capture/">Съёмка</a>
+        </li>
+        <li>
+          <a href="../../ru/editor/">Редактор</a>
+        </li>
+        <li>
+          <a href="../../ru/record/">Запись</a>
+        </li>
+        <li>
+          <a href="../../ru/studio/">Студия</a>
+        </li>
+        <li>
+          <a href="../../ru/history/">История</a>
+        </li>
+        <li>
+          <a href="../../ru/settings/">Настройки</a>
+        </li>
+        <li>
+          <a href="../../ru/projects/">Файлы проектов</a>
+        </li>
+        <li>
+          <a href="../../ru/cli/" aria-current="page">Командная строка</a>
+          <ul class="outline">
+            <li><a href="#скриншоты">Скриншоты</a></li>
+            <li><a href="#запись">Запись</a></li>
+            <li><a href="#редактирование">Редактирование</a></li>
+            <li><a href="#остальные-команды">Остальные команды</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../../ru/glossary/">Словарь</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Командная строка</h1>
+    
+<p><code>kadr --help</code> показывает список команд. Если kadr уже работает, последующие команды съёмки, редактирования и настроек передаются этому экземпляру, а не запускают ещё один процесс интерфейса.</p>
+<pre><code class="language-text">  kadr capture                                   every mode on one bar
+  kadr shot [smart|region|windows|fullscreen|all|timer|previous]
+                                                 take a screenshot (smart by default; all: every screen at once;
+                                                 previous: the last area)
+  kadr shot scroll [&quot;X,Y WxH&quot;]                  scrolling screenshot (again to finish)
+  kadr open &lt;file&gt;                               show the thumbnail for an existing image (a .kadr opens its project)
+  kadr pin &lt;file&gt;                                pin an image on top of windows
+
+  kadr record                                    the recording bar (or stop a running recording)
+  kadr record region|fullscreen [--mic] [--audio] [--webcam] [--keys] [--studio]
+                                                 start recording at once (again to stop)
+  kadr record area &quot;X,Y WxH&quot;                   the recording bar for a given area
+  kadr record previous                           the recording bar for the last area picked
+  kadr record stop                               stop recording
+  kadr studio &lt;video|project.kadr&gt; [--render]    studio: zooms, background, clicks and keys (--render exports at once)
+  kadr edit &lt;image|project.kadr&gt;                 editor: arrows, text, highlighter, blur…
+  kadr trim &lt;video&gt; [--from S --to S]            trim a recording (no flags: the trim window)
+  kadr gif &lt;video&gt;                               save a recording as GIF (720px, 15 fps)
+  kadr history                                   history of screenshots and recordings
+  kadr settings                                  settings
+  kadr update                                    look for a newer release now
+  kadr tray                                      tray icon (for autostart)
+  kadr dev &lt;command&gt;                             test hooks of a kadr started with KADR_DEV=1
+                                                 (windows, dump, find, click, drag, key, type, state, shot, mem)
+  kadr text [image]                              recognize text (in an area or an image) and copy it
+  kadr install-desktop                           let .kadr project files open in kadr (file type, icon, menu entry)
+  kadr --version                                 the version
+</code></pre>
+<h2 id="скриншоты">Скриншоты</h2>
+<p><code>kadr capture</code> открывает панель со всеми режимами съёмки. <code>kadr shot</code> по умолчанию запускает умный выбор; явно можно выбрать область, окна, экран, все экраны, таймер или прошлую область. <code>kadr shot scroll</code> начинает снимок с прокруткой и завершает его при повторном вызове. <code>kadr open &lt;file&gt;</code> показывает существующую картинку на карточке; <code>kadr pin &lt;file&gt;</code> закрепляет её поверх окон. Подробнее — в <a href="../capture/">съёмке</a>.</p>
+<h2 id="запись">Запись</h2>
+<p><code>kadr record</code> открывает панель записи или останавливает текущую запись. Варианты region и fullscreen начинают сразу; можно включить микрофон, звук системы, камеру, показ сочетаний и режим студии. Варианты area и previous открывают панель для заданной или прошлой области. <code>kadr record stop</code> явно останавливает запись. Подробнее — в <a href="../record/">записи</a>; лог кликов и клавиш через Hyprland работает только на Linux.</p>
+<h2 id="редактирование">Редактирование</h2>
+<p><code>kadr edit &lt;image|project.kadr&gt;</code> открывает <a href="../editor/">редактор</a>; <code>kadr studio &lt;video|project.kadr&gt;</code> — <a href="../studio/">студию</a>, а флаг render сразу запускает экспорт. <code>kadr open &lt;file&gt;</code> открывает проект в нужном редакторе. <code>kadr trim &lt;video&gt;</code> открывает обрезку или обрезает сразу по времени в секундах; для начала нужно задать и конец. <code>kadr gif &lt;video&gt;</code> делает GIF размером 720px с частотой 15 кадров в секунду. Как сохранить правку — в <a href="../projects/">файлах проектов</a>.</p>
+<h2 id="остальные-команды">Остальные команды</h2>
+<p><code>kadr history</code> открывает <a href="../history/">историю</a>, <code>kadr settings</code> — <a href="../settings/">настройки</a>. <code>kadr text [image]</code> распознаёт текст на картинке или предлагает выбрать область и копирует результат. <code>kadr update</code> проверяет новый релиз сразу; <code>kadr tray</code> запускает трей для автозапуска. <code>kadr install-desktop</code> регистрирует файлы проектов на Linux. <code>kadr --version</code> печатает версию. Команда для разработки предназначена для тестовых хуков, а не для обычной съёмки.</p>
+
+    <footer class="turn">
+      <span><a href="../../ru/projects/">← Файлы проектов</a></span>
+      <span><a href="../../ru/glossary/">Словарь →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/ru/cli.md">Править страницу</a></p>
+  </main>
+</div>
+<script src="../../assets/site.js" defer></script>
+
+</body>
+</html>

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>History · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/history/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/history/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/" aria-current="page">History</a>
+          <ul class="outline">
+            <li><a href="#how-to-open">How to open</a></li>
+            <li><a href="#finding-a-capture">Finding a capture</a></li>
+            <li><a href="#selecting">Selecting</a></li>
+            <li><a href="#actions">Actions</a></li>
+            <li><a href="#keys">Keys</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#commands">Commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>History</h1>
+    
+<p>Every screenshot, recording and GIF in your screenshots and recordings folders, newest first, as a grid of thumbnails. Find one by typing, then open, copy, pin or delete it, or drag it out into a chat.</p>
+<h2 id="how-to-open">How to open</h2>
+<ul>
+<li><strong>The hotkey.</strong> On macOS and Windows the default is Ctrl+Shift+4; on Linux kadr starts from your Hyprland bindings. Set it in Settings → Shortcuts → History.</li>
+<li><strong>The command</strong> <code>kadr history</code>.</li>
+</ul>
+<h2 id="finding-a-capture">Finding a capture</h2>
+<p>Typing is the main way through the history: just start typing, there's no field to click. The search matches the file's name and its date as the tiles show it, such as &quot;today&quot;, &quot;yesterday&quot; or &quot;12 Oct&quot;. Backspace takes a letter back; Esc clears the search.</p>
+<p>Under each thumbnail are its day and time (a capture from an earlier year shows the year instead) and its kind: PNG, MP4 or GIF. A recording shows its length on the thumbnail.</p>
+<p>The filters at the top show one kind at a time, with how many there are: All, Screenshots, Recordings and GIF. Tab steps through them. In a narrow window they fold into a dropdown.</p>
+<p>The history shows the 300 newest captures. With nothing found it says &quot;Nothing found&quot;; with nothing captured yet, &quot;Nothing captured yet&quot;.</p>
+<h2 id="selecting">Selecting</h2>
+<p>The current tile has an accent ring round it. Move it with the arrow keys, or click a tile.</p>
+<ul>
+<li>Ctrl+click adds a tile to the selection, or takes it out (Cmd+click on macOS).</li>
+<li>Shift+click selects every tile from the current one to the one clicked.</li>
+<li>Ctrl+A selects every tile shown.</li>
+</ul>
+<p>With several selected, the bottom bar says how many, and Copy, Delete and Pin work on all of them. Esc lets go of the selection.</p>
+<h2 id="actions">Actions</h2>
+<ul>
+<li><strong>Open</strong> (Enter, or a double-click): a screenshot opens in the <a href="../editor/">Editor</a>, a recording in the <a href="../studio/">Studio</a>, a GIF in your system's viewer.</li>
+<li><strong>Editor / studio</strong> (E): the same, for a screenshot or a recording.</li>
+<li><strong>Copy</strong> (Ctrl+C): one screenshot goes on the clipboard as a picture; a recording, a GIF or several captures go as files. The window closes.</li>
+<li><strong>Pin</strong> (P): pins the selected screenshots on top of every window (see <a href="../capture/">Capture</a>).</li>
+<li><strong>Delete</strong> (Del): moves the selected captures to the trash.</li>
+</ul>
+<p>Hover over a tile for the same as buttons: Copy and Edit (Studio for a recording) in the middle, Show in folder at the top right, Delete at the bottom right and, for a screenshot, Pin on top at the bottom left.</p>
+<p>Drag a tile into a chat, a browser or a file manager to drop the file there.</p>
+<p>The gear at the top right opens <a href="../settings/">Settings</a>. The bottom bar lists the keys, and drops the less used ones in a narrow window.</p>
+<h2 id="keys">Keys</h2>
+<p>Ctrl is Cmd on macOS.</p>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Typing</td>
+<td>Search</td>
+</tr>
+<tr>
+<td>Backspace</td>
+<td>Erase a letter of the search</td>
+</tr>
+<tr>
+<td>Arrows</td>
+<td>Move between tiles</td>
+</tr>
+<tr>
+<td>Enter</td>
+<td>Open</td>
+</tr>
+<tr>
+<td>E</td>
+<td>Open in the editor or the studio (when not searching)</td>
+</tr>
+<tr>
+<td>P</td>
+<td>Pin the selected screenshots (when not searching)</td>
+</tr>
+<tr>
+<td>Ctrl+C</td>
+<td>Copy and close</td>
+</tr>
+<tr>
+<td>Del</td>
+<td>Delete to the trash</td>
+</tr>
+<tr>
+<td>Tab</td>
+<td>Next filter</td>
+</tr>
+<tr>
+<td>Ctrl+A</td>
+<td>Select every tile shown</td>
+</tr>
+<tr>
+<td>Ctrl+click</td>
+<td>Add a tile to the selection, or take it out</td>
+</tr>
+<tr>
+<td>Shift+click</td>
+<td>Select a range</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Clear the search, then the selection, then close</td>
+</tr>
+</tbody>
+</table>
+<h2 id="settings">Settings</h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Key</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Screenshots → Screenshots folder</td>
+<td><code>screenshot_dir</code></td>
+<td>One of the two folders the history shows</td>
+</tr>
+<tr>
+<td>Recording → Recordings folder</td>
+<td><code>video_dir</code></td>
+<td>The other one</td>
+</tr>
+<tr>
+<td>Storage → Delete old captures</td>
+<td><code>cleanup_days</code></td>
+<td>Never, or after 7, 30 or 90 days: for good, once a day, only kadr's files</td>
+</tr>
+</tbody>
+</table>
+<p>Storage → Clear now deletes what's older than the chosen period at once.</p>
+<h2 id="commands">Commands</h2>
+<pre><code>kadr history                                   history of screenshots and recordings
+</code></pre>
+
+    <footer class="turn">
+      <span><a href="../studio/">← Studio</a></span>
+      <span><a href="../settings/">Settings →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/history.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>

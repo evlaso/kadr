@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Capture · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" hreflang="ru" href="../ru/capture/">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../">kadr</a>
+  <nav>
+    <a href="https://github.com/evlaso/kadr">GitHub</a>
+    <a href="../ru/capture/" lang="ru">По-русски</a>
+  </nav>
+</header>
+<div class="manual">
+  <aside class="menu">
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <div class="search" data-pagefind="../pagefind/pagefind.js" data-nothing="Nothing found">
+        <input type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
+        <ul class="results" hidden></ul>
+      </div>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/" aria-current="page">Capture</a>
+          <ul class="outline">
+            <li><a href="#how-to-open">How to open</a></li>
+            <li><a href="#the-capture-bar">The capture bar</a></li>
+            <li><a href="#picking-an-area">Picking an area</a></li>
+            <li><a href="#windows-screens-and-scrolling">Windows, screens and scrolling</a></li>
+            <li><a href="#the-card-after-a-capture">The card after a capture</a></li>
+            <li><a href="#pinning">Pinning</a></li>
+            <li><a href="#text-recognition">Text recognition</a></li>
+            <li><a href="#keys">Keys</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#commands">Commands</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+    </details>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Capture</h1>
+    
+<p>Everything that takes a picture of the screen: an area, a window, the whole screen or every screen, a long scrolling shot, a shot on a self-timer. After a capture a card shows in the corner of the screen, where you copy the picture, open it in the <a href="../editor/">Editor</a>, pin it on top of your windows or read the text in it. Text recognition and pinning live here too.</p>
+<h2 id="how-to-open">How to open</h2>
+<ul>
+<li><strong>The capture bar</strong> (<code>kadr capture</code>) puts every mode on one bar, so one hotkey is enough. It has no default hotkey: set one in Settings → Shortcuts → All modes on one bar.</li>
+<li><strong>Hotkeys.</strong> On macOS and Windows the defaults are Ctrl+Shift+1 for an area, Ctrl+Shift+3 to recognize text and Ctrl+Shift+6 for a scrolling screenshot. On Linux kadr starts from your Hyprland bindings. More actions (the previous area, a window or area, the screen) can get a hotkey in Settings → Shortcuts.</li>
+<li><strong>The tray menu:</strong> Screenshot, Recognize text, Scrolling screenshot.</li>
+<li><strong>Commands:</strong> <code>kadr shot</code>, <code>kadr shot scroll</code>, <code>kadr text</code>, <code>kadr pin</code>; see <a href="#commands">Commands</a>.</li>
+</ul>
+<h2 id="the-capture-bar">The capture bar</h2>
+<p>The bar shows near the bottom of the screen with eight modes in three groups:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Mode</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Area</td>
+<td>Pick an area</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Previous</td>
+<td>Take the last area again, as it is now</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Fullscreen</td>
+<td>The whole screen the focus is on</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Window</td>
+<td>Point at a window and click it</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Scrolling</td>
+<td>A long scrolling shot</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Timer</td>
+<td>The whole screen, after a countdown</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Text</td>
+<td>Pick an area and recognize the text in it</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Recording</td>
+<td>The recording bar (see <a href="../record/">Recording</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>Click a mode, press its digit, or move with the left and right arrows and press Enter. Esc, a click outside the bar or the same hotkey again closes it.</p>
+<h2 id="picking-an-area">Picking an area</h2>
+<p>The screen freezes, and you drag a box over it. A hint bar says what the keys do at each moment.</p>
+<ul>
+<li><strong>Drag</strong> to draw the area; it's taken when you let go. Shift while dragging makes a square. Holding Space while dragging moves the whole box instead.</li>
+<li><strong>Click</strong> without dragging: over a window it takes that window; over nothing it copies the colour under the pointer as a hex code (#RRGGBB) and kadr says &quot;Color copied&quot;.</li>
+<li><strong>Space</strong> switches to windows only: a click takes the window under the pointer, and nothing is drawn. Space again goes back to drawing an area.</li>
+<li><strong>Keep the area to adjust it.</strong> Press an arrow, A or P, or a digit, while the box is there, and it stays after you let go of the mouse. Then drag its handles to resize it, drag it from inside to move it, or double-click inside it to take it.</li>
+<li><strong>Arrows</strong> move the area a pixel, Shift+arrows ten. <strong>Alt+arrows</strong> grow or shrink it from the right and bottom edges.</li>
+<li><strong>A</strong> steps through aspect ratios: Free, 1:1, 4:3, 16:9, 9:16.</li>
+<li><strong>Digits</strong> type an exact size in screen pixels: the width, then X (or Tab or Space) and the height, then Enter. Left without a height, it follows the aspect ratio.</li>
+<li><strong>P</strong> brings back the last area picked on this screen, to adjust. Enter with nothing drawn takes that area straight away.</li>
+<li><strong>Enter</strong> takes the area; <strong>Esc</strong> cancels.</li>
+</ul>
+<p>The Area mode and <code>kadr shot region</code> don't snap to windows: a click there only copies a colour.</p>
+<h2 id="windows-screens-and-scrolling">Windows, screens and scrolling</h2>
+<ul>
+<li><strong>A window</strong> comes by itself, whatever covers it, with rounded corners and a soft shadow on a transparent background. Window shadow in the settings turns the shadow off. Window background puts it straight onto a background saved in the editor instead; the editor opens it with that background, still to change. Window shots work on Linux, macOS and Windows.</li>
+<li><strong>Fullscreen</strong> takes the screen the focus is on.</li>
+<li><strong>Every screen at once</strong> (<code>kadr shot all</code>): all monitors in one picture, laid out as your desktop has them.</li>
+<li><strong>The self-timer</strong> counts 3, 5 or 10 seconds over the screen (Self-timer in the settings), then takes it. Esc cancels the countdown.</li>
+<li><strong>The pointer</strong> can be in the picture: turn on Pointer in screenshots.</li>
+</ul>
+<p><strong>A scrolling shot:</strong> pick an area, then scroll it yourself. kadr keeps grabbing the area and stitches what comes into view into one long picture. It works down a page and sideways, to the right (a timeline, a wide table), which makes one wide picture.</p>
+<p>A frame shows round the area, and a bar by it says &quot;Scroll — kadr stitches it&quot; with the length so far in pixels. Press Done, or the same hotkey again, to save it; Cancel throws it away. Scrolling shots work on Linux, macOS and Windows.</p>
+<h2 id="the-card-after-a-capture">The card after a capture</h2>
+<p>A card with the picture slides in at the corner of the screen. By default the screenshot is also copied to the clipboard right away. Hover over the card for its buttons:</p>
+<ul>
+<li><strong>Copy</strong>: puts the picture on the clipboard and closes the card.</li>
+<li><strong>Edit</strong>: opens it in the <a href="../editor/">Editor</a>. A double-click on the card does the same.</li>
+<li><strong>Pin on top</strong> (top right): keeps it above every window, see below.</li>
+<li><strong>Recognize text</strong> (bottom right): reads the text in the picture.</li>
+<li><strong>Show in folder</strong> (bottom right).</li>
+<li><strong>Delete file</strong> (bottom left): moves the file to the trash.</li>
+<li><strong>Close</strong> (top left).</li>
+</ul>
+<p>Drag the card into a chat, a browser or a file manager to drop the file there. Swipe it toward the screen edge to put it away.</p>
+<p>A card goes after 10 seconds by default, and stays while the pointer is over it. How long, which corner and how many cards at once are in Settings → General.</p>
+<h2 id="pinning">Pinning</h2>
+<p>A pinned picture floats above every window, at its real size, so you can keep a reference in sight while you work. Pin a screenshot from its card, from the editor's bottom bar, from <a href="../history/">History</a> (P), with <code>kadr pin</code>, or have every screenshot pinned (Pin on top under After a screenshot).</p>
+<ul>
+<li>Drag it to move it; arrows nudge it a pixel, Shift+arrows ten.</li>
+<li>Scroll to zoom it; Alt+scroll or Ctrl+scroll changes its opacity.</li>
+<li><strong>L</strong> lets clicks through to the windows below it. Only the lock in its corner still takes clicks; press it, or L, to catch clicks again.</li>
+<li>Esc, a double-click or a right-click closes it.</li>
+</ul>
+<h2 id="text-recognition">Text recognition</h2>
+<p><code>kadr text</code> freezes the screen; pick an area, and its text goes to the clipboard. A card shows what was found, with Copy again and, when the text holds a link, Open link. QR codes are read too, when zbar is installed. With a picture (<code>kadr text &lt;image&gt;</code>, or Recognize text on a card) kadr reads the whole picture.</p>
+<p>kadr reads English and Russian, and Ukrainian, German, French and Spanish too when Tesseract has them. Russian needs Tesseract's Russian data: on Arch it's the <code>tesseract-data-rus</code> package, or Settings → Text → Russian downloads it (15 MB) into kadr's own folder, without sudo.</p>
+<h2 id="keys">Keys</h2>
+<h3 id="the-capture-bar-1">The capture bar</h3>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1–8</td>
+<td>Run that mode</td>
+</tr>
+<tr>
+<td>Left, Right</td>
+<td>Move between modes (Tab moves right too)</td>
+</tr>
+<tr>
+<td>Enter or Space</td>
+<td>Run the chosen mode</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Close the bar</td>
+</tr>
+</tbody>
+</table>
+<h3 id="picking-an-area-1">Picking an area</h3>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Enter</td>
+<td>Take the area (or the previous one, if it's shown)</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Cancel</td>
+</tr>
+<tr>
+<td>Space</td>
+<td>Windows only, or back to drawing an area</td>
+</tr>
+<tr>
+<td>Space, held while dragging</td>
+<td>Move the box being drawn</td>
+</tr>
+<tr>
+<td>Shift, while dragging</td>
+<td>A square</td>
+</tr>
+<tr>
+<td>A</td>
+<td>Next aspect ratio</td>
+</tr>
+<tr>
+<td>P</td>
+<td>The previous area</td>
+</tr>
+<tr>
+<td>Arrows</td>
+<td>Move the area a pixel</td>
+</tr>
+<tr>
+<td>Shift+arrows</td>
+<td>Move it ten pixels</td>
+</tr>
+<tr>
+<td>Alt+arrows</td>
+<td>Resize it from the right and bottom edges</td>
+</tr>
+<tr>
+<td>Digits, then X and digits, then Enter</td>
+<td>An exact size</td>
+</tr>
+</tbody>
+</table>
+<h3 id="a-pinned-picture">A pinned picture</h3>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Esc</td>
+<td>Close it</td>
+</tr>
+<tr>
+<td>L</td>
+<td>Let clicks through, or catch them again</td>
+</tr>
+<tr>
+<td>Arrows</td>
+<td>Move it a pixel</td>
+</tr>
+<tr>
+<td>Shift+arrows</td>
+<td>Move it ten pixels</td>
+</tr>
+</tbody>
+</table>
+<h2 id="settings">Settings</h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Key</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>General → Thumbnail goes away after</td>
+<td><code>card_seconds</code></td>
+<td>5, 10 or 20 seconds, or Never</td>
+</tr>
+<tr>
+<td>General → Where to show</td>
+<td><code>card_side</code></td>
+<td>The left or right corner</td>
+</tr>
+<tr>
+<td>General → Thumbnails at once</td>
+<td><code>max_cards</code></td>
+<td>2, 4 or 6; old ones leave as new ones come</td>
+</tr>
+<tr>
+<td>Screenshots → Show the thumbnail</td>
+<td><code>after_shot.card</code></td>
+<td>The card after a screenshot</td>
+</tr>
+<tr>
+<td>Screenshots → Copy to the clipboard</td>
+<td><code>after_shot.copy</code></td>
+<td>Copy the screenshot right away</td>
+</tr>
+<tr>
+<td>Screenshots → Save to the folder</td>
+<td><code>after_shot.save</code></td>
+<td>Off, the file goes to a temporary folder and is gone after a restart</td>
+</tr>
+<tr>
+<td>Screenshots → Open the editor</td>
+<td><code>after_shot.edit</code></td>
+<td>Annotate right after the capture</td>
+</tr>
+<tr>
+<td>Screenshots → Pin on top</td>
+<td><code>after_shot.pin</code></td>
+<td>Every screenshot floats above all windows</td>
+</tr>
+<tr>
+<td>Screenshots → Screenshots folder</td>
+<td><code>screenshot_dir</code></td>
+<td>Where screenshots go</td>
+</tr>
+<tr>
+<td>Screenshots → Window shadow</td>
+<td><code>window_shadow</code></td>
+<td>A window shot's shadow, on a transparent background</td>
+</tr>
+<tr>
+<td>Screenshots → Window background</td>
+<td><code>window_backdrop</code></td>
+<td>A background saved in the editor, by name, for window shots</td>
+</tr>
+<tr>
+<td>Screenshots → Screenshot size</td>
+<td><code>logical_size</code></td>
+<td>1× (a pixel of the picture is a pixel of the design) or Screen pixels</td>
+</tr>
+<tr>
+<td>Screenshots → Pointer in screenshots</td>
+<td><code>shot_cursor</code></td>
+<td>The pointer is taken where it was</td>
+</tr>
+<tr>
+<td>Screenshots → Self-timer</td>
+<td><code>timer_seconds</code></td>
+<td>3, 5 or 10 seconds</td>
+</tr>
+</tbody>
+</table>
+<p>Text recognition's languages are in Settings → Text.</p>
+<h2 id="commands">Commands</h2>
+<pre><code>kadr capture                                   every mode on one bar
+kadr shot [smart|region|windows|fullscreen|all|timer|previous]
+                                               take a screenshot (smart by default; all: every screen at once;
+                                               previous: the last area)
+kadr shot scroll [&quot;X,Y WxH&quot;]                  scrolling screenshot (again to finish)
+kadr open &lt;file&gt;                               show the thumbnail for an existing image (a .kadr opens its project)
+kadr pin &lt;file&gt;                                pin an image on top of windows
+kadr text [image]                              recognize text (in an area or an image) and copy it
+</code></pre>
+
+    <footer class="turn">
+      <span><a href="../install/">← Install</a></span>
+      <span><a href="../editor/">Editor →</a></span>
+    </footer>
+    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/capture.md">Edit this page</a></p>
+  </main>
+</div>
+<script src="../assets/site.js" defer></script>
+
+</body>
+</html>
