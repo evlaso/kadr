@@ -89,7 +89,7 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 }
 
 /* The manual: its menu hangs to the left of the text on a screen wide
-   enough for the text and a menu's width on both sides (74rem). */
+   enough for the text and a menu's width on both sides, with a margin (76rem). */
 .manual { position: relative; max-width: var(--reading); margin: 0 auto; }
 .menu { font-size: 0.875rem; line-height: 1.4; color: var(--soft); padding: 1.5rem 1.25rem 0; }
 .menu a { text-decoration: none; }
@@ -101,15 +101,18 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .turn { display: flex; justify-content: space-between; gap: 1rem; margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
 .edit { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--soft); }
 
-@media (min-width: 74rem) {
+@media (min-width: 76rem) {
   .menu { position: absolute; top: 0; bottom: 0; right: 100%; width: var(--menu); margin-right: var(--gap); padding: 0; }
-  .menu-inner { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; padding: 4.2rem 0 2rem; }
-  .menu-head { display: grid; gap: 0.1rem; margin-bottom: 1.75rem; }
+  /* The head stays; the list of pages scrolls when the window is short.
+     The side padding leaves room for focus rings inside the scrolling box. */
+  .menu-inner { position: sticky; top: 0; max-height: 100vh; display: flex; flex-direction: column; padding: 4.32rem 0 0; }
+  .menu-head { display: grid; justify-items: start; gap: 0.1rem; margin-bottom: 1.75rem; }
   .wordmark { margin-bottom: 0.9rem; }
+  .menu-fold { min-height: 0; overflow-y: auto; margin-inline: -6px; padding: 0 6px 2rem; }
   .menu summary { display: none; }
   .manual .prose { padding-top: 4rem; }
 }
-@media (max-width: 73.99rem) {
+@media (max-width: 75.99rem) {
   .menu-head { display: flex; align-items: center; gap: 1.1rem; margin-bottom: 0.75rem; }
   .wordmark { margin-right: auto; }
   .manual .prose { padding-top: 1.5rem; }
