@@ -2,7 +2,7 @@
 (function () {
   var fold = document.querySelector(".menu-fold");
   if (!fold) return;
-  var wide = window.matchMedia("(min-width: 72rem)");
+  var wide = window.matchMedia("(min-width: 74rem)");
   function place() { fold.open = wide.matches; }
   place();
   wide.addEventListener("change", place);

@@ -6,6 +6,18 @@ layout: base.njk
 {%- set pages = nav[lang] -%}
 <div class="manual">
   <aside class="menu">
+    <div class="menu-inner">
+    <div class="menu-head">
+      <a class="wordmark" href="{{ root }}{{ lang | pageUrl('') }}">kadr</a>
+      <button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <span>{{ t.search }}</span><kbd>Ctrl K</kbd>
+      </button>
+      <a class="out" href="https://github.com/evlaso/kadr">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+        <span>{{ t.github }}</span>
+      </a>
+    </div>
     <details class="menu-fold" open>
       <summary>{{ t.pages }}</summary>
       <ul class="pages">
@@ -26,6 +38,7 @@ layout: base.njk
         {%- endfor %}
       </ul>
     </details>
+    </div>
   </aside>
   <main class="prose" data-pagefind-body>
     {%- if slug %}

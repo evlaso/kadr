@@ -13,17 +13,6 @@
 <link rel="alternate" hreflang="{{ other }}" href="{{ root }}{{ other | pageUrl(slug) }}">
 </head>
 <body>
-<header class="top">
-  <a class="wordmark" href="{{ root }}{{ lang | pageUrl('') }}">kadr</a>
-  <nav>
-    <button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>
-      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-      <span>{{ t.search }}</span><kbd>Ctrl K</kbd>
-    </button>
-    <a href="https://github.com/evlaso/kadr">{{ t.github }}</a>
-    <a href="{{ root }}{{ other | pageUrl(slug) }}" lang="{{ other }}">{{ t.other }}</a>
-  </nav>
-</header>
 {{ content | safe }}
 <dialog class="palette" aria-label="{{ t.search }}" data-index="{{ root }}{{ lang | pageUrl('') }}search.json" data-base="{{ root }}{{ lang | pageUrl('') }}" data-pagefind="{{ root }}pagefind/pagefind.js">
   <div class="palette-field">
