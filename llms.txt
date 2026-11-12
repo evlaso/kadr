@@ -11,7 +11,7 @@ kadr is alpha software. Where it works today:
 
 ## Pages
 
-- [Introduction](https://evlaso.github.io/kadr/index.md): kadr takes screenshots and records the screen. Sections: Pages, Platforms, Help.
+- [Introduction](https://evlaso.github.io/kadr/index.md): kadr takes screenshots and records the screen. Sections: Pages, Platforms, For AI assistants, Help.
 - [Install](https://evlaso.github.io/kadr/install.md): Use a release build, or build kadr from source with Rust 1.95 or newer. Sections: Downloads, Linux (Hyprland), macOS and Windows, Updating, Commands.
 - [Capture](https://evlaso.github.io/kadr/capture.md): Everything that takes a picture of the screen: an area, a window, the whole screen or every screen, a long scrolling shot, a shot on a self-timer. Sections: How to open, The capture bar, Picking an area, Windows, screens and scrolling, The card after a capture, Pinning, Text recognition, Keys, Settings, Commands.
 - [Editor](https://evlaso.github.io/kadr/editor.md): The editor is where a screenshot gets its arrows, boxes, text and step numbers, where private details are hidden, and where the picture is cropped and put on a background. Sections: How to open, Tools, Colour, size and a shape's options, Background and presets, Crop, The canvas and the bottom bar, Keys, Settings, Commands.

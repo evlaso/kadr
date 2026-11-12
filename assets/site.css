@@ -33,9 +33,6 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .find:hover, .menu .out:hover { color: var(--accent); }
 .find kbd { font: 0.75rem var(--sans); color: var(--muted); }
 @media (max-width: 23rem), (hover: none) and (pointer: coarse) { .find kbd { display: none; } }
-/* On the narrowest screens the head keeps the name, the search and GitHub;
-   the same link is under every page. */
-@media (max-width: 23rem) { .menu .llms { display: none; } }
 .find svg, .menu .out svg, .palette-field svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; flex: none; }
 .palette {
   width: min(44rem, 100% - 2rem); max-width: none; max-height: min(36rem, 100dvh - 2 * min(12vh, 6rem));

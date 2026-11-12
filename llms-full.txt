@@ -35,6 +35,10 @@ This manual says what kadr does today, screen by screen. Each page has the same 
 - **Linux** (Wayland, Hyprland): everything works, and this is where kadr is used every day.
 - **macOS and Windows:** the editor, the studio, screenshots (window and scrolling shots too), recording through the system's capture, the clipboard, notifications, the tray, global hotkeys and the area overlay are written and pass the end-to-end test on CI's runners. The camera, choosing a microphone and the studio's click and key log aren't ported yet, and nobody has run kadr on a real machine there: testers are very welcome.
 
+## For AI assistants
+
+The whole manual is one plain-text file: [llms-full.txt](https://evlaso.github.io/kadr/llms-full.txt). Give its address to an assistant and it knows every screen, key and setting. [llms.txt](https://evlaso.github.io/kadr/llms.txt) is the short index, and every page has a Markdown copy: `/editor.md` for the editor's.
+
 ## Help
 
 Bugs and questions go to [GitHub issues](https://github.com/evlaso/kadr/issues). A crash leaves `crash.log` in kadr's cache folder; attach it. Developers start at [CONTRIBUTING.md](https://github.com/evlaso/kadr/blob/main/CONTRIBUTING.md).
