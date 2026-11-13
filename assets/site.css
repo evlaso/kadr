@@ -98,8 +98,10 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .menu a { text-decoration: none; }
 .menu ul a { display: block; padding: 0.22rem 0; }
 .menu a[aria-current] { color: var(--text); font-weight: 600; }
+.menu .outline a[aria-current] { font-weight: inherit; }
 .menu ul { list-style: none; margin: 0; padding: 0; }
 .menu .outline { margin: 0.1rem 0 0.4rem; padding-left: 0.75rem; border-left: 1px solid var(--line); }
+.menu .project-pages { margin-top: 1.25rem; }
 .menu summary { cursor: pointer; color: var(--text); font-weight: 600; padding: 0.25rem 0 0.75rem; }
 .turn { display: flex; justify-content: space-between; gap: 1rem; margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
 .edit { margin-top: 3rem; font-size: 0.8125rem; line-height: 1.9; color: var(--soft); display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; align-items: baseline; }
@@ -112,7 +114,9 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
   .menu { position: absolute; top: 0; bottom: 0; right: 100%; width: var(--menu); margin-right: var(--gap); padding: 0; }
   /* The head stays; the list of pages scrolls when the window is short.
      The side padding leaves room for focus rings inside the scrolling box. */
-  .menu-inner { position: sticky; top: 0; max-height: 100vh; display: flex; flex-direction: column; padding: 4.32rem 0 0; }
+  /* The name lines up with the heading at the top of a page; once the page
+     scrolls, the menu rides up to a smaller gap and stays there. */
+  .menu-inner { position: sticky; top: -2.82rem; max-height: calc(100vh + 2.82rem); display: flex; flex-direction: column; padding: 4.32rem 0 0; }
   .menu-head { display: grid; justify-items: start; gap: 0.1rem; margin-bottom: 1.75rem; }
   .wordmark { margin-bottom: 0.9rem; }
   .menu-fold { min-height: 0; overflow-y: auto; margin-inline: -6px; padding: 0 6px 2rem; }
@@ -133,3 +137,52 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .button:hover { color: var(--bg); background: var(--accent); }
 .note { color: var(--soft); font-size: 0.875rem; }
 .shot { display: block; width: 100%; height: auto; border-radius: 10px; margin: 0 0 2.5rem; border: 1px solid var(--line); }
+
+/* Release history: one quiet spine, with dates outside the heading's anchor. */
+.releases { margin-top: 2.5rem; padding-left: 1.5rem; border-left: 1px solid var(--line); }
+.release { position: relative; padding-bottom: 1.5rem; overflow-wrap: anywhere; }
+.release::before { content: ""; position: absolute; top: 0.6rem; left: calc(-1.5rem - 4px); width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.release-next::before { background: var(--accent); }
+.release-head { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: baseline; margin-bottom: 1rem; }
+.release-head h2 { margin: 0; }
+.release-head h2 a { text-decoration: none; }
+.release-head time { color: var(--soft); font-size: 0.8125rem; }
+.release h3 { margin-top: 1.5rem; color: var(--soft); font-size: 0.8125rem; font-weight: 500; }
+.release + .release { margin-top: 1rem; }
+
+/* Roadmap: the shape of a mark carries its meaning in either theme. */
+.status { display: inline-block; width: 0.7rem; height: 0.7rem; border: 1.5px solid var(--muted); border-radius: 50%; vertical-align: -0.02em; flex: none; }
+.status-done { background: var(--muted); }
+.status-partial { background: linear-gradient(to right, var(--muted) 50%, var(--bg) 50%); }
+.status-na, .status-excluded { border: 0; border-radius: 0; position: relative; }
+.status-na::before, .status-excluded::before { content: ""; position: absolute; top: calc(50% - 0.5px); left: 0; width: 100%; height: 1px; background: var(--muted); }
+.status-excluded::before { transform: rotate(-45deg); }
+.roadmap-intro { color: var(--soft); overflow-wrap: anywhere; }
+.roadmap-intro .status { margin-inline: 0.1em; }
+.prose .milestones { list-style: none; padding: 0 0 0 1.5rem; margin: 1.5rem 0 2rem; border-left: 1px solid var(--line); }
+.prose .milestone { position: relative; margin: 0; padding: 0 0 1.75rem; }
+.milestone::before { content: ""; position: absolute; top: 0.6rem; left: calc(-1.5rem - 4px); width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.milestone.is-current::before { background: var(--accent); }
+.milestone-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1rem; }
+.milestone-state { font-size: 0.8125rem; color: var(--soft); }
+.is-current .milestone-state { color: var(--accent); }
+.prose .milestone-theme { margin: 0.15rem 0 0.35rem; }
+.prose .milestone-note { margin-bottom: 0.6rem; color: var(--soft); font-size: 0.875rem; }
+.progress { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0.5rem 0 1rem; font-size: 0.75rem; color: var(--soft); font-variant-numeric: tabular-nums; }
+.progress-track { display: block; width: 7rem; max-width: 40%; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.progress-track > span { display: block; height: 100%; background: var(--muted); }
+.is-current .progress-track > span { background: var(--accent); }
+.prose .features { display: table; table-layout: fixed; overflow: visible; }
+.features thead th:not(:first-child), .features td { width: 2rem; text-align: center; padding: 0.55rem 0; }
+.features th:first-child { padding-right: 0.75rem; }
+.features tbody th { color: var(--text); font-size: 0.9375rem; font-weight: 400; overflow-wrap: anywhere; }
+.feature-note { display: block; margin-top: 0.3rem; font-size: 0.8125rem; line-height: 1.55; color: var(--soft); }
+.features td .status { vertical-align: middle; }
+.features-single thead th:last-child, .features-single td { width: 4.25rem; }
+.roadmap-section { min-width: 0; }
+@media (max-width: 25rem) {
+  .releases, .prose .milestones { padding-left: 1rem; }
+  .release::before, .milestone::before { left: calc(-1rem - 4px); }
+  .features thead th:not(:first-child), .features td { width: 1.6rem; }
+  .features-single thead th:last-child, .features-single td { width: 4.25rem; }
+}

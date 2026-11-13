@@ -2,7 +2,7 @@
 
 > kadr takes screenshots and records the screen. Capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video.
 
-This manual says what kadr does today, screen by screen. Each page has the same shape: what the screen is for, how to open it, what's on it, its keys, the settings that change it and the commands that start it. What changed between versions is in the [changelog](https://github.com/evlaso/kadr/blob/main/CHANGELOG.md); where the project is going is the [roadmap](https://github.com/evlaso/kadr/blob/main/docs/ROADMAP.ru.md) (in Russian).
+This manual says what kadr does today, screen by screen. Each page has the same shape: what the screen is for, how to open it, what's on it, its keys, the settings that change it and the commands that start it. What changed between versions is in the [changelog](https://evlaso.github.io/kadr/changelog/); where the project is going is the [roadmap](https://evlaso.github.io/kadr/roadmap/).
 
 kadr is alpha software. Where it works today:
 
@@ -26,6 +26,6 @@ kadr is alpha software. Where it works today:
 ## Optional
 
 - [Full manual](https://evlaso.github.io/kadr/llms-full.txt): every page above in one file, in reading order.
-- [Russian manual](https://evlaso.github.io/kadr/ru/llms.txt): the same pages in Russian.
 - [Source code](https://github.com/evlaso/kadr): the Rust source, issues and releases.
-- [Changelog](https://github.com/evlaso/kadr/blob/main/CHANGELOG.md): what changed in each version.
+- [Roadmap](https://evlaso.github.io/kadr/roadmap/): milestones and progress by feature and platform.
+- [Changelog](https://evlaso.github.io/kadr/changelog/): what changed in each version.

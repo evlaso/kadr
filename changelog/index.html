@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<script>try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<title>Changelog · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" type="text/markdown" href="../changelog.md">
+</head>
+<body>
+<div class="manual">
+  <aside class="menu">
+    <div class="menu-inner">
+    <div class="menu-head">
+      <a class="wordmark" href="../">kadr</a>
+      <button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <span>Search</span><kbd>Ctrl K</kbd>
+      </button>
+      <a class="out" href="https://github.com/evlaso/kadr">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+      <ul class="pages project-pages">
+        <li>
+          <a href="../roadmap/">Roadmap</a>
+        </li>
+        <li>
+          <a href="../changelog/" aria-current="page">Changelog</a>
+          <ul class="outline">
+            <li><a href="#unreleased">Next</a></li>
+            <li><a href="#0-3-0-alpha-2">0.3.0-alpha.2</a></li>
+            <li><a href="#0-3-0-alpha-1">0.3.0-alpha.1</a></li>
+          </ul>
+        </li>
+      </ul>
+    </details>
+    </div>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Changelog</h1>
+    <p>What changed in each kadr release, for the people who use it. The format follows <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>, and versions follow <a href="https://semver.org/">Semantic Versioning</a>.</p>
+<div class="releases"><section class="release release-next"><div class="release-head"><h2 id="unreleased">Next</h2></div><h3 id="added">Added</h3>
+<ul>
+<li>
+<p>The editor&#39;s background places the picture anywhere on a 3×3 grid: off the middle it sits flush with that edge or corner, square there. &quot;Even margins&quot; cuts a screenshot&#39;s plain margins to match, so what&#39;s in it sits in the middle (one undo step).</p>
+</li>
+<li>
+<p>Pictures dropped on the editor past the screenshot&#39;s edge join it on that side, as tall (or wide) as it, and the result grows to take them in; while you drag, the editor shows where they&#39;ll go. Dropped on the screenshot, a picture still goes on top. On a background, the joined pictures make one card with rounded corners and one shadow.</p>
+</li>
+<li>
+<p>Seven text styles in the editor, in a dropdown that shows each in the current colour: plain, on a plate, outlined, with a shadow, highlighted like with a marker, in a pill, and a framed label.</p>
+</li>
+<li>
+<p>Arrow styles in the editor: a filled head, an open head, a head at both ends, or tapered from a thin tail into the head. Any of them bends, and a selected arrow takes another style.</p>
+</li>
+<li>
+<p>Hiding is harder to undo: the blur first brings the area down to blocks with a little noise and then smooths it, so it looks as soft as before but no deblurring brings the text back, and each block of a pixelation is nudged by noise, so it can&#39;t be matched against pixelated guesses.</p>
+</li>
+<li>
+<p>A black box among the hide tool&#39;s choices (B): what&#39;s under it is gone from the saved file and from the copy kept to edit it again, so removing the box later shows black. Hide private info covers with black boxes too when they&#39;re picked.</p>
+</li>
+<li>
+<p>Colours in the editor: the pipette (I) takes one from the picture, the colour menu keeps the ones picked lately, and + keeps the current colour among your own (right-click one to remove it). Both lists live in <code>settings.toml</code>.</p>
+</li>
+<li>
+<p>The editor opens JPEG and WebP pictures, and Save As writes PNG, JPEG or WebP by the name you give it (JPEG on white where the picture is transparent; WebP without loss). Saving a JPEG opened in the editor keeps it a JPEG.</p>
+</li>
+<li>
+<p>While recording, the bar shows the microphone filling with how loud it is, so you can see you&#39;re heard.</p>
+</li>
+<li>
+<p>Updating from kadr itself: the update card&#39;s Update button downloads the release, checks it against the release key&#39;s signature and puts it in place of the installed files, and the tray starts again on it. On Windows the installer runs quietly; the portable kadr.exe swaps itself. A version that fails to start three times in a row is replaced by the previous one. Packages from pacman or Homebrew are left to their manager.</p>
+</li>
+<li>
+<p>Update channels in Settings → General: Stable gets finished versions only, Beta gets alpha, beta and release-candidate versions as well. A pre-release build is on Beta until you change it.</p>
+</li>
+<li>
+<p>Check now in Settings → About, which says right there whether there&#39;s a newer version, and updates from the same row; <code>kadr update</code> on the command line shows it on a card.</p>
+</li>
+<li>
+<p>Scrolling screenshots on macOS and Windows, and sideways: scroll the area to the right (a timeline, a wide table) and kadr stitches it into one wide picture.</p>
+</li>
+<li>
+<p>Settings live in <code>settings.toml</code> (in <code>~/.config/kadr</code> on Linux), with a comment on every setting, so they can be changed by hand or kept with your dotfiles. kadr picks up edits the next time it needs them, and the settings window keeps your comments and changes only what you change there. Settings → About → Settings file opens it. If the file can&#39;t be read, kadr says where in the settings window and leaves it as it is. The old <code>settings.json</code> is moved over by itself.</p>
+</li>
+</ul>
+<h3 id="changed">Changed</h3>
+<ul>
+<li>In the editor, a selected shape (or a text being typed) has the options only its kind has (an arrow&#39;s or a text&#39;s style, a box&#39;s fill, how an area is hidden, a pointer&#39;s look) in a bar floating under it; the colour and size stay in the top bar&#39;s corner. Before drawing, the top bar shows none of them: an arrow, a box, an ellipse or a hidden area stays selected once drawn, so its bar shows right away, and the next shape takes what was picked last. Picking another tool lets go of the selected shape.</li>
+<li>The text tool types into a text it&#39;s clicked on, which it outlines when the pointer is over it, instead of starting another; a drag still moves it.</li>
+<li>The editor keeps the whole result in view and in the middle when it reaches past the screenshot (joined pictures, a crop pulled out), and shades only the cut-off parts of the screenshot, not the empty room around it.</li>
+</ul>
+</section>
+<section class="release"><div class="release-head"><h2 id="0-3-0-alpha-2"><a href="https://github.com/evlaso/kadr/releases/tag/v0.3.0-alpha.2">0.3.0-alpha.2</a></h2><time datetime="2026-10-26">Oct 26, 2026</time></div><p>Recording and window shots come to macOS and Windows, and Windows gets an installer. Both systems still pass only CI&#39;s tests; nobody has run them on a real machine yet.</p>
+<h3 id="added-1">Added</h3>
+<ul>
+<li>Screen recording on macOS and Windows, through the system&#39;s own capture and encoder, with the system&#39;s sound and the default microphone, at a steady frame rate.</li>
+<li>Window shots on every system: a clicked window is taken by itself, whatever covers it. With the new Window background setting it goes straight onto a background saved in the editor, which the editor can still change.</li>
+<li>Every screen in one shot (<code>kadr shot all</code>), the pointer in screenshots, and a self-timer of 3, 5 or 10 seconds.</li>
+<li>Windows: an installer for your user only (the Start menu, the tray at login, <code>.kadr</code> files, an uninstaller) and a portable <code>kadr.exe</code> in one file, instead of a zip. No console window opens with kadr.</li>
+<li>A crash leaves a note in <code>crash.log</code> in kadr&#39;s cache folder, to send with a bug report.</li>
+</ul>
+<h3 id="changed-1">Changed</h3>
+<ul>
+<li>The Linux tray icon takes the bar&#39;s colour, so it shows on a light or dark bar.</li>
+</ul>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li>The studio played the end of a recording&#39;s sound only if it kept up with the picture: playback stopped the sound along with the last frame. It now plays out, and runs closer to the picture.</li>
+<li>Recordings no longer lose their sound at the edges: the first half second, which was muted to hide the microphone&#39;s click, is now 0.15 s, and after Stop the recorder runs on for 0.4 s so the last word, still in the system&#39;s audio buffers, makes it into the file.</li>
+<li>kadr on Windows starts about 2 seconds sooner.</li>
+<li>On macOS kadr stopped answering after its first system notification.</li>
+<li>On Windows the cards had a tall outline and shadow round them.</li>
+<li>A screen or window capture the system doesn&#39;t answer ends in an error card instead of a frozen kadr.</li>
+</ul>
+</section>
+<section class="release"><div class="release-head"><h2 id="0-3-0-alpha-1"><a href="https://github.com/evlaso/kadr/releases/tag/v0.3.0-alpha.1">0.3.0-alpha.1</a></h2><time datetime="2026-10-23">Oct 23, 2026</time></div><p>The first public build. Linux (Hyprland) is the one kadr is used on every day; the macOS and Windows builds are new and haven&#39;t been tried on a real machine yet.</p>
+<h3 id="added-2">Added</h3>
+<ul>
+<li>Screenshots of an area, a window or the whole screen, and long scrolling ones. After each capture a thumbnail shows in the corner to copy, edit, pin on top or drag into a chat.</li>
+<li>The screenshot editor: arrows, boxes, text, step numbers, a highlighter, pixelation, a spotlight and cropping, on a background with padding, rounded corners and a shadow. A <code>.kadr</code> project file keeps an edit to open again later.</li>
+<li>Screen recording on Linux, with the microphone, system audio, the camera, clicks and keys. The studio turns a recording into a finished video: zooms on clicks, cuts, a smooth large cursor, MP4 or GIF.</li>
+<li>Text recognition, a history of captures, English and Russian, dark and light themes that follow the system.</li>
+<li>macOS and Windows: the editor, the studio, screenshots, the area picker, the tray icon and global hotkeys. Recording and picking windows aren&#39;t there yet.</li>
+<li>A check for new releases: once a day the tray looks, and a card links to the new release&#39;s page. Nothing is downloaded; it can be turned off in Settings.</li>
+</ul>
+</section></div>
+    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/CHANGELOG.md">Edit this page</a> · <a href="../changelog.md">This page as Markdown</a> · <a href="../llms-full.txt" title="The whole manual as plain text, to give to an AI assistant">For language models</a></span> <span class="theme" role="group" aria-label="Theme"><button type="button" data-theme-is="system">System</button><button type="button" data-theme-is="light">Light</button><button type="button" data-theme-is="dark">Dark</button></span></div>
+  </main>
+</div>
+
+<dialog class="palette" aria-label="Search" data-index="../search.json" data-base="../" data-pagefind="../pagefind/pagefind.js">
+  <div class="palette-field">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+    <input type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="palette-list" aria-label="Search" placeholder="Search documentation…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
+  </div>
+  <ul class="palette-list" id="palette-list" role="listbox" aria-label="Pages and sections"></ul>
+  <p class="palette-none" role="status" hidden>Nothing found</p>
+</dialog>
+<script src="../assets/site.js" defer></script>
+</body>
+</html>

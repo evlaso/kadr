@@ -8,7 +8,7 @@
   wide.addEventListener("change", place);
 })();
 
-// Search: a palette over the page. Empty, it lists this language's pages
+// Search: a palette over the page. Empty, it lists the pages
 // and their sections (search.json, made at build time); typing keeps the
 // rows whose title matches, then adds Pagefind's full-text hits.
 (function () {
@@ -329,4 +329,27 @@
     });
   });
   show();
+})();
+
+// The menu's outline marks the section being read: the last heading that
+// has passed the top of the window.
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll(".menu .outline a"));
+  var heads = links.map(function (a) { return document.getElementById(decodeURIComponent(a.hash.slice(1))); });
+  if (!links.length || heads.indexOf(null) !== -1) return;
+  var waiting = false;
+  function mark() {
+    waiting = false;
+    var line = window.innerHeight * 0.25, at = -1;
+    heads.forEach(function (h, i) { if (h.getBoundingClientRect().top <= line) at = i; });
+    // At the very end the last sections may never reach the line.
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) at = links.length - 1;
+    links.forEach(function (a, i) {
+      if (i === at) a.setAttribute("aria-current", "location"); else a.removeAttribute("aria-current");
+    });
+  }
+  function ask() { if (!waiting) { waiting = true; requestAnimationFrame(mark); } }
+  window.addEventListener("scroll", ask, { passive: true });
+  window.addEventListener("resize", ask);
+  mark();
 })();

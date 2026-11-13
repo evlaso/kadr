@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<script>try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<title>Roadmap · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" type="text/markdown" href="../roadmap.md">
+</head>
+<body>
+<div class="manual">
+  <aside class="menu">
+    <div class="menu-inner">
+    <div class="menu-head">
+      <a class="wordmark" href="../">kadr</a>
+      <button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <span>Search</span><kbd>Ctrl K</kbd>
+      </button>
+      <a class="out" href="https://github.com/evlaso/kadr">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+      <ul class="pages project-pages">
+        <li>
+          <a href="../roadmap/" aria-current="page">Roadmap</a>
+          <ul class="outline">
+            <li><a href="#milestones">Milestones</a></li>
+            <li><a href="#1-capture">1. Capture</a></li>
+            <li><a href="#2-the-card">2. The card</a></li>
+            <li><a href="#3-editor">3. Editor</a></li>
+            <li><a href="#4-pin-on-top-history-text-recognition">4. Pin on top, history, text recognition</a></li>
+            <li><a href="#5-platform-and-behaviour">5. Platform and behaviour</a></li>
+            <li><a href="#6-recording">6. Recording</a></li>
+            <li><a href="#7-studio">7. Studio</a></li>
+            <li><a href="#8-agent-mode-kadr-s-own-spec-11">8. Agent mode, kadr&#39;s own (SPEC §11)</a></li>
+            <li><a href="#9-beyond-parity">9. Beyond parity</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../changelog/">Changelog</a>
+        </li>
+      </ul>
+    </details>
+    </div>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Roadmap</h1>
+    <div class="roadmap-intro"><p>The goal: as good and as complete as the best dedicated screenshot and screen-recording tools (capture,
+the picker, the editor, recording, the studio), and clearly better than what the systems ship with.
+Plus what nobody has: Linux on Wayland as a first-class platform, native speed with no webview, agent
+mode (MCP), and open source.</p>
+<p>Status marks: <span class="status status-done" role="img" aria-label="Done"></span> there · <span class="status status-partial" role="img" aria-label="Partly done"></span> partly · <span class="status status-later" role="img" aria-label="Not yet"></span> not yet · <span class="status status-excluded" role="img" aria-label="Not planned"></span> won&#39;t do · — doesn&#39;t apply to the platform.
+Platforms: L is Linux (Wayland, Hyprland), M is macOS, W is Windows. <span class="status status-done" role="img" aria-label="Done"></span> on M or W means shared code with
+no part of its own for that system, or something desktop-e2e has checked; where there is code for that
+system that hasn&#39;t run there yet, it&#39;s <span class="status status-partial" role="img" aria-label="Partly done"></span>. The platform columns are kept up to date from the code.</p>
+<p>Architecture, budgets and tests are in the spec, <a href="https://github.com/evlaso/kadr/blob/main/docs/SPEC.md">SPEC.md</a>; this file says only what
+comes and in what order.</p>
+</div><h2 id="milestones">Milestones</h2><ol class="milestones"><li class="milestone is-current"><div class="milestone-head"><strong>0.3</strong> <span class="milestone-state">Now</span></div>
+<p class="milestone-theme">Public alpha</p>
+<p class="milestone-note">All three systems build and pass desktop-e2e, the update check works, the first testers run it on real macOS and Windows machines</p>
+</li>
+<li class="milestone"><div class="milestone-head"><strong>0.4</strong> <span class="milestone-state">Later</span></div>
+<p class="milestone-theme">Screenshot parity</p>
+<p class="milestone-note">Every row of sections 1–5 is <span class="status status-done" role="img" aria-label="Done"></span> on all three systems (L, M and W), including all that is on L only today; full self-update (§12.3)</p>
+<div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="144" aria-valuenow="108.5"><span style="width:75.34722222222221%"></span></span><span>108.5 of 144</span></div></li>
+<li class="milestone"><div class="milestone-head"><strong>0.5</strong> <span class="milestone-state">Later</span></div>
+<p class="milestone-theme">Recording and studio parity</p>
+<p class="milestone-note">Every row of sections 6–7 is <span class="status status-done" role="img" aria-label="Done"></span>; export is not slower than the tools it&#39;s measured against, on the same hardware</p>
+<div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="65" aria-valuenow="29"><span style="width:44.61538461538462%"></span></span><span>29 of 65</span></div></li>
+<li class="milestone"><div class="milestone-head"><strong>0.6</strong> <span class="milestone-state">Later</span></div>
+<p class="milestone-theme">Agent mode</p>
+<p class="milestone-note">Section 8: MCP, markers, script, voice-over, subtitles</p>
+<div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="7" aria-valuenow="0"><span style="width:0%"></span></span><span>0 of 7</span></div></li>
+<li class="milestone"><div class="milestone-head"><strong>0.7</strong> <span class="milestone-state">Later</span></div>
+<p class="milestone-theme">Beyond parity</p>
+<p class="milestone-note">Section 9: scrolling everywhere, sharing to your own storage, URL scheme and CLI API, localisations</p>
+<div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="6" aria-valuenow="1"><span style="width:16.666666666666664%"></span></span><span>1 of 6</span></div></li>
+<li class="milestone"><div class="milestone-head"><strong>1.0</strong> <span class="milestone-state">Later</span></div>
+<p class="milestone-theme">Stability</p>
+<p class="milestone-note">The spec&#39;s §12.1: real users on all three systems, frozen formats, two self-updating releases in a row</p>
+</li></ol><p>Order inside a milestone: first what people see every day (the picker, the card, the editor), then
+the rare things. A feature counts as done only with dev hooks and a test (§6).</p>
+<section class="roadmap-section"><h2 id="1-capture">1. Capture</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="33" aria-valuenow="32.5"><span style="width:98.48484848484848%"></span></span><span>32.5 of 33</span></div><table class="features"><thead><tr><th scope="col">Feature</th><th scope="col" aria-label="Linux">L</th><th scope="col" aria-label="macOS">M</th><th scope="col" aria-label="Windows">W</th></tr></thead><tbody><tr><th scope="row">An area, a window, the whole screen, every screen<small class="feature-note"><code>kadr shot all</code>; windows on M/W from the system&#39;s list (W: EnumWindows + WindowFromPoint)</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">All in one: one shortcut, switch the mode on the fly, remember the last area<small class="feature-note">M/W: the capture bar, the arrows and a shot from it pass desktop-e2e</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Exact area size: type W×H, a fixed ratio, nudge with the arrow keys</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Crosshair, a magnifier with pixels and coordinates</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">The screen frozen while you select</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Self-timer (3/5/10 s)<small class="feature-note">picked in the settings; takes the whole screen</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">A window on a background: padding, wallpaper, colour or picture, shadow; a window on a transparent background<small class="feature-note">the background is a preset saved in the editor (the Window background setting), and the editor opens the shot with it; M/W: pass desktop-e2e</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">A window shot without the windows covering it (the window&#39;s own buffer)<small class="feature-note">L: ext-image-copy-capture; M: CGWindowList; W: its own WGC frame; e2e on all three</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Scrolling capture: down, sideways, any app<small class="feature-note">the person scrolls, kadr stitches; sideways checked by the stitching test; M/W: the frame and the bar are separate windows, pass desktop-e2e</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">The pointer in the screenshot (an option)<small class="feature-note">L: through <code>grim -c</code>; the nested session has no pointer, so it&#39;s unchecked</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">A shot from the command line or a shortcut with no UI, straight to the clipboard or a file</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="2-the-card">2. The card</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="21" aria-valuenow="9.5"><span style="width:45.23809523809524%"></span></span><span>9.5 of 21</span></div><table class="features"><thead><tr><th scope="col">Feature</th><th scope="col" aria-label="Linux">L</th><th scope="col" aria-label="macOS">M</th><th scope="col" aria-label="Windows">W</th></tr></thead><tbody><tr><th scope="row">A card after a capture: open, edit, copy, save, delete</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Drag from the card into any app (as a file)<small class="feature-note">M/W: unchecked</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Quick actions you choose: copy, edit, pin, text recognition, share<small class="feature-note">can&#39;t be chosen; no sharing</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Several cards in a stack, bring back a closed one<small class="feature-note">no bringing back</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Position (corner, monitor), size, closing on a timer, gestures<small class="feature-note">no monitor or size</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Hide all cards for a while</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">File info (size, resolution)</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="3-editor">3. Editor</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="51" aria-valuenow="42.5"><span style="width:83.33333333333334%"></span></span><span>42.5 of 51</span></div><table class="features"><thead><tr><th scope="col">Feature</th><th scope="col" aria-label="Linux">L</th><th scope="col" aria-label="macOS">M</th><th scope="col" aria-label="Windows">W</th></tr></thead><tbody><tr><th scope="row">Arrow: 4 styles, curved too<small class="feature-note">filled head, open head, both ends, tapered, all of them bend; M/W: drawing checked by golden tests in CI, picking a style only by e2e on Linux</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Line, box, filled box, ellipse</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Pen with smoothing, highlighter that finds the text line&#39;s height<small class="feature-note">the highlighter picks its width and keeps to the line from the screenshot&#39;s pixels, no OCR; leaving the line lets go, Shift turns it off; M/W: shared code, UI unchecked</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Text: 7 ready styles, a plate, an outline<small class="feature-note">plain, plate, outline, shadow, marker, pill, label; M/W: drawing checked by golden tests in CI, picking one only by e2e on Linux</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Step numbers</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Spotlight (dim everything but an area)</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Blur (secure and smooth), pixelation (randomised)<small class="feature-note">one blur, and a safe one: blocks with noise first, then the blur; the rasteriser is shared, golden tests run in CI on all three</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Black box (can&#39;t be undone in the file)<small class="feature-note">M/W: Hide sensitive needs tesseract; desktop-e2e hasn&#39;t drawn a box yet</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Crop: ratios, snapping to edges</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Turn, flip, resize<small class="feature-note">resizing is the Image size menu</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Colour: pipette, your own colours, recent colours<small class="feature-note">M/W: shared code; desktop-e2e hasn&#39;t used the pipette yet</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Join several pictures by drag and drop<small class="feature-note">dropped beside the screenshot, a picture joins it on that side (as tall or as wide); dropped on it, goes on top; M/W: dropping files unchecked</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Background and frame: 20 backgrounds, your own, padding, alignment, ratio, Even margins, presets<small class="feature-note">position is a 3×3 grid, at an edge the picture sits flush and square there; Even margins cuts plain margins to match; M/W: drawing checked by golden tests in CI</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Project file (<code>.kadr</code>), editing again later</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Unlimited undo and redo, step by step</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Export: PNG/JPEG/WebP, 1×/2× scale, copy, save, share, a handle to drag the result out<small class="feature-note">no sharing; PNG, JPEG and WebP by the name in Save As; original / 1× / 2× at the editor&#39;s bottom, with HiDPI in mind, for saving, copying and dragging; the choice is kept in the project; M/W: scale UI unchecked</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Dark and light theme, following the system</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="4-pin-on-top-history-text-recognition">4. Pin on top, history, text recognition</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="17" aria-valuenow="10"><span style="width:58.82352941176471%"></span></span><span>10 of 17</span></div><table class="features"><thead><tr><th scope="col">Feature</th><th scope="col" aria-label="Linux">L</th><th scope="col" aria-label="macOS">M</th><th scope="col" aria-label="Windows">W</th></tr></thead><tbody><tr><th scope="row">Pin on top: size, opacity, move by a pixel with the arrows, let clicks through<small class="feature-note">M/W: unchecked; letting clicks through is in doubt</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">History: recent screenshots and recordings, filter by kind, delete, keep for N days</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Text recognition: select an area, the text goes to the clipboard; 30+ languages; on the device<small class="feature-note">tesseract, installed separately on M/W</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Native text recognition: Vision on macOS, Windows.Media.Ocr on Windows, tesseract on Linux</th><td><span class="status status-na" role="img" aria-label="Not applicable"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">QR codes<small class="feature-note">zbarimg, installed separately on M/W</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Text actions: copy an e-mail or a phone number, hide personal data<small class="feature-note">only Hide sensitive and a link from text recognition</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="5-platform-and-behaviour">5. Platform and behaviour</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="22" aria-valuenow="14"><span style="width:63.63636363636363%"></span></span><span>14 of 22</span></div><table class="features"><thead><tr><th scope="col">Feature</th><th scope="col" aria-label="Linux">L</th><th scope="col" aria-label="macOS">M</th><th scope="col" aria-label="Windows">W</th></tr></thead><tbody><tr><th scope="row">Tray or menu bar icon with quick actions, start at login</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Global shortcuts that catch conflicts, hints in the system&#39;s style<small class="feature-note">conflicts aren&#39;t caught</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Platform edges (§3.10): dialogs, menus, keyboard, input methods<small class="feature-note">on L kadr draws the menus itself, as the spec says</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Several monitors with different DPI</th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Settings: where to save, file name template, format, clipboard, sound, what to do after a capture<small class="feature-note">no format</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Self-update with a What&#39;s new screen (§12)<small class="feature-note">Stable and Beta channels, download, signature, rollback; not yet run on M or W</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">macOS permissions: a clear first-run request for screen recording and accessibility</th><td><span class="status status-na" role="img" aria-label="Not applicable"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-na" role="img" aria-label="Not applicable"></span></td></tr>
+<tr><th scope="row">Packages: dmg (signed), msi/winget, AUR, Flatpak, Homebrew<small class="feature-note">L: tar.xz; M: unsigned dmg; W: an installer (Inno Setup, no admin) and a portable .exe, unsigned; no winget</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="6-recording">6. Recording</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="29" aria-valuenow="13.5"><span style="width:46.55172413793103%"></span></span><span>13.5 of 29</span></div><table class="features"><thead><tr><th scope="col">Feature</th><th scope="col" aria-label="Linux">L</th><th scope="col" aria-label="macOS">M</th><th scope="col" aria-label="Windows">W</th></tr></thead><tbody><tr><th scope="row">Record an area, a window or the screen; MP4 (H.264) and GIF<small class="feature-note">a window is recorded as an area; M/W: the screen is checked in CI, an area isn&#39;t</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Recording on macOS (ScreenCaptureKit) and Windows (WGC), not stubs<small class="feature-note">both record in desktop-e2e, at a steady frame rate</small></th><td><span class="status status-na" role="img" aria-label="Not applicable"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Quality, FPS, resolution; hardware encoding<small class="feature-note">no resolution</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Microphone and system sound, picking devices, a level meter<small class="feature-note">M/W: the default device only; M: the microphone from macOS 15; the meter unchecked</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Camera over the recording: position, size, shape, full screen<small class="feature-note">M/W: the camera goes through v4l2, so none there</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Clicks and keys in the recording (colour, size, animation; modifiers only)<small class="feature-note">L: logged by the Hyprland hook, drawn in the studio</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Show or hide the pointer</th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Do Not Disturb on its own, hide the desktop, recording time in the tray</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Pause and resume, cancel and delete<small class="feature-note">M/W: in the code, unchecked</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Start timer, countdown<small class="feature-note">M/W: unchecked</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="7-studio">7. Studio</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="36" aria-valuenow="15.5"><span style="width:43.05555555555556%"></span></span><span>15.5 of 36</span></div><table class="features"><thead><tr><th scope="col">Feature</th><th scope="col" aria-label="Linux">L</th><th scope="col" aria-label="macOS">M</th><th scope="col" aria-label="Windows">W</th></tr></thead><tbody><tr><th scope="row">Timeline: trim, cuts, dragging pieces around<small class="feature-note">M/W: the studio hasn&#39;t been tried on a real machine; export needs ffmpeg with libplacebo</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Zooms by hand; <strong>automatic zooms that follow the pointer, as suggestions</strong><small class="feature-note">by hand and from the recording&#39;s clicks (no clicks on M/W)</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Panning between zooms, smooth easing</th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Speed: faster or slower pieces, cutting out pauses</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Pointer: smoothing, motion blur, size, style, click effect<small class="feature-note">M/W: no pointer log from the recording</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Background and frame: wallpapers, gradients, your own, corners, shadow, padding, presets<small class="feature-note">M/W: unchecked</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Export in ratios: 16:9, 1:1, 9:16, with zooms that follow the crop<small class="feature-note">zooms don&#39;t follow the crop</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">Subtitles: an editable track, burned in, SRT/VTT beside the video<small class="feature-note">see 8</small></th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Annotations on the video (arrow, text, highlight, timed)</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">The camera after recording: position, shape, on and off by piece<small class="feature-note">not by piece; M/W: no camera recording</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Export: MP4/GIF/WebM, quality, a preview of the result, progress as a card<small class="feature-note">no WebM</small></th><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td><td><span class="status status-partial" role="img" aria-label="Partly done"></span></td></tr>
+<tr><th scope="row">A <code>.kadr</code> project with the video, back to the edit later</th><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="8-agent-mode-kadr-s-own-spec-11">8. Agent mode, kadr&#39;s own (SPEC §11)</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="7" aria-valuenow="0"><span style="width:0%"></span></span><span>0 of 7</span></div><table class="features features-single"><thead><tr><th scope="col">Feature</th><th scope="col">Status</th></tr></thead><tbody><tr><th scope="row"><code>kadr mcp</code>: capture / windows / record.start / record.marker / record.stop / studio.export / ocr</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Markers in a recording become zooms, chapters, timing</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row"><code>script.json</code> in the project: steps, voice-over text</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Voice-over by a local TTS from the script; a cloud one as an option</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Subtitles from the script (no speech recognition)</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Confirming in the UI that an agent may see the screen</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Script templates: &quot;screencast of changes&quot;, &quot;audit&quot;, &quot;test&quot;, &quot;onboarding&quot;, &quot;tutorial&quot;</th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr></tbody></table></section>
+<section class="roadmap-section"><h2 id="9-beyond-parity">9. Beyond parity</h2><div class="progress"><span class="progress-track" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="6" aria-valuenow="1"><span style="width:16.666666666666664%"></span></span><span>1 of 6</span></div><table class="features features-single"><thead><tr><th scope="col">Feature</th><th scope="col">Status</th></tr></thead><tbody><tr><th scope="row">Scrolling capture on macOS and Windows<small class="feature-note">The systems&#39; own tools lack it; now on all three, M/W pass desktop-e2e (see section 1)</small></th><td><span class="status status-done" role="img" aria-label="Done"></span></td></tr>
+<tr><th scope="row">Sharing to your own storage: S3-compatible, WebDAV, your own script; the link to the clipboard<small class="feature-note">Instead of a vendor&#39;s cloud: no service of our own, no accounts</small></th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">URL scheme (<code>kadr://capture?area=…</code>) and a stable CLI API<small class="feature-note">Automation from launchers and scripts</small></th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Localisations beyond en/ru by the community (Weblate or PRs)<small class="feature-note">Open source</small></th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Accessibility: a screen reader in the settings and the editor<small class="feature-note">The debt of a UI of our own, §3.10</small></th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr>
+<tr><th scope="row">Flatpak and Snap, AppImage<small class="feature-note">Linux beyond Arch</small></th><td><span class="status status-later" role="img" aria-label="Not yet"></span></td></tr></tbody></table></section><h2 id="not-planned" data-outline="false">Not planned</h2><ul>
+<li>A cloud of our own, accounts, teams, SSO: that&#39;s a hosting business, not kadr. Sharing goes only to the user&#39;s own storage.</li>
+<li>Speech transcription in videos: subtitles come from the script (§11); recognition not before 1.0, and only local.</li>
+<li>Webview, Electron, a built-in browser: never.</li>
+</ul>
+
+<h2 id="next-steps" data-outline="false">Next steps</h2><ol>
+<li>Testers on macOS and Windows, fixes from their reports, then <code>0.3.0</code>.</li>
+<li>Section 6 on macOS and Windows: picking the microphone, the camera and the click log.</li>
+<li>For <code>0.4</code>, everything that is on L only comes to all three systems, in this order:
+<ol>
+<li><strong>Editor</strong>: the rows of section 3 to <span class="status status-done" role="img" aria-label="Done"></span>.</li>
+<li><strong>Card</strong>: the rows of section 2 to <span class="status status-done" role="img" aria-label="Done"></span>.</li>
+<li><strong>Capture</strong>: the pointer in screenshots checked on L.
+Each row is its own commit with a test.</li>
+</ol>
+</li>
+<li>Full self-update (§12.3) for <code>0.4.0</code>: done; it still needs a run on real macOS and Windows machines.</li>
+</ol>
+
+    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/ROADMAP.md">Edit this page</a> · <a href="../roadmap.md">This page as Markdown</a> · <a href="../llms-full.txt" title="The whole manual as plain text, to give to an AI assistant">For language models</a></span> <span class="theme" role="group" aria-label="Theme"><button type="button" data-theme-is="system">System</button><button type="button" data-theme-is="light">Light</button><button type="button" data-theme-is="dark">Dark</button></span></div>
+  </main>
+</div>
+
+<dialog class="palette" aria-label="Search" data-index="../search.json" data-base="../" data-pagefind="../pagefind/pagefind.js">
+  <div class="palette-field">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+    <input type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="palette-list" aria-label="Search" placeholder="Search documentation…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
+  </div>
+  <ul class="palette-list" id="palette-list" role="listbox" aria-label="Pages and sections"></ul>
+  <p class="palette-none" role="status" hidden>Nothing found</p>
+</dialog>
+<script src="../assets/site.js" defer></script>
+</body>
+</html>
