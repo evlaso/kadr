@@ -5,7 +5,7 @@
 Every page of kadr's user manual in one file, in reading order. Each page starts with its own top-level heading and the address it has on the site; links between pages point at those addresses.
 
 Site: https://evlaso.github.io/kadr/
-Built: 2026-11-12
+Built: 2026-11-13
 
 ---
 
