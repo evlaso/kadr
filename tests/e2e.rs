@@ -870,6 +870,69 @@ fn gallery_small_controls_are_live() {
     }
 }
 
+/// A live token reaches existing windows, including shared component geometry;
+/// resetting it returns both windows to their original sizes, without restart.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn tokens_restyle_every_open_window() {
+    let s = Session::start();
+    s.spawn(&["gallery"]);
+    let gallery = s.window("kadr-gallery")["id"].to_string();
+    s.dev(&["click", "section-buttons", &gallery]);
+    let path = fixture(&s, "tokens.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    let editor = s.window("kadr-editor")["id"].to_string();
+    let height = |id: &str, window: &str| s.dev(&["find", id, window])["bounds"][3].as_f64().unwrap();
+    let before = (height("button-Accent-large", &gallery), height("tool-r", &editor));
+    let pids = s.kadr_pids();
+    assert_eq!(s.dev(&["token", "control.button_large"])["value"], 32.);
+    s.dev(&["token", "control.button_large", "40"]);
+    let after = (height("button-Accent-large", &gallery), height("tool-r", &editor));
+    // GPUI rounds layout to logical pixels (40 design units draw as 47 px).
+    assert!((after.0 - before.0 - 9.5).abs() <= 0.5 && (after.1 - before.1 - 9.5).abs() <= 0.5, "{before:?} -> {after:?}");
+    assert_eq!(s.kadr_pids(), pids, "the same process restyled both windows");
+    s.dev(&["token", "control.button_large", "reset"]);
+    assert_eq!((height("button-Accent-large", &gallery), height("tool-r", &editor)), before);
+    assert!(s.try_dev(&["token", "control.button_large", "0"]).is_none());
+    assert!(s.try_dev(&["token", "future.value", "2"]).is_none());
+
+    // The gallery's exact field uses the real text-input handler. Saving only
+    // writes this session's config, and Revert reloads that saved state.
+    s.dev(&["click", "section-sizes", &gallery]);
+    s.dev(&["click", "token-field-radius.button", &gallery]);
+    s.dev(&["key", "ctrl-a", "--window", &gallery]);
+    s.dev(&["type", "11", "--window", &gallery]);
+    s.dev(&["key", "enter", "--window", &gallery]);
+    wait(Duration::from_secs(2), || (s.try_dev(&["token", "radius.button"])?["value"] == 11.).then_some(())).expect("exact field didn't restyle");
+    s.dev(&["click", "tokens-save", &gallery]);
+    let file = s.var("XDG_CONFIG_HOME").join("kadr/tokens.toml");
+    let text = std::fs::read_to_string(&file).expect("saved tokens");
+    assert!(text.contains("[radius]") && text.contains("button = 11") && !text.contains("button_large ="), "{text}");
+    s.dev(&["token", "radius.button", "12"]);
+    s.dev(&["click", "tokens-revert", &gallery]);
+    assert_eq!(s.dev(&["token", "radius.button"])["value"], 11.);
+    s.dev(&["click", "tokens-reset-all", &gallery]);
+    s.dev(&["click", "tokens-save", &gallery]);
+    assert!(!file.exists(), "Reset all + Save removes tokens.toml");
+    assert_eq!(s.dev(&["token", "radius.button"])["value"], 7.);
+    let revision = s.dev(&["token", "radius.button"])["revision"].as_u64().unwrap();
+    s.dev(&["drag", "token-slider-radius.button", "40,0", &gallery]);
+    wait(Duration::from_secs(2), || (s.try_dev(&["token", "radius.button"])?["value"] != 7.).then_some(())).expect("slider didn't restyle");
+    assert_eq!(s.dev(&["token", "radius.button"])["revision"], revision + 1, "a drag's pointer events coalesce into one replacement in the next frame");
+    s.dev(&["click", "tokens-reset-all", &gallery]);
+    // Reloading a hand edit and removing an ignored-only file must also work
+    // when there is no in-memory diff to mark as unsaved.
+    std::fs::write(&file, "[radius]\nbutton = 10\n").unwrap();
+    s.dev(&["click", "tokens-revert", &gallery]);
+    assert_eq!(s.dev(&["token", "radius.button"])["value"], 10.);
+    s.dev(&["click", "tokens-reset-all", &gallery]);
+    s.dev(&["click", "tokens-save", &gallery]);
+    std::fs::write(&file, "[future]\nthing = 1\n").unwrap();
+    s.dev(&["click", "tokens-reset-all", &gallery]);
+    s.dev(&["click", "tokens-save", &gallery]);
+    assert!(!file.exists());
+}
+
 /// Studio controls write the project's values; all media and input samples
 /// are drawn fixtures, not a capture of the desktop.
 #[test]

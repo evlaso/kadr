@@ -13,12 +13,15 @@
 //! would merge them later.
 //!
 //! What follows the system (the window's corner radius, which button of a
-//! pair confirms) stays with the platform; the colours themselves stay in the
-//! app's palette, which mixes its controls from `Alpha` and `Tone`.
+//! pair confirms) stays with the platform. The palette mixes its controls
+//! from the base colour, alpha and tone tokens.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+#[path = "token_store.rs"]
+pub mod store;
 
 /// What a number means, so it's drawn and shown right.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +38,8 @@ pub enum Unit {
     Ratio,
     /// A font weight, 100 to 900.
     Weight,
+    /// An opaque sRGB colour, written as #RRGGBB (24 bits fit exactly in f32).
+    Hex,
 }
 
 /// One value of a group, for listing and editing them by name.
@@ -45,6 +50,67 @@ pub struct Entry {
     pub unit: Unit,
     /// Its doc comment: what the role is for.
     pub doc: &'static str,
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+}
+
+impl Entry {
+    fn new(group: &str, name: &'static str, value: f32, unit: Unit, doc: &'static str) -> Self {
+        // Ranges follow roles, not the raw unit alone: a radius can be zero,
+        // a hit target or a font cannot. Defaults always remain in range.
+        let (min, max, step) = match unit {
+            Unit::Hex => (0., 0xFFFFFF as f32, 1.),
+            Unit::Alpha => (0., 1., 0.01),
+            Unit::Lightness => match name {
+                "accent_pressed" | "accent_hover" => (-0.3, 0.3, 0.01),
+                "stage_dark" | "stage_light" => (0., 0.2, 0.005),
+                _ => (0., 1., 0.01),
+            },
+            Unit::Weight => (100., 900., 100.),
+            Unit::Ratio => match name {
+                "line_height" => (1., 3., 0.05),
+                "gradient_limit" => (1., 32., 1.),
+                _ => (0., 1., 0.01),
+            },
+            _ if group == "Radius" || name.contains("radius") => (0., (value * 3.).max(24.), 0.5),
+            _ if group == "Spacing" || group == "Space" => (0., value * 3., 0.5),
+            _ if group == "Text" => (8., 32., 0.5),
+            _ if group == "Knob" && name.ends_with("_y") => (-32., 64., 0.5),
+            _ if name == "blur" => (0., 96., 0.5),
+            _ => ((value * 0.5).min(8.), value * 2., 0.5),
+        };
+        Self { name, value, unit, doc, min, max, step }
+    }
+
+    pub fn accepts(self, value: f32) -> bool {
+        value.is_finite() && value >= self.min && value <= self.max && (self.unit != Unit::Hex || value.fract() == 0.)
+    }
+
+    /// Exact input needn't snap; only dragging uses the suggested step.
+    pub fn at_fraction(self, fraction: f32) -> f32 {
+        let value = self.min + fraction.clamp(0., 1.) * (self.max - self.min);
+        // Remove multiplication noise from decimal steps (0.18, not
+        // 0.17999999), so both the exact field and saved file read naturally.
+        let scale = 10_f64.powi((-self.step.log10().floor()).max(0.) as i32);
+        let stepped = (f64::from(value) / f64::from(self.step)).round() * f64::from(self.step);
+        (((stepped * scale).round() / scale) as f32).clamp(self.min, self.max)
+    }
+
+    pub fn formatted(self) -> String {
+        if self.unit == Unit::Hex { format!("#{:06X}", self.value as u32) } else { self.value.to_string() }
+    }
+
+    pub fn parse(self, text: &str) -> Result<f32, String> {
+        let value = if self.unit == Unit::Hex {
+            let hex = text.trim().strip_prefix('#').unwrap_or(text.trim());
+            if hex.len() != 6 { return Err("expected #RRGGBB".into()); }
+            u32::from_str_radix(hex, 16).map(|v| v as f32).map_err(|_| "expected #RRGGBB".to_owned())?
+        } else {
+            text.trim().parse::<f32>().map_err(|_| "expected a number".to_owned())?
+        };
+        if self.accepts(value) { Ok(value) } else { Err(format!("out of range ({}..{})", self.min, self.max)) }
+    }
 }
 
 /// A group of named values: the struct, its defaults (today's look), and
@@ -77,7 +143,7 @@ macro_rules! group {
         impl $name {
             /// Every value, in order, with its name, unit and role.
             pub fn entries(&self) -> Vec<Entry> {
-                vec![$(Entry { name: stringify!($field), value: self.$field, unit: Unit::$unit, doc: concat!($($doc),*).trim_ascii() }),*]
+                vec![$(Entry { value: self.$field, ..Entry::new(stringify!($name), stringify!($field), $value, Unit::$unit, concat!($($doc),*).trim_ascii()) }),*]
             }
 
             /// A value by its name, to change it.
@@ -89,6 +155,50 @@ macro_rules! group {
             }
         }
     };
+}
+
+group! {
+    /// Dark theme's base colours; derived control fills use Alpha and Tone.
+    Dark {
+        /// Panel and top bar background.
+        background: 0x100F0F as f32, Hex;
+        /// Main text and the tint used for controls.
+        foreground: 0xCECDC3 as f32, Hex;
+        /// Raised surfaces, menus and popovers.
+        surface: 0x1C1B1A as f32, Hex;
+        /// Main action and selection accent.
+        accent: 0x4385BE as f32, Hex;
+        /// Placeholder and disabled text.
+        muted: 0x575653 as f32, Hex;
+        /// Secondary text.
+        text_muted: 0x878580 as f32, Hex;
+        /// Error status.
+        error: 0xD14D41 as f32, Hex;
+        /// Warning status.
+        warning: 0xD0A215 as f32, Hex;
+    }
+}
+
+group! {
+    /// Light theme's base colours.
+    Light {
+        /// Panel and top bar background.
+        background: 0xFFFFFF as f32, Hex;
+        /// Main text and the tint used for controls.
+        foreground: 0x1C1B1A as f32, Hex;
+        /// Raised surfaces, menus and popovers.
+        surface: 0xFFFFFF as f32, Hex;
+        /// Main action and selection accent.
+        accent: 0x3B7DC4 as f32, Hex;
+        /// Placeholder and disabled text.
+        muted: 0xA8A7A1 as f32, Hex;
+        /// Secondary text.
+        text_muted: 0x6F6E69 as f32, Hex;
+        /// Error status.
+        error: 0xC03A2E as f32, Hex;
+        /// Warning status.
+        warning: 0xAD8301 as f32, Hex;
+    }
 }
 
 group! {
@@ -524,6 +634,25 @@ impl Default for Shadows {
 }
 
 impl Shadows {
+    fn entries(layers: &[ShadowLayer]) -> Vec<Entry> {
+        let names = [["layer_1_y", "layer_1_blur", "layer_1_dark", "layer_1_light"], ["layer_2_y", "layer_2_blur", "layer_2_dark", "layer_2_light"]];
+        layers.iter().zip(names).flat_map(|(l, names)| {
+            [(l.y, Unit::Px, "Shadow layer's vertical offset, in px.", -32., 64., 0.5),
+             (l.blur, Unit::Px, "Shadow layer's blur, in px.", 0., 96., 0.5),
+             (l.dark, Unit::Alpha, "Shadow layer's opacity in the dark theme.", 0., 1., 0.01),
+             (l.light, Unit::Alpha, "Shadow layer's opacity in the light theme.", 0., 1., 0.01)]
+                .into_iter().zip(names).map(|((value, unit, doc, min, max, step), name)| Entry { name, value, unit, doc, min, max, step })
+        }).collect()
+    }
+
+    fn get_mut(&mut self, recipe: &str, name: &str) -> Option<&mut f32> {
+        let layers = match recipe { "shadow_popover" => &mut self.popover, "shadow_floating" => &mut self.floating, "shadow_picture" => &mut self.picture, "shadow_switch_knob" => &mut self.switch_knob, _ => return None };
+        let rest = name.strip_prefix("layer_")?;
+        let (index, field) = rest.split_once('_')?;
+        let layer = layers.get_mut(index.parse::<usize>().ok()?.checked_sub(1)?)?;
+        match field { "y" => Some(&mut layer.y), "blur" => Some(&mut layer.blur), "dark" => Some(&mut layer.dark), "light" => Some(&mut layer.light), _ => None }
+    }
+
     /// Every recipe with its name and role.
     pub fn recipes(&self) -> [(&'static str, &[ShadowLayer], &'static str); 4] {
         [
@@ -538,6 +667,8 @@ impl Shadows {
 /// The whole set. `Default` is today's look.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Tokens {
+    pub dark: Dark,
+    pub light: Light,
     pub radius: Radius,
     pub spacing: Spacing,
     pub space: Space,
@@ -558,7 +689,7 @@ pub struct Tokens {
 }
 
 impl Tokens {
-    /// The groups of plain values, by name (shadows aside: `shadow.recipes`).
+    /// Every editable value, including the existing shadow layers.
     pub fn groups(&self) -> Vec<(&'static str, Vec<Entry>)> {
         vec![
             ("radius", self.radius.entries()),
@@ -577,6 +708,12 @@ impl Tokens {
             ("text_field", self.text_field.entries()),
             ("menu", self.menu.entries()),
             ("small_controls", self.small_controls.entries()),
+            ("dark", self.dark.entries()),
+            ("light", self.light.entries()),
+            ("shadow_popover", Shadows::entries(&self.shadow.popover)),
+            ("shadow_floating", Shadows::entries(&self.shadow.floating)),
+            ("shadow_picture", Shadows::entries(&self.shadow.picture)),
+            ("shadow_switch_knob", Shadows::entries(&self.shadow.switch_knob)),
         ]
     }
 
@@ -599,8 +736,25 @@ impl Tokens {
             "text_field" => self.text_field.get_mut(name),
             "menu" => self.menu.get_mut(name),
             "small_controls" => self.small_controls.get_mut(name),
+            "dark" => self.dark.get_mut(name),
+            "light" => self.light.get_mut(name),
+            _ if group.starts_with("shadow_") => self.shadow.get_mut(group, name),
             _ => None,
         }
+    }
+
+    pub fn entry(&self, path: &str) -> Option<Entry> {
+        let (group, name) = path.split_once('.')?;
+        self.groups().into_iter().find(|(g, _)| *g == group)?.1.into_iter().find(|e| e.name == name)
+    }
+
+    /// By-name edits share validation between the file, gallery and dev hook.
+    pub fn edit(&mut self, path: &str, text: &str) -> Result<(), String> {
+        let entry = self.entry(path).ok_or_else(|| format!("unknown token: {path}"))?;
+        let value = entry.parse(text)?;
+        let (group, name) = path.split_once('.').unwrap();
+        *self.get_mut(group, name).unwrap() = value;
+        Ok(())
     }
 }
 
@@ -611,6 +765,9 @@ impl Tokens {
 /// count has moved. Steady-state reads only load the version and clone an Arc.
 static SHARED: Mutex<Option<Arc<Tokens>>> = Mutex::new(None);
 static VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Replacements so far, for the dev hook's frame-coalescing checks.
+pub fn revision() -> u64 { VERSION.load(Ordering::Acquire) }
 
 thread_local! {
     static SEEN: RefCell<Option<(u64, Arc<Tokens>)>> = const { RefCell::new(None) };
@@ -661,6 +818,12 @@ mod tests {
         let i = t.icon;
         assert_eq!((i.xsmall, i.small, i.medium, i.tool, i.large), (12., 14., 16., 18., 22.));
         assert_eq!(t.border.hairline, 1.);
+        let d = t.dark;
+        assert_eq!([d.background, d.foreground, d.surface, d.accent, d.muted, d.text_muted, d.error, d.warning].map(|v| v as u32),
+            [0x100F0F, 0xCECDC3, 0x1C1B1A, 0x4385BE, 0x575653, 0x878580, 0xD14D41, 0xD0A215]);
+        let l = t.light;
+        assert_eq!([l.background, l.foreground, l.surface, l.accent, l.muted, l.text_muted, l.error, l.warning].map(|v| v as u32),
+            [0xFFFFFF, 0x1C1B1A, 0xFFFFFF, 0x3B7DC4, 0xA8A7A1, 0x6F6E69, 0xC03A2E, 0xAD8301]);
         let a = t.alpha;
         assert_eq!((a.edge_dark, a.edge_light, a.separator), (0.1, 0.12, 0.07));
         assert_eq!((a.control, a.control_hover, a.control_pressed, a.control_selected), (0.07, 0.1, 0.14, 0.13));
@@ -686,7 +849,7 @@ mod tests {
     fn every_value_is_listed_and_reachable_by_name() {
         let mut t = Tokens::default();
         let groups = t.groups();
-        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 144);
+        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 188);
         for (group, entries) in groups {
             for e in entries {
                 assert!(!e.doc.is_empty(), "{group}.{} has no role", e.name);

@@ -19,6 +19,7 @@
 //! - `state [window]`: what the window's view holds (the editor's drawing,
 //!   tool and undo depth; the settings' tab).
 //! - `shot <path> [window]`: the window's pixels as a PNG.
+//! - `token <group.name> [value|reset]`: read or restyle a token for this run.
 //! - `grab-window <id> [block]`: the system's window `id` (kadr-shot's)
 //!   taken by itself on another thread, as a window shot is, within 8 s;
 //!   with `block` the main thread waits for it meanwhile, as a stuck one
@@ -334,6 +335,9 @@ pub fn handle(args: Vec<String>, reply: Stream, cx: &mut App) {
     if command == "windows" {
         return answer(reply, Ok(windows(cx)));
     }
+    if command == "token" {
+        return answer(reply, token(&words, cx));
+    }
     if command == "grab-window" {
         let Some(id) = words.first().and_then(|w| w.parse::<u64>().ok()) else {
             return answer(reply, Err("dev grab-window <id> [block]".into()));
@@ -481,6 +485,19 @@ pub fn handle(args: Vec<String>, reply: Stream, cx: &mut App) {
         }
         other => answer(reply, Err(format!("unknown dev command: {other}"))),
     }
+}
+
+fn token(words: &[String], cx: &mut App) -> Result<Value, String> {
+    let path = words.first().ok_or("dev token <group.name> [value|reset]")?;
+    if words.len() > 2 { return Err("dev token <group.name> [value|reset]".into()); }
+    let mut tokens = (*crate::ui::tokens()).clone();
+    if let Some(value) = words.get(1) {
+        let value = if value == "reset" { kadr_ui::tokens::Tokens::default().entry(path).ok_or_else(|| format!("unknown token: {path}"))?.formatted() } else { value.clone() };
+        tokens.edit(path, &value)?;
+        crate::palette::restyle(tokens.clone(), cx);
+    }
+    let e = tokens.entry(path).ok_or_else(|| format!("unknown token: {path}"))?;
+    Ok(json!({ "name": path, "value": e.value, "formatted": e.formatted(), "unit": format!("{:?}", e.unit), "min": e.min, "max": e.max, "step": e.step, "revision": kadr_ui::tokens::revision() }))
 }
 
 fn answer(mut reply: Stream, result: Result<Value, String>) {

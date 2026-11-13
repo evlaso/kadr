@@ -25,6 +25,9 @@ use kadr_platform::keymap::Command as Keys;
 use crate::ui::popover::{self, Align, DropdownLook, Elevation, Outside, Placement, RowLook, RowOptions};
 use crate::ui::controls::{self, ChipLook, OptionChip};
 
+#[path = "gallery_tokens.rs"]
+mod tokens;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
     Colours,
@@ -95,6 +98,8 @@ enum Look {
 }
 
 pub struct Gallery {
+    tokens: gpui::Entity<tokens::TokenPanel>,
+    watch_tokens: bool,
     section: Section,
     look: Look,
     scroll: ScrollHandle,
@@ -145,6 +150,8 @@ pub fn open(cx: &mut App) {
             .detach();
             let looks = vec![("Soft".to_owned(), json!({ "padding": 0.1, "radius": 0.5 })), ("Wide margins".to_owned(), json!({ "padding": 0.3, "radius": 0.2 }))];
             Gallery {
+                tokens: cx.new(tokens::TokenPanel::new),
+                watch_tokens: false,
                 section: Section::Colours,
                 look: Look::App,
                 scroll: ScrollHandle::new(),
@@ -340,7 +347,7 @@ impl Gallery {
     }
 
     /// The section's name, and the theme and language the gallery is shown in.
-    fn render_top(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_top(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let looks = [(Look::App, "App setting", "look-app"), (Look::Dark, "Dark", "look-dark"), (Look::Light, "Light", "look-light")];
         let lang = crate::i18n::current();
         h_flex()
@@ -359,7 +366,7 @@ impl Gallery {
                     .px_6()
                     .pt_4()
                     .pb_3()
-                    .child(div().flex_1().min_w(px(140.)).text_size(rems_from_px(20.)).font_weight(gpui::FontWeight::SEMIBOLD).child(self.section.title()))
+                    .child(div().flex_1().min_w(px(140.)).text_size(rems_from_px(20.)).font_weight(gpui::FontWeight::SEMIBOLD).child(if self.watch_tokens && width < 1100. { Section::Sizes.title() } else { self.section.title() }))
                     .child(h_flex().gap_0p5().children(looks.into_iter().map(|(look, name, id)| {
                         chip(id, name, self.look == look).on_click(cx.listener(move |this, _, _, cx| this.set_look(look, cx)))
                     })))
@@ -915,154 +922,6 @@ impl Gallery {
         }).collect()
     }
 
-    // ------------------------------------------------------------ sizes
-
-    fn sizes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let colors = cx.theme().colors().clone();
-        let tokens = crate::ui::tokens();
-        let tone = colors.element_active;
-        // Every plain value, group by group, each drawn the way it's used.
-        let mut groups: Vec<AnyElement> = tokens
-            .groups()
-            .into_iter()
-            .map(|(name, entries)| {
-                let cells = entries.into_iter().map(|e| token_cell(name, e, &tokens, &colors)).collect();
-                group(&format!("tokens.{name}"), Some(group_note(name)), cells, cx)
-            })
-            .collect();
-        let light = cx.theme().light;
-        let surface = |el: Div| el.w(px(150.)).h(px(70.)).flex().items_center().justify_center();
-        let shadows = tokens
-            .shadow
-            .recipes()
-            .into_iter()
-            .map(|(name, layers, role)| {
-                let thing = match name {
-                    "popover" => surface(div().elevation_2(cx)).child(Label::new(t("common.presets")).size(LabelSize::Small)).into_any_element(),
-                    "floating" => surface(div().elevation_3(cx)).child(Label::new(t("common.presets")).size(LabelSize::Small)).into_any_element(),
-                    "picture" => surface(div().rounded(px(kit::picture_radius())).bg(colors.elevated_surface_background).shadow(kit::shadow())).into_any_element(),
-                    _ => surface(div()).child(div().size(rems_from_px(tokens.control.switch_knob)).rounded_full().bg(gpui::white()).shadow(crate::ui::shadow(layers, light))).into_any_element(),
-                };
-                let recipe: Vec<String> = layers.iter().map(|l| format!("y {} blur {} · {}/{}", l.y, l.blur, l.dark, l.light)).collect();
-                cell(name, &recipe.join(" + "), role, thing)
-            })
-            .collect();
-        groups.push(group("tokens.shadow", Some("Recipes as layers: black, straight down, in px; the opacity in the dark theme / the light one."), shadows, cx));
-
-        // The rule as kit says it, and the real Large button in the window's
-        // corner: its radius is in rems, so at kadr's REM it isn't 9 px.
-        let (outer, inset, inner) = (kit::WINDOW_RADIUS, 4., kit::WINDOW_RADIUS - 4.);
-        let large = tokens.radius.button_large;
-        let concentric = vec![
-            spec(
-                format!("outer {outer} − inset {inset} = inner {inner} (px)"),
-                div().w(px(120.)).h(px(46.)).p(px(inset)).rounded(px(outer)).rounded_smoothing(smoothing()).bg(tone).child(div().size_full().rounded(px(inner)).rounded_smoothing(smoothing()).bg(colors.text_accent)),
-            ),
-            spec(
-                format!("a real Large button {inset} px inside the window's {outer} px corner: its radius is {} px", at_rem(large)),
-                div().p(px(inset)).rounded(px(outer)).rounded_smoothing(smoothing()).bg(tone).child(Button::new("concentric-button", t("common.save")).style(ButtonStyle::Accent).size(ButtonSize::Large)),
-            ),
-        ];
-        let window = vec![spec(format!("kit::WINDOW_RADIUS · {} px", kit::WINDOW_RADIUS), div().w(px(64.)).h(px(44.)).rounded(px(kit::WINDOW_RADIUS)).rounded_smoothing(smoothing()).bg(tone))];
-        groups.extend([
-            group("The system's", Some("Not tokens: the window's corners follow the system (kadr_platform::style)."), window, cx),
-            group("Concentric corners", Some("An inner corner's radius is the outer one less the inset."), concentric, cx),
-        ]);
-        groups
-    }
-}
-
-/// What a token group is, over its values.
-fn group_note(name: &str) -> &'static str {
-    match name {
-        "radius" => "Corner radii. Design units grow with the window's rem (kit::REM = 19): the px in brackets is what's drawn.",
-        "spacing" => "The rem-based spacing scale. Screens still use GPUI's shorthands; shared components read their own space roles below.",
-        "space" => "Space inside and between the shared components.",
-        "control" => "The shared controls' sizes.",
-        "text" => "LabelSize: each in English and Russian.",
-        "weight" => "Font weights in use.",
-        "icon" => "IconSize.",
-        "border" => "Border widths, in px.",
-        "alpha" => "Opacities, drawn as the text colour over the panel (how the theme mixes its controls).",
-        "tone" => "Lightness: the accent's states, the work area's shade, which text reads on a colour.",
-        "tooltip" => "The tooltip's measuring and placing, in px.",
-        "scrollbar" => "ui::scrollbar, in px.",
-        "knob" => "ui::paint_knob, in px.",
-        "text_field" => "Single-line caret, selection and input-method composition marks.",
-        "menu" => "Menu row and dropdown field metrics. Logical px and rem-base radii deliberately remain distinct.",
-        "small_controls" => "Chips, checks, sliders, swatches, picture pills and rail items, at their original logical-pixel sizes.",
-        _ => "",
-    }
-}
-
-/// A token as written, and what it draws at where that differs.
-fn token_value(e: &kadr_ui::tokens::Entry) -> String {
-    use kadr_ui::tokens::Unit;
-    match e.unit {
-        Unit::Design => format!("{} ({} px)", e.value, at_rem(e.value)),
-        Unit::Px => format!("{} px", e.value),
-        Unit::Alpha => format!("{} ({}%)", e.value, (e.value * 100.).round()),
-        Unit::Lightness if e.value > 0. => format!("+{}", e.value),
-        Unit::Lightness | Unit::Ratio | Unit::Weight => format!("{}", e.value),
-    }
-}
-
-/// A token's cell: a specimen, its name and value, and its role.
-fn cell(name: &str, value: &str, role: &str, thing: impl IntoElement) -> AnyElement {
-    v_flex()
-        .w(px(240.))
-        .gap_1()
-        .child(h_flex().min_h(rems_from_px(32.)).child(thing))
-        .child(Label::new(format!("{name} · {value}")).size(LabelSize::Small))
-        .child(caption(role.to_owned()))
-        .into_any_element()
-}
-
-/// A token drawn the way it's used: a corner, a length, text, an icon, a
-/// colour.
-fn token_cell(group: &str, e: kadr_ui::tokens::Entry, tokens: &kadr_ui::tokens::Tokens, colors: &crate::ui::Colors) -> AnyElement {
-    use kadr_ui::tokens::Unit;
-    let length = |v: f32| -> gpui::AbsoluteLength { if e.unit == Unit::Px { px(v).into() } else { rems_from_px(v).into() } };
-    let tile = || div().flex_none().bg(colors.element_active);
-    let swatch = |c: Hsla| div().w(px(44.)).h(px(28.)).rounded(px(7.)).border_1().border_color(colors.border).bg(c);
-    let v = e.value;
-    let thing = match (group, e.unit) {
-        ("radius", Unit::Ratio) => tile().w(px(64.)).h(px(44.)).rounded(rems_from_px(tokens.radius.surface)).rounded_smoothing(v).into_any_element(),
-        ("radius", _) => tile().w(px(64.)).h(px(44.)).rounded(length(v)).rounded_smoothing(smoothing()).into_any_element(),
-        ("text", _) => v_flex().text_size(rems_from_px(v)).child("Screenshots").child("Снимки экрана").into_any_element(),
-        ("weight", _) => div().font_weight(crate::ui::weight(v)).child("Screenshots · Снимки").into_any_element(),
-        ("icon", _) => Icon::new(IconName::Folder).size(icon_size(e.name)).into_any_element(),
-        ("border", _) => tile().w(px(64.)).h(px(28.)).bg(gpui::transparent_black()).border_color(colors.text).border(length(v)).into_any_element(),
-        (_, Unit::Alpha) => swatch(crate::ui::alpha(colors.text, v)).into_any_element(),
-        ("tone", _) => {
-            let mut c = match e.name {
-                "accent_hover" | "accent_pressed" => colors.text_accent,
-                "stage_dark" | "stage_light" => colors.panel_background,
-                _ => gpui::white(),
-            };
-            c.lightness = match e.name {
-                "accent_hover" | "accent_pressed" => (c.lightness + v).clamp(0., 1.),
-                "stage_dark" | "stage_light" => (c.lightness - v).max(0.),
-                _ => v,
-            };
-            swatch(c).into_any_element()
-        }
-        (_, Unit::Design | Unit::Px) if group == "control" && !e.name.ends_with("width") => tile().w(px(48.)).h(length(v)).rounded(px(3.)).into_any_element(),
-        (_, Unit::Design | Unit::Px) => tile().w(length(v)).h(px(12.)).bg(colors.text_accent).into_any_element(),
-        _ => div().into_any_element(),
-    };
-    cell(e.name, &token_value(&e), e.doc, thing)
-}
-
-/// The `IconSize` a token names.
-fn icon_size(name: &str) -> IconSize {
-    match name {
-        "xsmall" => IconSize::XSmall,
-        "medium" => IconSize::Medium,
-        "tool" => IconSize::Tool,
-        "large" => IconSize::Large,
-        _ => IconSize::Small,
-    }
 }
 
 /// Every `IconName`. `icon_name` matches them all, so a new one stops the
@@ -1204,7 +1063,7 @@ impl Render for Gallery {
             Section::Buttons => self.buttons(cx),
             Section::Controls => self.controls(cx),
             Section::Patterns => self.patterns(window, cx),
-            Section::Sizes => self.sizes(cx),
+            Section::Sizes => Vec::new(),
         };
         kit::root(cx)
             .bg(cx.theme().colors().editor_background)
@@ -1232,16 +1091,29 @@ impl Render for Gallery {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .child(self.render_top(cx))
-                    .child(
+                    .child(self.render_top(width, cx))
+                    .when(self.section == Section::Sizes || self.watch_tokens, |d| d.child(
+                        Button::new("tokens-watch", t(if self.watch_tokens { "gallery.tokens_page" } else { "gallery.watch_components" }))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.watch_tokens = !this.watch_tokens;
+                                this.section = if this.watch_tokens { Section::Buttons } else { Section::Sizes };
+                                cx.notify();
+                            })),
+                    ))
+                    .child(if self.section == Section::Sizes || (self.watch_tokens && width < 1100.) {
+                        self.tokens.clone().into_any_element()
+                    } else {
                         div()
                             .relative()
                             .flex_1()
                             .min_h_0()
                             .child(div().id("gallery-body").size_full().overflow_y_scroll().track_scroll(&self.scroll).child(v_flex().px_6().pt_1().pb_8().gap_6().children(body)))
-                            .child(crate::ui::scrollbar(&self.scroll, &self.grab, cx)),
-                    ),
+                            .child(crate::ui::scrollbar(&self.scroll, &self.grab, cx)).into_any_element()
+                    }),
             )
+            .when(self.watch_tokens && width >= 1100. && self.section != Section::Sizes, |d| d.child(
+                v_flex().w(px(360.)).h_full().flex_none().bg(cx.theme().colors().panel_background).child(self.tokens.clone()),
+            ))
     }
 }
 

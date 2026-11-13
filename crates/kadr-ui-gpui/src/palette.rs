@@ -26,11 +26,24 @@ pub fn refresh(cx: &mut App) {
 }
 
 pub fn built_in(dark: bool) -> Theme {
+    let t = crate::ui::tokens();
     if dark {
-        soft(false, from_hex(0x100F0F), from_hex(0xCECDC3), from_hex(0x1C1B1A), from_hex(0x4385BE), from_hex(0x575653), from_hex(0x878580), from_hex(0xD14D41), from_hex(0xD0A215))
+        let c = t.dark;
+        soft(false, from_hex(c.background as u32), from_hex(c.foreground as u32), from_hex(c.surface as u32), from_hex(c.accent as u32), from_hex(c.muted as u32), from_hex(c.text_muted as u32), from_hex(c.error as u32), from_hex(c.warning as u32))
     } else {
-        soft(true, from_hex(0xFFFFFF), from_hex(0x1C1B1A), from_hex(0xFFFFFF), from_hex(0x3B7DC4), from_hex(0xA8A7A1), from_hex(0x6F6E69), from_hex(0xC03A2E), from_hex(0xAD8301))
+        let c = t.light;
+        soft(true, from_hex(c.background as u32), from_hex(c.foreground as u32), from_hex(c.surface as u32), from_hex(c.accent as u32), from_hex(c.muted as u32), from_hex(c.text_muted as u32), from_hex(c.error as u32), from_hex(c.warning as u32))
     }
+}
+
+/// Replace the live set without losing the gallery's temporary theme choice.
+pub fn restyle(tokens: kadr_ui::tokens::Tokens, cx: &mut App) {
+    use crate::ui::ActiveTheme;
+    if *crate::ui::tokens() == tokens { return; }
+    let dark = !cx.theme().light;
+    kadr_ui::tokens::set(tokens);
+    cx.set_global(built_in(dark));
+    cx.refresh_windows();
 }
 
 /// A soft, Apple-like set: controls and separators are the text colour at a

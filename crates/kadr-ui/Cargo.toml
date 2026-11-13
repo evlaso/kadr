@@ -10,3 +10,4 @@ publish = false
 kadr-core = { path = "../kadr-core" }
 kadr-raster = { path = "../kadr-raster" }
 serde_json.workspace = true
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }

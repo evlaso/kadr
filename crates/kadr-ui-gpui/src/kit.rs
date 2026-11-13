@@ -133,6 +133,8 @@ impl AssetSource for Assets {
 }
 
 pub fn init(cx: &mut App) {
+    // Every UI process applies its saved restyle before the first window.
+    kadr_ui::tokens::set(kadr_ui::tokens::store::load());
     let fonts = vec![
         Cow::Borrowed(include_bytes!("../../../data/fonts/IBMPlexSans-Regular.ttf").as_slice()),
         Cow::Borrowed(include_bytes!("../../../data/fonts/IBMPlexSans-SemiBold.ttf").as_slice()),
