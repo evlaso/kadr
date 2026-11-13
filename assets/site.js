@@ -311,14 +311,22 @@
   }).catch(function () {});
 })();
 
-// The theme switch under a page: dark unless the reader chose light.
+// The theme switch under a page: the system's theme, or the one picked.
 (function () {
-  var button = document.querySelector(".theme");
-  if (!button) return;
-  button.addEventListener("click", function () {
-    var root = document.documentElement;
-    var light = root.dataset.theme !== "light";
-    if (light) root.dataset.theme = "light"; else delete root.dataset.theme;
-    try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+  var buttons = document.querySelectorAll(".theme button");
+  if (!buttons.length) return;
+  var root = document.documentElement;
+  function show() {
+    var now = root.dataset.theme || "system";
+    buttons.forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.themeIs === now); });
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () {
+      var pick = b.dataset.themeIs;
+      if (pick === "system") delete root.dataset.theme; else root.dataset.theme = pick;
+      try { localStorage.setItem("theme", pick); } catch (e) {}
+      show();
+    });
   });
+  show();
 })();

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<script>try { if (localStorage.getItem("theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}</script>
+<script>try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <title>Install · kadr</title>
 <meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
 <link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
@@ -122,7 +122,7 @@ install -m755 target/dist/kadr target/dist/kadr-tray ~/.local/bin/
       <span><a href="../">← Introduction</a></span>
       <span><a href="../capture/">Capture →</a></span>
     </footer>
-    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/install.md">Edit this page</a> · <a href="../install.md">This page as Markdown</a> · <a href="../llms-full.txt" title="The whole manual as plain text, to give to an AI assistant">For language models</a></span> <button class="theme" type="button"><span class="to-light">Light theme</span><span class="to-dark">Dark theme</span></button></div>
+    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/install.md">Edit this page</a> · <a href="../install.md">This page as Markdown</a> · <a href="../llms-full.txt" title="The whole manual as plain text, to give to an AI assistant">For language models</a></span> <span class="theme" role="group" aria-label="Theme"><button type="button" data-theme-is="system">System</button><button type="button" data-theme-is="light">Light</button><button type="button" data-theme-is="dark">Dark</button></span></div>
   </main>
 </div>
 
