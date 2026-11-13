@@ -1,6 +1,6 @@
 # Performance
 
-The budgets of [SPEC.ru.md](SPEC.ru.md), section 2, measured by `just bench`
+The budgets of [SPEC.md](SPEC.md), section 2, measured by `just bench`
 (`scripts/bench.py`). The base it compares against is `docs/perf.json`;
 `just bench --save-base` replaces it.
 

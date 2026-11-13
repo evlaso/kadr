@@ -6,8 +6,6 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 
 **Status:** works on Linux (Wayland, Hyprland). macOS and Windows build and pass their end-to-end test in CI (the editor, typing, the system's menus, the area overlay), but nobody has used them on a real machine yet, and the camera and the studio's click log aren't ported there. The latest pre-release is on [Releases](https://github.com/evlaso/kadr/releases); testers on macOS and Windows are very welcome.
 
-[Читать по-русски](docs/README.ru.md)
-
 ## What it does
 
 - **One bar for everything** (`kadr capture`): area, fullscreen, window, scrolling, self-timer, text recognition and recording behind a single hotkey. After a capture a thumbnail shows in the corner: copy, edit, pin on top, recognize text, drag the file into a chat.
@@ -15,7 +13,7 @@ Screenshots and screen recording for the desktop: capture an area, a window or t
 - **Screen recording** with the microphone, system audio, a camera bubble and a log of clicks and keys; **a studio** that turns the recording into a video: zooms on clicks, cuts, a smooth large cursor, MP4 or GIF.
 - **The rest:** text recognition, a history of captures, `.kadr` project files, settings with search and a `settings.toml` with a comment on every line, a tray icon, updates from kadr itself.
 
-Every screen, key and setting is in the **[manual](https://evlaso.github.io/kadr/)** ([по-русски](https://evlaso.github.io/kadr/ru/)), also in [docs/manual](docs/manual).
+Every screen, key and setting is in the **[manual](https://evlaso.github.io/kadr/)**, also in [docs/manual](docs/manual).
 
 ## Install
 
@@ -96,7 +94,7 @@ kadr install-desktop                               .kadr file type, icon and men
 
 ## Development
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has how to build and test. The manual's source is [docs/manual](docs/manual). Where the project is heading is [docs/SPEC.ru.md](docs/SPEC.ru.md) (in Russian); the measurements are in [docs/perf.md](docs/perf.md), known debts and pitfalls in [docs/traps.md](docs/traps.md), and [CLAUDE.md](CLAUDE.md) is the guide for coding agents.
+[CONTRIBUTING.md](CONTRIBUTING.md) has how to build and test. The manual's source is [docs/manual](docs/manual). Where the project is heading is [docs/SPEC.md](docs/SPEC.md), in what order [docs/ROADMAP.md](docs/ROADMAP.md); the measurements are in [docs/perf.md](docs/perf.md), known debts and pitfalls in [docs/traps.md](docs/traps.md), and [CLAUDE.md](CLAUDE.md) is the guide for coding agents.
 
 ## License
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The dependency rule of docs/SPEC.ru.md section 3: core ← raster ← ui, core ←
+# The dependency rule of docs/SPEC.md section 3: core ← raster ← ui, core ←
 # platform; GPUI only in kadr-ui-gpui, nothing else knows a UI framework.
 # Fails with what broke it.
 set -euo pipefail

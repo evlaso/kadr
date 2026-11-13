@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The budgets of docs/SPEC.ru.md, section 2, measured on Linux (Hyprland).
+"""The budgets of docs/SPEC.md, section 2, measured on Linux (Hyprland).
 
 Writes target/bench.json, prints a table, and fails when a budget is broken;
 warns when a number is more than 15% worse than the base in docs/perf.json.

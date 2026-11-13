@@ -2,8 +2,8 @@
 
 Thanks for looking. kadr is a Cargo workspace in Rust; the UI is drawn with
 [GPUI CE](https://github.com/gpui-ce/gpui-ce). Where the project is heading,
-and why it's laid out the way it is, is in [docs/SPEC.ru.md](docs/SPEC.ru.md)
-(in Russian); [CLAUDE.md](CLAUDE.md) is the same knowledge written for
+and why it's laid out the way it is, is in [docs/SPEC.md](docs/SPEC.md);
+[CLAUDE.md](CLAUDE.md) is the same knowledge written for
 coding agents and is worth a read for people too.
 
 ## Building
@@ -47,11 +47,12 @@ a real pointer, screenshots kept as artifacts.
 - Text in the UI goes through `i18n` by key; add every new string to both
   `data/i18n/en.json` and `ru.json`.
 - Icons are Lucide; fonts are OFL. Nothing GPL.
-- What a person can see or do is in the manual, `docs/manual/{en,ru}`, one
-  page per screen, written in English and translated into Russian: a change to a screen changes its page
-  in the same commit. `crates/kadr-core/tests/manual.rs` (in `just unit`)
-  keeps the two languages in step and the command and settings pages true
-  to the code. `scripts/manual.sh --serve` shows the site (needs Node;
+- What a person can see or do is in the manual, `docs/manual`, one page
+  per screen, in English (kadr's documents are English only; the app
+  itself speaks English and Russian): a change to a screen changes its
+  page in the same commit. `crates/kadr-core/tests/manual.rs` (in
+  `just unit`) keeps the pages' shape and links and the command and
+  settings pages true to the code. `scripts/manual.sh --serve` shows the site (needs Node;
   it's built with [Eleventy](https://www.11ty.dev) from `website`).
 
 ## Commits and pull requests

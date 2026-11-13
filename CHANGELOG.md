@@ -1,6 +1,6 @@
 # Changelog
 
-What changed in each kadr release, for the people who use it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). In Russian: [docs/CHANGELOG.ru.md](docs/CHANGELOG.ru.md).
+What changed in each kadr release, for the people who use it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
