@@ -662,8 +662,8 @@ Check now are the app's `update.rs`. The background mode isn't there yet.
 
 ### 12.4 Changelog
 
-- `CHANGELOG.md` in the Keep a Changelog format, written by hand from the conventional commits since the last release (no generator: the commits say what changed in the code, the changelog what changed for a person)
-  (`feat:`, `fix:`, `perf:`, `ui:`) as a draft, then **edited into the user's language** before
+- `CHANGELOG.md` in the Keep a Changelog format, written by hand, with no generator: the conventional commits
+  since the last release (`feat:`, `fix:`, `perf:`, `ui:`) are the draft, **rewritten in the user's language** before
   the tag: three to seven points "what changed for a person", no crate names and no internal refactorings;
   a screenshot or a GIF for big features. In English only: `CHANGELOG.md`.
 - The GitHub Release body is the version's section of the CHANGELOG (CI cuts it out automatically).
