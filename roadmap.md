@@ -97,7 +97,7 @@ the rare things. A feature counts as done only with dev hooks and a test (§6).
 | Platform edges (§3.10): dialogs, menus, keyboard, input methods | ✅ | ✅ | ✅ | on L kadr draws the menus itself, as the spec says |
 | Several monitors with different DPI | 🟡 | 🟡 | 🟡 |  |
 | Settings: where to save, file name template, format, clipboard, sound, what to do after a capture | 🟡 | 🟡 | 🟡 | no format |
-| Self-update with a What's new screen (§12) | ✅ | 🟡 | 🟡 | Stable and Beta channels, download, signature, rollback; not yet run on M or W |
+| Self-update with a What's new screen (§12) | 🟡 | 🟡 | 🟡 | Stable and Beta channels, download, signature, rollback; no What's new screen yet: the update card links the release page; not yet run on M or W |
 | macOS permissions: a clear first-run request for screen recording and accessibility | — | ⬜ | — |  |
 | Packages: dmg (signed), msi/winget, AUR, Flatpak, Homebrew | 🟡 | 🟡 | 🟡 | L: tar.xz; M: unsigned dmg; W: an installer (Inno Setup, no admin) and a portable .exe, unsigned; no winget |
 
