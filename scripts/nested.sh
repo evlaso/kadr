@@ -117,6 +117,11 @@ VARS
 stop() {
   local dir="${1:?stop needs the nested session folder}"
   [[ $(basename "$dir") == ke-* ]] || { echo "nested.sh: $dir isn't a nested session" >&2; exit 2; }
+  # The wrapper first, and without a say: start-hyprland aborts in its own
+  # SIGTERM handler, which leaves a core dump and a crash notice in the real
+  # session for every nested one stopped. It only watches Hyprland, which
+  # is ended below.
+  [ -f "$dir/hyprland.pid" ] && kill -KILL "$(cat "$dir/hyprland.pid")" 2>/dev/null || true
   # kadr and anything else started in the session, by its runtime folder;
   # not this script or the shell that ran it, which may carry it too.
   local mine=" $$ " q=$$
