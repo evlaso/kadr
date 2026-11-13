@@ -309,7 +309,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
         |_, _, _| {},
         move |bounds, _, window, _| {
             if let Some(frame) = frame.clone() {
-                let _ = window.paint_image(bounds, bounds, px(radius).into(), crate::ui::SMOOTHING, frame, 0, false);
+                let _ = window.paint_image(bounds, bounds, px(radius).into(), crate::ui::smoothing(), frame, 0, false);
             }
         },
     )
@@ -365,7 +365,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
                             .rounded_full()
                             .cursor_pointer()
                             .hover(|d| d.bg(gpui::hsla(0., 0., 1., 0.2)))
-                            .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).rounded_smoothing(crate::ui::SMOOTHING).border_2().border_color(ink))
+                            .child(div().size(px(12.)).rounded(px(6. * next_round as f32)).rounded_smoothing(crate::ui::smoothing()).border_2().border_color(ink))
                             .tip(Tooltip::text(t("camera.shape")))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, _, cx| shape.update(cx, |s, cx| {
@@ -387,7 +387,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
         .h(px(side))
         // A squircle, not a plain rounded square (a circle stays a circle).
         .rounded(px(radius))
-        .rounded_smoothing(crate::ui::SMOOTHING)
+        .rounded_smoothing(crate::ui::smoothing())
         .bg(gpui::black())
         .shadow(kit::shadow())
         .when(interactive, |d| {
@@ -433,7 +433,7 @@ pub fn bubble(state: &gpui::Entity<BubbleState>, interactive: bool, mark: Option
         .top(px(top - EDGE))
         .size(px(side + 2. * EDGE))
         .rounded(px(radius + EDGE))
-        .rounded_smoothing(crate::ui::SMOOTHING)
+        .rounded_smoothing(crate::ui::smoothing())
         .occlude()
         .cursor(cursor)
         .on_mouse_down(MouseButton::Left, move |e: &MouseDownEvent, _, cx| {

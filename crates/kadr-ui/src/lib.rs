@@ -8,6 +8,7 @@ pub mod editor;
 pub mod history;
 pub mod settings;
 pub mod text;
+pub mod tokens;
 
 /// A key as the screens get it, without a UI framework's types: its name
 /// ("a", "escape", "down"), the text it types, and the modifiers held.

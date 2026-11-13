@@ -36,15 +36,15 @@ pub fn built_in(dark: bool) -> Theme {
 /// A soft, Apple-like set: controls and separators are the text colour at a
 /// low opacity over the background, so they stay gentle in light and dark
 /// themes alike; the work area sits a shade apart instead of behind lines.
+/// The opacities and the shade are tokens (`Alpha`, `Tone`): after a new
+/// set, `refresh` mixes the theme again.
 #[allow(clippy::too_many_arguments)]
 fn soft(light: bool, bg: Hsla, fg: Hsla, surface: Hsla, accent: Hsla, muted: Hsla, text_muted: Hsla, red: Hsla, yellow: Hsla) -> Theme {
-    let tint = |a: f32| {
-        let mut c = fg;
-        c.alpha = a;
-        c
-    };
+    let tokens = crate::ui::tokens();
+    let (a, tone) = (tokens.alpha, tokens.tone);
+    let tint = |opacity: f32| crate::ui::alpha(fg, opacity);
     let mut stage = bg;
-    stage.lightness = if light { (bg.lightness - 0.035).max(0.) } else { (bg.lightness - 0.025).max(0.) };
+    stage.lightness = if light { (bg.lightness - tone.stage_light).max(0.) } else { (bg.lightness - tone.stage_dark).max(0.) };
     Theme {
         light,
         colors: Colors {
@@ -53,15 +53,15 @@ fn soft(light: bool, bg: Hsla, fg: Hsla, surface: Hsla, accent: Hsla, muted: Hsl
             title_bar_background: bg,
             status_bar_background: bg,
             elevated_surface_background: surface,
-            border: tint(if light { 0.12 } else { 0.1 }),
-            border_variant: tint(0.07),
-            element_background: tint(0.07),
-            element_hover: tint(0.1),
-            element_active: tint(0.14),
-            element_selected: tint(0.13),
-            ghost_element_hover: tint(0.07),
-            ghost_element_active: tint(0.11),
-            ghost_element_selected: tint(0.11),
+            border: tint(if light { a.edge_light } else { a.edge_dark }),
+            border_variant: tint(a.separator),
+            element_background: tint(a.control),
+            element_hover: tint(a.control_hover),
+            element_active: tint(a.control_pressed),
+            element_selected: tint(a.control_selected),
+            ghost_element_hover: tint(a.ghost_hover),
+            ghost_element_active: tint(a.ghost_pressed),
+            ghost_element_selected: tint(a.ghost_selected),
             text: fg,
             text_muted,
             text_placeholder: muted,

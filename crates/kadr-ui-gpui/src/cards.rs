@@ -29,7 +29,7 @@ const PILL_H: f32 = 26. * kit::SCALE;
 /// How far in the corner buttons sit; as circles of radius
 /// `RADIUS - INSET` they stay concentric with the card's corners.
 const INSET: f32 = 5.;
-/// The card's corners, rounder than a small card can carry `kit::RADIUS`.
+/// The card's corners, rounder than a small card can carry `kit::picture_radius()`.
 const RADIUS: f32 = 17.;
 const CORNER: f32 = 2. * (RADIUS - INSET);
 

@@ -12,7 +12,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui::{App, AssetSource, ClickEvent, Context, FocusHandle, Hsla, KeyDownEvent, ScrollHandle, Window, canvas, div, linear_color_stop, linear_gradient, px, rems};
+use gpui::{App, AssetSource, ClickEvent, Context, FocusHandle, Hsla, KeyDownEvent, ScrollHandle, Window, canvas, div, linear_color_stop, linear_gradient, px};
 use serde_json::{Value, json};
 
 use crate::i18n::{Lang, t};
@@ -20,7 +20,7 @@ use crate::kit;
 use crate::palette;
 use crate::presets::{HasPresets, Presets};
 use crate::settings::Settings;
-use crate::ui::{ButtonLike, Divider, KeyBinding, ProgressBar, SMOOTHING, Switch, Theme, ToggleState, Tooltip, prelude::*, rems_from_px};
+use crate::ui::{ButtonLike, Divider, KeyBinding, ProgressBar, smoothing, Switch, Theme, ToggleState, Tooltip, prelude::*, rems_from_px};
 use kadr_platform::keymap::Command as Keys;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -52,7 +52,7 @@ impl Section {
     /// Its heading, over the section.
     fn title(self) -> &'static str {
         match self {
-            Section::Sizes => "Sizes and radii",
+            Section::Sizes => "Design tokens",
             other => other.name(),
         }
     }
@@ -201,7 +201,7 @@ fn group(title: &str, note: Option<&str>, items: Vec<AnyElement>, cx: &App) -> A
                 .gap_y_4()
                 .p_4()
                 .rounded(rems_from_px(12.))
-                .rounded_smoothing(SMOOTHING)
+                .rounded_smoothing(smoothing())
                 .bg(cx.theme().colors().panel_background)
                 .children(items),
     )
@@ -353,7 +353,7 @@ impl Gallery {
                 .gap_4()
                 .p_4()
                 .rounded(rems_from_px(12.))
-                .rounded_smoothing(SMOOTHING)
+                .rounded_smoothing(smoothing())
                 .bg(theme.colors.panel_background)
                 .border_1()
                 .border_color(theme.colors.border)
@@ -368,7 +368,7 @@ impl Gallery {
         let fixed = vec![
             spec("ui::on(accent): text on the accent", div().px_3().py_1().rounded(px(7.)).bg(theme.colors.text_accent).text_color(crate::ui::on(theme.colors.text_accent)).child(t("common.save"))),
             spec("tip_plate: black, white hairline 14%", crate::ui::tip_plate().h(px(22.)).child("#000000")),
-            spec("ui::TIP_DIM: white 50%", crate::ui::tip_plate().h(px(22.)).child(div().text_color(crate::ui::TIP_DIM).child("Ctrl+S"))),
+            spec("ui::TIP_DIM: white 50%", crate::ui::tip_plate().h(px(22.)).child(div().text_color(crate::ui::tip_dim()).child("Ctrl+S"))),
             spec("Switch knob, slider knob: white", div().size(px(22.)).rounded_full().bg(gpui::white()).border_1().border_color(theme.colors.border)),
         ];
         let annotation = palette::annotation_colors()
@@ -591,7 +591,7 @@ impl Gallery {
             )
             .collect();
         let tips = vec![
-            spec("tip_plate: a tooltip, drawn still", crate::ui::tip_plate().h(px(22.)).gap_1().child(t("common.save")).child(div().text_color(crate::ui::TIP_DIM).child(crate::ui::shortcut(Keys::Save)))),
+            spec("tip_plate: a tooltip, drawn still", crate::ui::tip_plate().h(px(22.)).gap_1().child(t("common.save")).child(div().text_color(crate::ui::tip_dim()).child(crate::ui::shortcut(Keys::Save)))),
             spec("Tooltip::text: point at it", Button::new("tip-text", t("common.copy")).style(ButtonStyle::Filled).tip(Tooltip::text(t("common.show_in_folder")))),
             spec(
                 "Tooltip with a key_binding: point at it",
@@ -680,7 +680,7 @@ impl Gallery {
                     .gap_0p5()
                     .p_3()
                     .rounded(rems_from_px(9.))
-                    .rounded_smoothing(SMOOTHING)
+                    .rounded_smoothing(smoothing())
                     .bg(colors.element_background)
                     .child(Label::new(*name).size(LabelSize::Small))
                     .child(caption(format!("lives in {lives}, not yet a shared component")))
@@ -698,55 +698,146 @@ impl Gallery {
 
     fn sizes(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
+        let tokens = crate::ui::tokens();
         let tone = colors.element_active;
-        let rem_box = |r: f32| div().w(px(64.)).h(px(44.)).rounded(rems_from_px(r)).rounded_smoothing(SMOOTHING).bg(tone);
-        let px_box = |r: f32| div().w(px(64.)).h(px(44.)).rounded(px(r)).rounded_smoothing(SMOOTHING).bg(tone);
-        let radii = vec![
-            spec(format!("tooltip · 6 ({} px)", at_rem(6.)), rem_box(6.)),
-            spec(format!("Button Default · 7 ({} px)", at_rem(7.)), rem_box(7.)),
-            spec(format!("Button Large · 9 ({} px)", at_rem(9.)), rem_box(9.)),
-            spec(format!("elevated surface · 12 ({} px)", at_rem(12.)), rem_box(12.)),
-            spec(format!("kit::WINDOW_RADIUS · {} px", kit::WINDOW_RADIUS), px_box(kit::WINDOW_RADIUS)),
-            spec(format!("kit::RADIUS (thumbnails) · {} px", kit::RADIUS), px_box(kit::RADIUS)),
-            spec("Switch, ProgressBar · full", div().w(px(64.)).h(px(24.)).rounded_full().bg(tone)),
-        ];
-        let height = |h: f32, w: f32| div().w(px(w)).h(rems_from_px(h)).rounded(px(3.)).bg(tone);
-        let heights = vec![
-            spec(format!("ButtonSize::Default · 22 ({} px)", at_rem(22.)), height(22., 48.)),
-            spec(format!("ButtonSize::Large · 32 ({} px)", at_rem(32.)), height(32., 48.)),
-            spec(format!("Switch · 30 × 18 ({} × {} px)", at_rem(30.), at_rem(18.)), div().w(rems_from_px(30.)).h(rems_from_px(18.)).rounded(px(3.)).bg(tone)),
-            spec(format!("ProgressBar · 5 ({} px)", at_rem(5.)), height(5., 48.)),
-        ];
-        let steps = [("0p5", 0.125), ("1", 0.25), ("1p5", 0.375), ("2", 0.5), ("3", 0.75), ("4", 1.), ("5", 1.25), ("6", 1.5)]
+        // Every plain value, group by group, each drawn the way it's used.
+        let mut groups: Vec<AnyElement> = tokens
+            .groups()
             .into_iter()
-            .map(|(name, r)| spec(format!("_{name} · {r}rem · {} px", at_rem(r * 16.)), div().w(rems(r)).h(px(24.)).bg(colors.text_accent)))
+            .map(|(name, entries)| {
+                let cells = entries.into_iter().map(|e| token_cell(name, e, &tokens, &colors)).collect();
+                group(&format!("tokens.{name}"), Some(group_note(name)), cells, cx)
+            })
             .collect();
+        let light = cx.theme().light;
+        let surface = |el: Div| el.w(px(150.)).h(px(70.)).flex().items_center().justify_center();
+        let shadows = tokens
+            .shadow
+            .recipes()
+            .into_iter()
+            .map(|(name, layers, role)| {
+                let thing = match name {
+                    "popover" => surface(div().elevation_2(cx)).child(Label::new(t("common.presets")).size(LabelSize::Small)).into_any_element(),
+                    "floating" => surface(div().elevation_3(cx)).child(Label::new(t("common.presets")).size(LabelSize::Small)).into_any_element(),
+                    "picture" => surface(div().rounded(px(kit::picture_radius())).bg(colors.elevated_surface_background).shadow(kit::shadow())).into_any_element(),
+                    _ => surface(div()).child(div().size(rems_from_px(tokens.control.switch_knob)).rounded_full().bg(gpui::white()).shadow(crate::ui::shadow(layers, light))).into_any_element(),
+                };
+                let recipe: Vec<String> = layers.iter().map(|l| format!("y {} blur {} · {}/{}", l.y, l.blur, l.dark, l.light)).collect();
+                cell(name, &recipe.join(" + "), role, thing)
+            })
+            .collect();
+        groups.push(group("tokens.shadow", Some("Recipes as layers: black, straight down, in px; the opacity in the dark theme / the light one."), shadows, cx));
+
         // The rule as kit says it, and the real Large button in the window's
         // corner: its radius is in rems, so at kadr's REM it isn't 9 px.
         let (outer, inset, inner) = (kit::WINDOW_RADIUS, 4., kit::WINDOW_RADIUS - 4.);
+        let large = tokens.radius.button_large;
         let concentric = vec![
             spec(
                 format!("outer {outer} − inset {inset} = inner {inner} (px)"),
-                div().w(px(120.)).h(px(46.)).p(px(inset)).rounded(px(outer)).rounded_smoothing(SMOOTHING).bg(colors.element_active).child(div().size_full().rounded(px(inner)).rounded_smoothing(SMOOTHING).bg(colors.text_accent)),
+                div().w(px(120.)).h(px(46.)).p(px(inset)).rounded(px(outer)).rounded_smoothing(smoothing()).bg(tone).child(div().size_full().rounded(px(inner)).rounded_smoothing(smoothing()).bg(colors.text_accent)),
             ),
             spec(
-                format!("a real Large button {inset} px inside the window's {outer} px corner: its radius is {} px", at_rem(9.)),
-                div().p(px(inset)).rounded(px(outer)).rounded_smoothing(SMOOTHING).bg(colors.element_active).child(Button::new("concentric-button", t("common.save")).style(ButtonStyle::Accent).size(ButtonSize::Large)),
+                format!("a real Large button {inset} px inside the window's {outer} px corner: its radius is {} px", at_rem(large)),
+                div().p(px(inset)).rounded(px(outer)).rounded_smoothing(smoothing()).bg(tone).child(Button::new("concentric-button", t("common.save")).style(ButtonStyle::Accent).size(ButtonSize::Large)),
             ),
         ];
-        let surface = |el: Div| el.w(px(150.)).h(px(70.)).flex().items_center().justify_center();
-        let surfaces = vec![
-            spec("StyledExt::elevation_2: popovers, floating bars", surface(div().elevation_2(cx)).child(Label::new(t("common.presets")).size(LabelSize::Small))),
-            spec("StyledExt::elevation_3: menus, toasts", surface(div().elevation_3(cx)).child(Label::new(t("common.presets")).size(LabelSize::Small))),
-            spec("kit::shadow: floating pictures", surface(div().rounded(px(kit::RADIUS)).bg(colors.elevated_surface_background).shadow(kit::shadow()))),
-        ];
-        vec![
-            group("Radii", Some("Sizes given at a 16 px base grow with the window's rem (kit::REM = 19); the px in brackets is what's drawn."), radii, cx),
-            group("Control heights", None, heights, cx),
-            group("Spacing steps", Some("GPUI's gap_ / p_ / m_ steps, in rems."), steps, cx),
+        let window = vec![spec(format!("kit::WINDOW_RADIUS · {} px", kit::WINDOW_RADIUS), div().w(px(64.)).h(px(44.)).rounded(px(kit::WINDOW_RADIUS)).rounded_smoothing(smoothing()).bg(tone))];
+        groups.extend([
+            group("The system's", Some("Not tokens: the window's corners follow the system (kadr_platform::style)."), window, cx),
             group("Concentric corners", Some("An inner corner's radius is the outer one less the inset."), concentric, cx),
-            group("Surfaces", None, surfaces, cx),
-        ]
+        ]);
+        groups
+    }
+}
+
+/// What a token group is, over its values.
+fn group_note(name: &str) -> &'static str {
+    match name {
+        "radius" => "Corner radii. Design units grow with the window's rem (kit::REM = 19): the px in brackets is what's drawn.",
+        "spacing" => "The rem-based spacing scale. Screens still use GPUI's shorthands; shared components read their own space roles below.",
+        "space" => "Space inside and between the shared components.",
+        "control" => "The shared controls' sizes.",
+        "text" => "LabelSize: each in English and Russian.",
+        "weight" => "Font weights in use.",
+        "icon" => "IconSize.",
+        "border" => "Border widths, in px.",
+        "alpha" => "Opacities, drawn as the text colour over the panel (how the theme mixes its controls).",
+        "tone" => "Lightness: the accent's states, the work area's shade, which text reads on a colour.",
+        "tooltip" => "The tooltip's measuring and placing, in px.",
+        "scrollbar" => "ui::scrollbar, in px.",
+        "knob" => "ui::paint_knob, in px.",
+        _ => "",
+    }
+}
+
+/// A token as written, and what it draws at where that differs.
+fn token_value(e: &kadr_ui::tokens::Entry) -> String {
+    use kadr_ui::tokens::Unit;
+    match e.unit {
+        Unit::Design => format!("{} ({} px)", e.value, at_rem(e.value)),
+        Unit::Px => format!("{} px", e.value),
+        Unit::Alpha => format!("{} ({}%)", e.value, (e.value * 100.).round()),
+        Unit::Lightness if e.value > 0. => format!("+{}", e.value),
+        Unit::Lightness | Unit::Ratio | Unit::Weight => format!("{}", e.value),
+    }
+}
+
+/// A token's cell: a specimen, its name and value, and its role.
+fn cell(name: &str, value: &str, role: &str, thing: impl IntoElement) -> AnyElement {
+    v_flex()
+        .w(px(240.))
+        .gap_1()
+        .child(h_flex().min_h(rems_from_px(32.)).child(thing))
+        .child(Label::new(format!("{name} · {value}")).size(LabelSize::Small))
+        .child(caption(role.to_owned()))
+        .into_any_element()
+}
+
+/// A token drawn the way it's used: a corner, a length, text, an icon, a
+/// colour.
+fn token_cell(group: &str, e: kadr_ui::tokens::Entry, tokens: &kadr_ui::tokens::Tokens, colors: &crate::ui::Colors) -> AnyElement {
+    use kadr_ui::tokens::Unit;
+    let length = |v: f32| -> gpui::AbsoluteLength { if e.unit == Unit::Px { px(v).into() } else { rems_from_px(v).into() } };
+    let tile = || div().flex_none().bg(colors.element_active);
+    let swatch = |c: Hsla| div().w(px(44.)).h(px(28.)).rounded(px(7.)).border_1().border_color(colors.border).bg(c);
+    let v = e.value;
+    let thing = match (group, e.unit) {
+        ("radius", Unit::Ratio) => tile().w(px(64.)).h(px(44.)).rounded(rems_from_px(tokens.radius.surface)).rounded_smoothing(v).into_any_element(),
+        ("radius", _) => tile().w(px(64.)).h(px(44.)).rounded(length(v)).rounded_smoothing(smoothing()).into_any_element(),
+        ("text", _) => v_flex().text_size(rems_from_px(v)).child("Screenshots").child("Снимки экрана").into_any_element(),
+        ("weight", _) => div().font_weight(crate::ui::weight(v)).child("Screenshots · Снимки").into_any_element(),
+        ("icon", _) => Icon::new(IconName::Folder).size(icon_size(e.name)).into_any_element(),
+        ("border", _) => tile().w(px(64.)).h(px(28.)).bg(gpui::transparent_black()).border_color(colors.text).border(length(v)).into_any_element(),
+        (_, Unit::Alpha) => swatch(crate::ui::alpha(colors.text, v)).into_any_element(),
+        ("tone", _) => {
+            let mut c = match e.name {
+                "accent_hover" | "accent_pressed" => colors.text_accent,
+                "stage_dark" | "stage_light" => colors.panel_background,
+                _ => gpui::white(),
+            };
+            c.lightness = match e.name {
+                "accent_hover" | "accent_pressed" => (c.lightness + v).clamp(0., 1.),
+                "stage_dark" | "stage_light" => (c.lightness - v).max(0.),
+                _ => v,
+            };
+            swatch(c).into_any_element()
+        }
+        (_, Unit::Design | Unit::Px) if group == "control" && !e.name.ends_with("width") => tile().w(px(48.)).h(length(v)).rounded(px(3.)).into_any_element(),
+        (_, Unit::Design | Unit::Px) => tile().w(length(v)).h(px(12.)).bg(colors.text_accent).into_any_element(),
+        _ => div().into_any_element(),
+    };
+    cell(e.name, &token_value(&e), e.doc, thing)
+}
+
+/// The `IconSize` a token names.
+fn icon_size(name: &str) -> IconSize {
+    match name {
+        "xsmall" => IconSize::XSmall,
+        "medium" => IconSize::Medium,
+        "tool" => IconSize::Tool,
+        "large" => IconSize::Large,
+        _ => IconSize::Small,
     }
 }
 

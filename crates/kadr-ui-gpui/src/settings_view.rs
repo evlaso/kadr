@@ -262,7 +262,7 @@ impl SettingsView {
                     .px_2()
                     .gap_1p5()
                     .rounded(px(7.))
-                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .rounded_smoothing(crate::ui::smoothing())
                     .bg(colors.element_background)
                     .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Small).color(Color::Muted))
                     .child(if self.vm.query.is_empty() {
@@ -279,7 +279,7 @@ impl SettingsView {
                     .px_2()
                     .py_1p5()
                     .rounded(crate::ui::rems_from_px(7.))
-                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .rounded_smoothing(crate::ui::smoothing())
                     .cursor_pointer()
                     .when(on, |d| d.bg(accent))
                     .when(!on, |d| d.hover(|d| d.bg(colors.ghost_element_hover)))
@@ -518,7 +518,7 @@ impl SettingsView {
                     .gap_4()
                     .justify_between()
                     .rounded(crate::ui::rems_from_px(12.))
-                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .rounded_smoothing(crate::ui::smoothing())
                     .bg(group_bg)
                     .child(
                         v_flex()
@@ -566,7 +566,7 @@ impl SettingsView {
                     let line = (i + 1 < count).then(|| div().h(px(1.)).bg(line_color).into_any_element());
                     std::iter::once(row).chain(line)
                 });
-                body = body.child(v_flex().px_4().rounded(crate::ui::rems_from_px(12.)).rounded_smoothing(crate::ui::SMOOTHING).bg(group_bg).children(group.collect::<Vec<_>>()));
+                body = body.child(v_flex().px_4().rounded(crate::ui::rems_from_px(12.)).rounded_smoothing(crate::ui::smoothing()).bg(group_bg).children(group.collect::<Vec<_>>()));
             }
         }
         if !found {
@@ -795,7 +795,7 @@ impl SettingsView {
             .h(px(28.))
             .px_2()
             .rounded(px(7.))
-            .rounded_smoothing(crate::ui::SMOOTHING)
+            .rounded_smoothing(crate::ui::smoothing())
             .bg(colors.element_background)
             .border_1()
             .border_color(if self.vm.naming { colors.text_accent } else { gpui::transparent_black() })

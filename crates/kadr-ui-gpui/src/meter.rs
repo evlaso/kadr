@@ -93,7 +93,7 @@ pub fn fill(level: f32, radius: f32, cx: &App) -> Option<Div> {
             .absolute()
             .inset_0()
             .rounded(rems_from_px(radius))
-            .rounded_smoothing(crate::ui::SMOOTHING)
+            .rounded_smoothing(crate::ui::smoothing())
             .bg(gpui::linear_gradient(0., gpui::linear_color_stop(fill, level), gpui::linear_color_stop(clear, level + 0.01))),
     )
 }

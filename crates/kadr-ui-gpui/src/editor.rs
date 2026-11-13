@@ -3069,7 +3069,7 @@ impl Editor {
             .when(!self.windowed, |d| d.rounded_t(px(kit::WINDOW_RADIUS - 1.)))
             // GPUI clips children to rectangles: the bars round their own
             // outer corners to stay inside the window's.
-            .rounded_smoothing(crate::ui::SMOOTHING)
+            .rounded_smoothing(crate::ui::smoothing())
     }
 
     /// The zoom as a dropdown: fit, or a real size.
@@ -3214,7 +3214,7 @@ impl Editor {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .when(!self.windowed, |d| d.rounded_b(px(kit::WINDOW_RADIUS - 1.)))
-            .rounded_smoothing(crate::ui::SMOOTHING)
+            .rounded_smoothing(crate::ui::smoothing())
             .child(
                 h_flex().when(centred, |d| d.flex_1()).min_w_0().child(
                 h_flex()
@@ -3641,7 +3641,7 @@ impl Editor {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .when(!self.windowed, |d| d.rounded_b(px(kit::WINDOW_RADIUS - 1.)))
-            .rounded_smoothing(crate::ui::SMOOTHING)
+            .rounded_smoothing(crate::ui::smoothing())
             .child(
                 h_flex()
                     .flex_1()
@@ -3735,7 +3735,7 @@ impl Editor {
             .items_center()
             .justify_center()
             .rounded(px(9.))
-            .rounded_smoothing(crate::ui::SMOOTHING)
+            .rounded_smoothing(crate::ui::smoothing())
             .bg(field_bg)
             .border_2()
             .border_color(if none_on { accent } else { clear })
@@ -4763,7 +4763,7 @@ impl Render for Editor {
                     .w(px(width))
                     .h(px(self.size.1))
                     .rounded(px(kit::WINDOW_RADIUS))
-                    .rounded_smoothing(crate::ui::SMOOTHING)
+                    .rounded_smoothing(crate::ui::smoothing())
                     .overflow_hidden()
                     .border_1()
                     .border_color(border)

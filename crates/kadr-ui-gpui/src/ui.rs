@@ -3,13 +3,16 @@
 //! so kadr can follow GPUI (or a fork of it) and tune every detail.
 //!
 //! Sizes are in rems built from pixel values at a 16px base, so they grow
-//! with the window's rem size (`kit::REM`).
+//! with the window's rem size (`kit::REM`). Every value they're drawn with
+//! comes from the design tokens (`kadr_ui::tokens`, read by `tokens()`), so
+//! the look changes in one place.
 
 use gpui::{
-    AnyElement, AnyView, App, Background, BorderStyle, Bounds, BoxShadow, ClickEvent, Div, PaintQuad, Pixels, ElementId, Global, Hsla, IntoElement,
+    AbsoluteLength, AnyElement, AnyView, App, Background, BorderStyle, Bounds, BoxShadow, ClickEvent, Div, FontWeight, PaintQuad, Pixels, ElementId, Global, Hsla, IntoElement,
     ParentElement, Point, Rems, RenderOnce, SharedString, Stateful, Styled, StyleRefinement, Window, canvas, div, hsla, point,
     prelude::*, px, relative, rems, svg,
 };
+use kadr_ui::tokens::{ShadowLayer, Tokens};
 use palette::IntoColor;
 use smallvec::SmallVec;
 
@@ -27,6 +30,45 @@ pub mod prelude {
 /// A pixel size as rems at a 16px base.
 pub fn rems_from_px(px: f32) -> Rems {
     rems(px / 16.)
+}
+
+// ---------------------------------------------------------------- tokens
+
+/// The design tokens now (`kadr_ui::tokens`): radii, sizes, alphas and
+/// shadows by role. Cheap, so read them while drawing; sizes in design
+/// units become rems through `rems_from_px`.
+pub fn tokens() -> std::sync::Arc<Tokens> {
+    kadr_ui::tokens::get()
+}
+
+/// Corner smoothing for panels and windows (0 is circular).
+pub fn smoothing() -> f32 {
+    tokens().radius.smoothing
+}
+
+/// A weight token as a font weight.
+pub fn weight(w: f32) -> FontWeight {
+    FontWeight(w)
+}
+
+/// `color` at an alpha token.
+pub fn alpha(mut color: Hsla, a: f32) -> Hsla {
+    color.alpha = a;
+    color
+}
+
+/// A shadow recipe (`tokens().shadow`) as GPUI's, in the theme drawn.
+pub fn shadow(layers: &[ShadowLayer], light: bool) -> Vec<BoxShadow> {
+    layers
+        .iter()
+        .map(|l| BoxShadow {
+            color: hsla(0., 0., 0., if light { l.light } else { l.dark }).into(),
+            offset: point(px(0.), px(l.y)),
+            blur_radius: px(l.blur),
+            spread_radius: px(0.),
+            inset: false,
+        })
+        .collect()
 }
 
 /// A colour as plain 0..1 RGBA, for kadr's own rasterising.
@@ -65,7 +107,7 @@ pub fn fill(bounds: Bounds<Pixels>, color: impl Into<Background>) -> PaintQuad {
 }
 
 pub fn outline(bounds: Bounds<Pixels>, color: impl Into<Background>, style: BorderStyle) -> PaintQuad {
-    PaintQuad::new(bounds).border_widths(px(1.)).border_color(color).border_style(style)
+    PaintQuad::new(bounds).border_widths(px(tokens().border.hairline)).border_color(color).border_style(style)
 }
 
 pub fn quad(bounds: Bounds<Pixels>, radius: Pixels, background: impl Into<Background>, border: Pixels, border_color: impl Into<Background>, style: BorderStyle) -> PaintQuad {
@@ -75,19 +117,19 @@ pub fn quad(bounds: Bounds<Pixels>, radius: Pixels, background: impl Into<Backgr
 /// A selection knob: an accent dot in a white ring with
 /// a soft shadow under it, centred on `c`.
 pub fn paint_knob(window: &mut gpui::Window, c: gpui::Point<Pixels>, accent: Hsla) {
+    let k = tokens().knob;
     let disc = |r: f32, dy: f32| Bounds::new(gpui::point(c.x - px(r), c.y - px(r) + px(dy)), gpui::size(px(2. * r), px(2. * r)));
-    window.paint_quad(fill(disc(11.5, 1.5), hsla(0., 0., 0., 0.1)).corner_radii(px(11.5)));
-    window.paint_quad(fill(disc(10.5, 1.), hsla(0., 0., 0., 0.18)).corner_radii(px(10.5)));
-    window.paint_quad(quad(disc(9.5, 0.), px(9.5), accent, px(2.5), gpui::white(), BorderStyle::Solid));
+    let (outer, inner) = (k.radius + k.outer_grow, k.radius + k.inner_grow);
+    window.paint_quad(fill(disc(outer, k.outer_y), hsla(0., 0., 0., k.outer_alpha)).corner_radii(px(outer)));
+    window.paint_quad(fill(disc(inner, k.inner_y), hsla(0., 0., 0., k.inner_alpha)).corner_radii(px(inner)));
+    window.paint_quad(quad(disc(k.radius, 0.), px(k.radius), accent, px(k.ring), gpui::white(), BorderStyle::Solid));
 }
 
 /// White or near-black, whichever reads on `background`.
 pub fn on(background: Hsla) -> Hsla {
-    if background.lightness > 0.62 { hsla(0., 0., 0.1, 1.) } else { hsla(0., 0., 1., 1.) }
+    let tone = tokens().tone;
+    if background.lightness > tone.on_light_above { hsla(0., 0., tone.ink, 1.) } else { hsla(0., 0., 1., 1.) }
 }
-
-/// Corner smoothing for panels and windows (0 is circular).
-pub const SMOOTHING: f32 = kadr_core::color::SMOOTHING;
 
 pub fn h_flex() -> Div {
     div().flex().flex_row().items_center()
@@ -192,26 +234,32 @@ impl Color {
 pub trait StyledExt: Styled + Sized {
     /// A raised surface: popovers and floating bars.
     fn elevation_2(self, cx: &App) -> Self {
-        let light = cx.theme().light;
-        self.elevated(cx, vec![
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.10 } else { 0.28 }).into(), offset: point(px(0.), px(4.)), blur_radius: px(14.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.06 } else { 0.18 }).into(), offset: point(px(0.), px(1.)), blur_radius: px(3.), spread_radius: px(0.), inset: false },
-        ])
+        self.elevated(cx, shadow(&tokens().shadow.popover, cx.theme().light))
     }
 
     /// The highest surface: toasts, panels over the screen.
     fn elevation_3(self, cx: &App) -> Self {
-        let light = cx.theme().light;
-        self.elevated(cx, vec![
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.14 } else { 0.36 }).into(), offset: point(px(0.), px(10.)), blur_radius: px(30.), spread_radius: px(0.), inset: false },
-            BoxShadow { color: hsla(0., 0., 0., if light { 0.08 } else { 0.22 }).into(), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
-        ])
+        self.elevated(cx, shadow(&tokens().shadow.floating, cx.theme().light))
     }
 
     fn elevated(self, cx: &App, shadow: Vec<BoxShadow>) -> Self {
         let colors = cx.theme().colors();
+        let t = tokens();
         // Soft squircle surfaces with a hairline edge, macOS-style.
-        self.bg(colors.elevated_surface_background).rounded(rems_from_px(12.)).rounded_smoothing(SMOOTHING).border_1().border_color(colors.border).shadow(shadow)
+        self.bg(colors.elevated_surface_background)
+            .rounded(rems_from_px(t.radius.surface))
+            .rounded_smoothing(t.radius.smoothing)
+            .border_hairline()
+            .border_color(colors.border)
+            .shadow(shadow)
+    }
+
+    /// A border of the hairline token's width on every side.
+    fn border_hairline(mut self) -> Self {
+        let width: AbsoluteLength = px(tokens().border.hairline).into();
+        let edges = &mut self.style().border_widths;
+        (edges.top, edges.right, edges.bottom, edges.left) = (Some(width), Some(width), Some(width), Some(width));
+        self
     }
 }
 
@@ -302,12 +350,13 @@ pub enum IconSize {
 
 impl IconSize {
     pub fn rems(self) -> Rems {
+        let icon = tokens().icon;
         rems_from_px(match self {
-            IconSize::XSmall => 12.,
-            IconSize::Small => 14.,
-            IconSize::Medium => 16.,
-            IconSize::Tool => 18.,
-            IconSize::Large => 22.,
+            IconSize::XSmall => icon.xsmall,
+            IconSize::Small => icon.small,
+            IconSize::Medium => icon.medium,
+            IconSize::Tool => icon.tool,
+            IconSize::Large => icon.large,
         })
     }
 }
@@ -357,10 +406,11 @@ pub enum LabelSize {
 
 impl LabelSize {
     pub fn rems(self) -> Rems {
+        let text = tokens().text;
         rems_from_px(match self {
-            LabelSize::Default => 14.,
-            LabelSize::Small => 12.,
-            LabelSize::XSmall => 10.,
+            LabelSize::Default => text.body,
+            LabelSize::Small => text.small,
+            LabelSize::XSmall => text.caption,
         })
     }
 }
@@ -431,8 +481,9 @@ impl RenderOnce for Divider {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         // Groups are told apart by space, not lines: a vertical divider is
         // just air, a horizontal one a barely-there hairline.
+        let hairline = px(tokens().border.hairline);
         let mut line = div().flex_none();
-        line = if self.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full().bg(cx.theme().colors().border_variant) };
+        line = if self.vertical { line.w(hairline).h_full() } else { line.h(hairline).w_full().bg(cx.theme().colors().border_variant) };
         line.style().refine(&self.style);
         line
     }
@@ -517,7 +568,7 @@ impl KeyBinding {
 impl RenderOnce for KeyBinding {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         // Smaller than the label it follows, on the same line.
-        div().flex_none().px_0p5().text_size(LabelSize::Small.rems()).text_color(self.color.unwrap_or_else(|| Color::Muted.color(cx))).child(self.text)
+        div().flex_none().px(rems_from_px(tokens().space.key_hint)).text_size(LabelSize::Small.rems()).text_color(self.color.unwrap_or_else(|| Color::Muted.color(cx))).child(self.text)
     }
 }
 
@@ -559,24 +610,27 @@ pub trait TipExt: gpui::StatefulInteractiveElement + ParentElement + Styled + Si
 impl<E: gpui::StatefulInteractiveElement + ParentElement + Styled + Sized> TipExt for E {}
 
 /// The tooltips' dark plate with small white text, also for other hints
-/// (the picker's keys); dimmer parts take `TIP_DIM`.
+/// (the picker's keys); dimmer parts take `tip_dim()`.
 pub fn tip_plate() -> Div {
+    let t = tokens();
     h_flex()
-        .rounded(rems_from_px(6.))
-        .rounded_smoothing(SMOOTHING)
+        .rounded(rems_from_px(t.radius.tooltip))
+        .rounded_smoothing(t.radius.smoothing)
         .bg(gpui::black())
         // A hairline, like the desktop's window borders, so the black plate
         // still reads on a dark screen.
-        .border_1()
-        .border_color(gpui::hsla(0., 0., 1., 0.14))
+        .border_hairline()
+        .border_color(alpha(gpui::white(), t.alpha.tip_edge))
         .font_family(kit::UI_FONT)
         .text_size(LabelSize::XSmall.rems())
         .text_color(gpui::white())
-        .px(px(TOOLTIP_PAD))
+        .px(px(t.tooltip.pad_x))
 }
 
 /// Shortcuts and other secondary words on a `tip_plate`.
-pub const TIP_DIM: Hsla = gpui::hsla(0., 0., 1., 0.5);
+pub fn tip_dim() -> Hsla {
+    alpha(gpui::white(), tokens().alpha.tip_dim)
+}
 
 /// A floating hint: a few words, maybe a shortcut.
 pub struct Tooltip {
@@ -608,6 +662,8 @@ impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         // A few white words on a dark plate, centred under the element it
         // belongs to (above it near the bottom of the window), like macOS's.
+        let tip = tokens().tooltip;
+        let hairline = tokens().border.hairline;
         let size = LabelSize::XSmall.rems().to_pixels(window.rem_size());
         let font = gpui::font(kit::UI_FONT);
         let width_of = |text: &str| {
@@ -615,9 +671,9 @@ impl Render for Tooltip {
             f32::from(window.text_system().layout_line(text, size, &[run]).width)
         };
         let keys_text = self.key_binding.as_ref().map(|k| k.text.clone());
-        let keys = keys_text.as_ref().map_or(0., |k| width_of(k) + 8.);
-        let width = (width_of(&self.title) + keys).min(TOOLTIP_MAX) + 2. * TOOLTIP_PAD + 2.;
-        let height = (f32::from(size) * 1.6).round() + 4.;
+        let keys = keys_text.as_ref().map_or(0., |k| width_of(k) + tip.keys_room);
+        let width = (width_of(&self.title) + keys).min(tip.max_width) + 2. * tip.pad_x + 2. * hairline;
+        let height = (f32::from(size) * tip.line_height).round() + tip.pad_y;
         let window_id = window.window_handle().window_id();
         let (mouse, anchor) = *self.placed.get_or_insert_with(|| {
             let mouse = window.mouse_position();
@@ -634,10 +690,11 @@ impl Render for Tooltip {
         // Where it should be: the element's middle, clear of it.
         let (centre, top, bottom) = match anchor {
             Some(b) => (f32::from(b.center().x), f32::from(b.top()), f32::from(b.bottom())),
-            None => (mx, my - 4., my + 14.),
+            None => (mx, my - tip.above_pointer, my + tip.below_pointer),
         };
-        let x = (centre - width / 2.).clamp(4., (rw - width - 4.).max(4.));
-        let y = if bottom + TOOLTIP_GAP + height <= rh - 4. { bottom + TOOLTIP_GAP } else { (top - TOOLTIP_GAP - height).max(4.) };
+        let edge = tip.margin;
+        let x = (centre - width / 2.).clamp(edge, (rw - width - edge).max(edge));
+        let y = if bottom + tip.gap + height <= rh - edge { bottom + tip.gap } else { (top - tip.gap - height).max(edge) };
         div().w(px(width)).h(px(height)).child(
             tip_plate()
                 .relative()
@@ -646,20 +703,13 @@ impl Render for Tooltip {
                 .w(px(width))
                 .h(px(height))
                 .justify_center()
-                .gap_1()
-                .child(div().max_w(px(TOOLTIP_MAX)).truncate().child(self.title.clone()))
+                .gap(rems_from_px(tip.keys_gap))
+                .child(div().max_w(px(tip.max_width)).truncate().child(self.title.clone()))
                 // The shortcut, dimmer, in the same small size.
-                .children(keys_text.map(|keys| div().flex_none().text_color(TIP_DIM).child(keys))),
+                .children(keys_text.map(|keys| div().flex_none().text_color(tip_dim()).child(keys))),
         )
     }
 }
-
-/// The widest a tooltip's text gets before it wraps, and its side padding.
-const TOOLTIP_MAX: f32 = 240.;
-const TOOLTIP_PAD: f32 = 6.;
-
-/// The gap between a tooltip and its element.
-const TOOLTIP_GAP: f32 = 6.;
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;
@@ -687,17 +737,24 @@ pub enum ButtonSize {
 }
 
 impl ButtonSize {
-    fn height(self) -> Rems {
+    fn height(self, t: &Tokens) -> Rems {
         rems_from_px(match self {
-            ButtonSize::Large => 32.,
-            ButtonSize::Default => 22.,
+            ButtonSize::Large => t.control.button_large,
+            ButtonSize::Default => t.control.button,
         })
     }
 
-    fn padding(self) -> Rems {
+    fn padding(self, t: &Tokens) -> Rems {
         rems_from_px(match self {
-            ButtonSize::Large => 8.,
-            ButtonSize::Default => 4.,
+            ButtonSize::Large => t.space.button_pad_large,
+            ButtonSize::Default => t.space.button_pad,
+        })
+    }
+
+    fn radius(self, t: &Tokens) -> Rems {
+        rems_from_px(match self {
+            ButtonSize::Large => t.radius.button_large,
+            ButtonSize::Default => t.radius.button,
         })
     }
 }
@@ -807,6 +864,7 @@ impl ParentElement for ButtonLike {
 impl RenderOnce for ButtonLike {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
+        let t = tokens();
         let clear = gpui::transparent_black();
         let accent = |a: f32| {
             let mut c = colors.text_accent;
@@ -814,26 +872,26 @@ impl RenderOnce for ButtonLike {
             c
         };
         let (rest, hover, active) = match self.style {
-            ButtonStyle::Accent => (accent(0.), accent(0.05), accent(-0.05)),
+            ButtonStyle::Accent => (accent(0.), accent(t.tone.accent_hover), accent(t.tone.accent_pressed)),
             ButtonStyle::Filled => (if self.selected { colors.element_selected } else { colors.element_background }, colors.element_hover, colors.element_active),
             ButtonStyle::Subtle | ButtonStyle::Outlined => {
                 (if self.selected { colors.ghost_element_selected } else { clear }, colors.ghost_element_hover, colors.ghost_element_active)
             }
         };
-        let height = self.size.height();
+        let height = self.size.height(&t);
         let probe = crate::dev::on().then(|| crate::dev::probe(&self.id, self.dev.0, self.dev.1.to_string(), self.disabled, self.selected));
         let button: Stateful<Div> = h_flex()
             .id(self.id)
             .relative()
             .flex_none()
             .justify_center()
-            .gap(rems_from_px(4.))
+            .gap(rems_from_px(t.space.button_gap))
             .h(height)
-            .rounded(rems_from_px(if self.size == ButtonSize::Large { 9. } else { 7. }))
-            .rounded_smoothing(SMOOTHING)
+            .rounded(self.size.radius(&t))
+            .rounded_smoothing(t.radius.smoothing)
             .bg(rest)
-            .when(self.style == ButtonStyle::Outlined, |b| b.border_1().border_color(colors.border_variant))
-            .map(|b| if self.square { b.w(height) } else { b.px(self.size.padding()) })
+            .when(self.style == ButtonStyle::Outlined, |b| b.border_hairline().border_color(colors.border_variant))
+            .map(|b| if self.square { b.w(height) } else { b.px(self.size.padding(&t)) })
             .when(self.full_width, |b| b.flex_1().min_w_0())
             .when(!self.disabled, |b| {
                 b.cursor_pointer().hover(|s| s.bg(hover)).active(|s| s.bg(active))
@@ -939,10 +997,7 @@ impl RenderOnce for Button {
             _ => self.color,
         };
         let size = self.label_size;
-        let hint = |mut c: Hsla| {
-            c.alpha = 0.7;
-            c
-        };
+        let hint = |c: Hsla| alpha(c, tokens().alpha.hint_on_accent);
         self.base
             .children(self.start_icon.map(|icon| if accent { icon.color(Color::Custom(on_accent)) } else { icon }))
             .child(Label::new(self.label).size(size).color(color))
@@ -1058,6 +1113,7 @@ impl Switch {
 impl RenderOnce for Switch {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = cx.theme().colors();
+        let t = tokens();
         let on = self.state == ToggleState::Selected;
         let track = if on { colors.text_accent } else { colors.element_active };
         let next = if on { ToggleState::Unselected } else { ToggleState::Selected };
@@ -1066,21 +1122,15 @@ impl RenderOnce for Switch {
         h_flex()
             .id(self.id)
             .flex_none()
-            .w(rems_from_px(30.))
-            .h(rems_from_px(18.))
-            .p(px(2.))
+            .w(rems_from_px(t.control.switch_width))
+            .h(rems_from_px(t.control.switch_height))
+            .p(px(t.control.switch_inset))
             .rounded_full()
             .bg(track)
             .when(on, |s| s.justify_end())
-            .when(self.disabled, |s| s.opacity(0.45).cursor_not_allowed())
+            .when(self.disabled, |s| s.opacity(t.alpha.disabled).cursor_not_allowed())
             .when(!self.disabled, |s| s.cursor_pointer())
-            .child(div().size(rems_from_px(14.)).rounded_full().bg(gpui::white()).shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.25).into(),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(2.),
-                spread_radius: px(0.),
-                inset: false,
-            }]))
+            .child(div().size(rems_from_px(t.control.switch_knob)).rounded_full().bg(gpui::white()).shadow(shadow(&t.shadow.switch_knob, cx.theme().light)))
             .children(probe)
             .when_some(self.on_click.filter(|_| !self.disabled), |s, on_click| {
                 s.on_click(move |_, window, cx| {
@@ -1111,7 +1161,7 @@ impl RenderOnce for ProgressBar {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         div()
             .w_full()
-            .h(rems_from_px(5.))
+            .h(rems_from_px(tokens().control.progress))
             .rounded_full()
             .bg(self.track)
             .child(div().h_full().w(relative(self.fraction)).rounded_full().bg(self.fill))
@@ -1141,22 +1191,23 @@ mod tests {
 pub fn scrollbar(handle: &gpui::ScrollHandle, grab: &std::rc::Rc<std::cell::Cell<Option<f32>>>, cx: &App) -> impl IntoElement {
     let (handle, grab) = (handle.clone(), grab.clone());
     let mut color = cx.theme().colors.text;
+    let (bar, a) = (tokens().scrollbar, tokens().alpha);
     gpui::canvas(
         |_, _, _| {},
         move |_, _, window, _| {
             let view = handle.bounds();
             let max = f32::from(handle.max_offset().y);
             let h = f32::from(view.size.height);
-            if max < 1. || h < 40. {
+            if max < 1. || h < bar.min_pane {
                 return;
             }
-            let thumb_h = (h * h / (h + max)).max(32.);
+            let thumb_h = (h * h / (h + max)).max(bar.min_thumb);
             let travel = h - thumb_h;
             let top = f32::from(view.top()) + travel * (-f32::from(handle.offset().y) / max).clamp(0., 1.);
-            let track_x = f32::from(view.right()) - 12.;
-            color.alpha = if grab.get().is_some() { 0.5 } else { 0.28 };
-            let thumb = Bounds::new(point(px(f32::from(view.right()) - 8.), px(top + 3.)), gpui::size(px(5.), px(thumb_h - 6.)));
-            window.paint_quad(fill(thumb, color).corner_radii(px(2.5)));
+            let track_x = f32::from(view.right()) - bar.reach;
+            color.alpha = if grab.get().is_some() { a.scrollbar_grabbed } else { a.scrollbar };
+            let thumb = Bounds::new(point(px(f32::from(view.right()) - bar.inset), px(top + bar.inset_y)), gpui::size(px(bar.width), px(thumb_h - 2. * bar.inset_y)));
+            window.paint_quad(fill(thumb, color).corner_radii(px(bar.radius)));
 
             let scroll_to = {
                 let handle = handle.clone();

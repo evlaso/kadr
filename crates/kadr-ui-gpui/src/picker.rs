@@ -650,7 +650,7 @@ impl Render for Picker {
             div().absolute().bottom(px(28. * kit::SCALE)).left_0().right_0().flex().justify_center().child(
                 // Styled like the tooltips.
                 crate::ui::tip_plate().py(crate::ui::rems_from_px(4.)).gap_3().children(
-                    keys.into_iter().map(|(key, what)| div().flex().gap_1().child(div().text_color(crate::ui::TIP_DIM).child(key)).child(what)),
+                    keys.into_iter().map(|(key, what)| div().flex().gap_1().child(div().text_color(crate::ui::tip_dim()).child(key)).child(what)),
                 ),
             )
         });

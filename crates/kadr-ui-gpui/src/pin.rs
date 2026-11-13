@@ -141,11 +141,11 @@ impl Render for Pin {
                 .top(self.pos.y)
                 .w(px(w))
                 .h(px(h))
-                .rounded(px(kit::RADIUS))
+                .rounded(px(kit::picture_radius()))
                 .overflow_hidden()
                 .shadow(kit::shadow())
                 .opacity(self.opacity)
-                .child(img(self.image.clone()).size_full().rounded(px(kit::RADIUS)));
+                .child(img(self.image.clone()).size_full().rounded(px(kit::picture_radius())));
             return kit::root(cx).track_focus(&self.focus).on_key_down(cx.listener(Self::key_down)).child(picture).child(handle);
         }
         let percent = (self.opacity < 1.).then(|| {
@@ -169,11 +169,11 @@ impl Render for Pin {
             .top(self.pos.y)
             .w(px(w))
             .h(px(h))
-            .rounded(px(kit::RADIUS))
+            .rounded(px(kit::picture_radius()))
             .overflow_hidden()
             .shadow(kit::shadow())
             .cursor_grab()
-            .child(img(self.image.clone()).size_full().rounded(px(kit::RADIUS)).opacity(self.opacity))
+            .child(img(self.image.clone()).size_full().rounded(px(kit::picture_radius())).opacity(self.opacity))
             .child(
                 h_flex().gap_1().absolute().top_1p5().left_1p5().opacity(0.).group_hover("pin", |s| s.opacity(1.)).child(
                     pill("close", Icon::new(IconName::Close))

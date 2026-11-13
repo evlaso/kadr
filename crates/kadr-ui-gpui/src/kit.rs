@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, AssetSource, Bounds, BoxShadow, Div, Global, Pixels, Render, SharedString, Window,
     WindowBounds, WindowHandle, WindowOptions, canvas, div,
-    hsla, point, prelude::*, px, size,
+    point, prelude::*, px, size,
 };
 use crate::ui::{ActiveTheme, KeyBinding, LabelSize};
 
@@ -146,19 +146,20 @@ pub fn init(cx: &mut App) {
     cx.set_global(Busy::default());
 }
 
-/// Corner radius of thumbnails and pinned pictures.
-pub const RADIUS: f32 = 20.;
+/// Corner radius of pinned pictures (`tokens().radius.picture`, in
+/// pixels).
+pub fn picture_radius() -> f32 {
+    crate::ui::tokens().radius.picture
+}
 /// Corners of kadr's windows: the system's (kadr's own Hyprland rule on
 /// Linux, 13, where a large button of radius 9 inset by 4 sits concentric).
 pub const WINDOW_RADIUS: f32 = kadr_platform::style::current().window_radius;
 
 /// Soft two-layer drop shadow for floating pictures: a wide ambient blur
 /// plus a tighter contact shadow.
+/// The same in both themes (`tokens().shadow.picture`).
 pub fn shadow() -> Vec<BoxShadow> {
-    vec![
-        BoxShadow { color: hsla(0., 0., 0., 0.38).into(), offset: point(px(0.), px(8.)), blur_radius: px(22.), spread_radius: px(0.), inset: false },
-        BoxShadow { color: hsla(0., 0., 0., 0.22).into(), offset: point(px(0.), px(2.)), blur_radius: px(6.), spread_radius: px(0.), inset: false },
-    ]
+    crate::ui::shadow(&crate::ui::tokens().shadow.picture, false)
 }
 
 /// A key hint, written the system's way, e.g. `keys("enter")`.
@@ -168,7 +169,7 @@ pub fn keys(source: &str) -> KeyBinding {
 
 /// Root of every overlay: the UI font and text color.
 pub fn root(cx: &App) -> Div {
-    div().size_full().font_family(UI_FONT).text_size(LabelSize::Default.rems()).text_color(cx.theme().colors().text)
+    div().size_full().font_family(UI_FONT).font_weight(crate::ui::weight(crate::ui::tokens().weight.regular)).text_size(LabelSize::Default.rems()).text_color(cx.theme().colors().text)
 }
 
 /// One end of a window's top bar: room for the system's controls at the
