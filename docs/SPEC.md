@@ -9,6 +9,10 @@ gives no gain on Linux, Tauri loses twice over on memory and start-up, and GPUI 
 desktop-e2e on macOS and Windows (on Windows, on WARP with no graphics card). The split into crates
 stays as insurance: if GPUI CE stops being developed, only `kadr-ui-gpui` is rewritten.
 
+Where things stand: phases 0 and 1 (section 9) are done, phase 2's spike is over, and phase 3 won't happen
+unless the question comes up again. Where this document describes a target the code hasn't reached, a
+"Today" note says what there is now.
+
 ## 0. Project identifiers
 
 | What | Value |
@@ -63,25 +67,31 @@ kadr/
   Cargo.toml              # workspace
   crates/
     kadr-core/            # data model and logic, 0 dependencies on the OS and the UI
-    kadr-raster/          # annotation rasteriser: tiny-skia, resvg, ab_glyph
-    kadr-platform/        # trait Platform + linux/macos/windows
-    kadr-media/           # ffmpeg/libplacebo/gpu-screen-recorder, the studio's model
-    kadr-ocr/             # tesseract
-    kadr-ipc/             # the protocol of the single instance and the dev hooks
+    kadr-raster/          # annotation rasteriser: tiny-skia, ab_glyph
+    kadr-platform/        # everything OS-specific: linux/macos/windows + desktop.rs; the single-instance socket (ipc)
+    kadr-media/           # recordings and the studio without a UI: the edit, the export's ffmpeg graph, Job
     kadr-tray/            # daemon: tray + global hotkeys, no UI framework
-    kadr-overlay/         # area picker overlay: winit + softbuffer (see 3.8)
-    kadr-ui/              # trait Shell + shared view-models, no framework
-    kadr-ui-gpui/         # Shell implemented on GPUI CE, the only shell
-    kadr-mcp/             # MCP server over kadr-ipc (section 11)
+    kadr-overlay/         # area picker overlay, drawn on the CPU (see 3.8)
+    kadr-ui/              # screens as state (view-models), design tokens, no framework
+    kadr-ui-gpui/         # the UI on GPUI CE, the only crate that names GPUI
+    kadr-testkit/         # tools for the e2e tests: kadr-pointer, kadr-shot
+    kadr-mcp/             # planned: MCP server (section 11)
   src/main.rs             # the `kadr` binary: CLI
-  tests/                  # integration and golden
-  scripts/                # bench, e2e, headless-compositor
-  docs/                   # SPEC.md (this file), perf.md, traps.md
+  tests/                  # e2e (tests/e2e.rs, tests/e2e/hypr.lua) and golden cases
+  scripts/                # bench, the nested session, desktop e2e, release packaging, the manual, check-deps
+  docs/                   # SPEC.md (this file), ROADMAP.md, perf.md, traps.md, manual/
+  data/                   # i18n, icons, fonts, cursors, the Hyprland hook (hypr/kadr.lua), app icons
+  vendor/                 # GPUI CE's Linux platform crate, patched (vendor/README.md)
+  website/                # the manual's site (12.5)
 ```
 
-The dependency rule (checked by `cargo deny` / `scripts/check-deps.sh`):
-`core ← raster, media, ocr, ipc ← platform ← ui ← ui-*`. An arrow backwards is forbidden.
-`gpui`, `tauri`, `iced` and the like appear only in `kadr-ui-*` and in the binary's `Cargo.toml`.
+There are no `kadr-ocr` and `kadr-ipc` crates: text recognition (tesseract) is the app's (`kadr-ui-gpui`'s `ocr.rs`),
+the socket is `kadr_platform::ipc` and the command line `kadr_core::cli` (3.5).
+
+The dependency rule (checked by `scripts/check-deps.sh`, `just deps`): `core ← raster ← ui`, `core ← platform`,
+`core, raster ← media, overlay`, `core, platform ← tray`; `kadr-ui-gpui` sits on top of them all, and the binary uses
+`core`, `platform`, `tray` and `ui-gpui`. An arrow backwards is forbidden.
+`gpui`, `tauri`, `iced` and the like appear only in `kadr-ui-*`; the script checks the dependencies and the code.
 
 ### 3.1 `kadr-core`
 
@@ -97,10 +107,16 @@ The dependency rule (checked by `cargo deny` / `scripts/check-deps.sh`):
 - `i18n`: keys, `t()`/`tr!()`, a test that `en.json`/`ru.json` have the same keys and slots.
 - `storage`: paths (cache, config, data), file naming, the history of shots (an index).
 
+Today: `kadr-core` has `document` (the shape kinds are `Arrow`, `Rect`, `Ellipse`, `Line`, `Pen`, `Marker`, `Text`,
+`Counter`, `Cursor`, `Blur` (pixelate, blur or a black box), `Spotlight`, `Picture`; the crop is the document's own,
+not a shape), `color`, `project` (the drawing as `project.json`, no version field yet), `bundle`, `settings`, `i18n`,
+`storage`, `dirs`, `hotkeys`, `cli` and `update`. Undo is `kadr_ui::history`; the saved looks are the app's (`presets.rs`)
+and the studio's (`kadr_media::studio`); `geometry` isn't a module of its own yet.
+
 ### 3.2 `kadr-raster`
 
 The only way to get a picture from a `Document`:
-`render(doc: &Document, base: &RgbaImage, opts: RenderOpts) -> RgbaImage`.
+`render(base: &RgbaImage, doc: &Doc, frame: &Frame) -> Option<RgbaImage>` (and `render_png`, `render_as` for a format).
 
 - Deterministic: fixed fonts (bundled IBM Plex), no system fonts, no time.
 - The editor uses the same code for the canvas preview and for export: they can't differ, by construction.
@@ -132,10 +148,17 @@ pub trait Platform: Send + Sync {
 - `windows`: Windows.Graphics.Capture through the `windows` crate (fallback `xcap`).
 - **Cursors in the studio** (`CursorShapes`): on every OS the system's own are taken while recording: Linux from the
   user's theme (XCursor), macOS through `NSCursor`, Windows through `GetCursorInfo`/`DrawIconEx`. The repository
-  holds only kadr's own fallback set `data/cursors/*.svg` (kadr's original drawings), for systems with no
-  theme and for the golden tests. Other people's cursor sets aren't bundled: their licences (GPL) and their design.
+  holds only one fallback set, `data/cursors/*.png`: the Adwaita cursors (GNOME, CC BY-SA 3.0, unchanged, hotspots
+  in `kadr_raster::cursors::BUNDLED`), for systems with no theme and for the golden tests. GPL cursor sets and
+  other systems' own pictures aren't bundled.
 - Everything that doesn't depend on the OS but depends on "the desktop" (arboard, notify-rust, trash) is in `desktop.rs`.
 - For tests: `FakePlatform` with given monitors/windows and capture from PNG fixtures.
+
+Today there's no `Platform` trait and no `FakePlatform`: each OS has a module with the same free functions
+(`linux.rs`, `macos.rs`, `windows.rs`, picked at build time; `desktop.rs` shared by macOS and Windows, with
+screenshots through `xcap`), beside `dialog`, `keymap`, `menu`, `record` (the recorders), `style`, `update` and `ipc`.
+Linux takes the screen through `grim` and a window by itself through ext-image-copy-capture (`toplevel.rs`);
+there's no `hyprland` feature.
 
 ### 3.4 `kadr-media`
 
@@ -146,13 +169,22 @@ pub trait Platform: Send + Sync {
   as strings; the processes themselves are behind a `Runner` trait, with a `FakeRunner` in tests.
 - libplacebo's invariants (whole, even crops) live in the types (`EvenSize`), not in comments.
 
+Today: `kadr-media` has the edit (`studio::Project`, `Camera`, `layout`), the export's ffmpeg graph, a recording's log
+(`track::Track`), the camera picture's look (`camera`) and ffmpeg with progress (`job::Job`). The recorders
+(gpu-screen-recorder on Linux, ScreenCaptureKit on macOS, Windows.Graphics.Capture on Windows) are
+`kadr_platform::record`. There's no `Runner` trait and no `EvenSize` yet.
+
 ### 3.5 `kadr-ipc`
 
-- One socket (Unix socket / named pipe), JSON lines. The first process is the server; later calls to `kadr …`
-  pass their arguments on and exit.
-- The public commands are the CLI: `capture {area|window|screen|all}`, `record …`, `edit <png>`, `studio <mp4>`,
-  `open <png>`, `settings`, `history`, `pin <png>`, `ocr <png>`, `tray`, `install-desktop`.
-- **Dev hooks** (only with `--features dev` or `KADR_DEV=1`), section 6.3.
+There's no such crate: the socket is `kadr_platform::ipc`, the command line is parsed by `kadr_core::cli`, and the
+hooks are `kadr-ui-gpui`'s `dev.rs`.
+
+- One socket (a Unix socket; on Windows, a localhost port), JSON lines: a call sends its arguments as one JSON array.
+  The first process is the server; later calls to `kadr …` pass their arguments on and exit.
+- The public commands are the CLI (`kadr --help`, `cli::USAGE`): `capture`, `shot …`, `record …`, `edit <image>`,
+  `studio <video>`, `open <file>`, `pin <file>`, `trim <video>`, `gif <video>`, `text [image]`, `history`, `settings`,
+  `update`, `tray`, `dev …`, `install-desktop`.
+- **Dev hooks** (only with `KADR_DEV=1`; a `--features dev` build adds `dev mem`'s list of allocations), section 6.3.
 
 ### 3.6 `kadr-tray`
 
@@ -161,7 +193,10 @@ pub trait Platform: Send + Sync {
 - On a hotkey: if the main process is alive, an IPC command; otherwise, spawn `kadr <cmd>`.
   It writes the mark `hotkey_at=<monotonic ms>` to its log for the latency bench.
 - Whether it keeps the main process "warm" is a setting (`keep_warm: bool`, off by default on Linux,
-  on for macOS/Windows if the cold start doesn't fit the budget).
+  on for macOS/Windows if the cold start doesn't fit the budget). Today it's on by default on macOS only.
+- Today: the binary is `kadr-tray` (`kadr tray` too, for old autostart entries). The icon is `ksni` on Linux and
+  `tray-icon` elsewhere; the global hotkeys (`global-hotkey`) are on macOS and Windows, and on Linux the
+  compositor's bindings call `kadr`.
 
 ### 3.7 `kadr-ui` (no framework)
 
@@ -184,9 +219,20 @@ pub trait Shell {
 - The theme and palette (`Sumi Dark` / light), sizes (`REM`, `SCALE`), icons (Lucide, bundled) are here,
   as data. Drawing the components is in `kadr-ui-*`.
 
+Today there's no `Shell` trait, and the view-models are `EditorVm` (with undo, `history`, which keeps changes,
+not copies), `SettingsVm` and `CardsVm<T>`; there's no `StudioVm` yet. Keys come in as `kadr_ui::Key`. Beside
+them, the components' logic without a framework: `text::Field` (a typed text: caret, selection, the input method's
+composing text), `popover` (placement and dismissal), `controls` (slider mapping and stepping). The shared values
+are `kadr_ui::tokens`: sizes, radii, spacing, type, alphas, tones, shadows, base colours and the shared components'
+metrics, each with its unit, bounds and drag step; `tokens::store` reads and saves a restyle (`tokens.toml` beside
+`settings.toml`, only the differences from the defaults). The palette, `REM`/`SCALE` and the icons are still
+the app's (`palette.rs`, `kit.rs`).
+
 ### 3.8 `kadr-overlay`
 
-The area picker overlay is a separate crate on `winit` + `softbuffer` (CPU rendering, no GPU context):
+The area picker overlay is a separate crate drawn on the CPU (tiny-skia, no GPU context): on Wayland a
+layer-shell surface through `smithay-client-toolkit`, on a thread of kadr; on macOS and Windows a window
+through `winit` + `softbuffer`, in the `kadr-overlay` program:
 the dimming, the frame, the sizes, the magnifier, snapping to windows, key hints. The reasons:
 
 - latency: no GPU/webview start-up, the window and its first frame in tens of milliseconds;
@@ -196,12 +242,22 @@ the dimming, the frame, the sizes, the magnifier, snapping to windows, key hints
 On Wayland, a `layer-shell` over the whole monitor + an input region for click-through; on macOS, an `NSPanel`
 at the `screenSaver` level that doesn't activate; on Windows, a layered topmost window. If during the spike
 a candidate framework turns out to draw the overlay no worse by the budget, the crate stays as a fallback.
+Outcome: kadr stayed on GPUI CE, `kadr-overlay` is the picker, and GPUI's own picker is the fallback.
 
 ### 3.9 `kadr-ui-gpui`
 
 The implementation of `Shell`. Only drawing, events, windows. No business logic.
 The rule "not a single gpui type outside this crate" stays in force and is checked by `scripts/check-deps.sh`:
 it's the insurance in case GPUI CE stops being developed.
+
+With no `Shell` trait today, the crate is the app's UI as it is: every screen, its windows and events. Its
+components are kadr's own (Zed's GPL `ui`/`theme` crates aren't used): `ui.rs` (buttons, labels, icons, switches,
+tooltips, key hints, the theme), `ui::text_field` (single-line fields over `kadr_ui::text::Field`, through GPUI's
+input handler), `ui::popover` (elevated panels, menu rows, dropdowns) and `ui::controls` (option chips,
+checkboxes, sliders, swatches, the backdrop picker). They read their sizes from `kadr_ui::tokens`.
+The component gallery (`kadr gallery`, left out of `--help`) shows every shared component in each variant
+and state, drawn by the real code, with the theme and language switchable for the run; its Sizes page edits
+the tokens live, restyling every open window, and saves a restyle to `tokens.toml`.
 
 ### 3.10 Platform edges: feeling native without native widgets
 
@@ -235,25 +291,33 @@ comes from the edges, where the app meets the system. These are requirements, no
 [ffmpeg | gpu-screen-recorder | tesseract] — separate processes, a Job with progress
 ```
 
-- Logs: `tracing` to the file `cache_dir()/kadr.log` + `--log-json` for the benches.
+- Logs: `tracing` to the file `cache_dir()/kadr.log` + `--log-json` for the benches. Today there's neither:
+  kadr writes to stderr (with `KADR_DEV=1`, GPUI's notes and warnings too), a crash leaves `cache_dir()/crash.log`,
+  and the tray notes its hotkeys in `cache_dir()/kadr-tray.log`.
 - A crash of the main process doesn't touch the tray and doesn't lose a recording (the recorder writes straight to a file,
   the studio's manifest is saved incrementally).
 
 ## 5. Data contracts
 
 - `Document` JSON: the schema in `docs/schema/document.v<N>.json`, generated from the types (`schemars`);
-  a test checks that fixtures of every version can be read.
-- The `.kadr` bundle: `manifest.json` (`version`, `kind: screenshot|recording`, paths), then the files.
+  a test checks that fixtures of every version can be read. Today the drawing is `project.json`
+  (`kadr_core::project`), with no version field and no schema yet; `docs/schema/` doesn't exist.
+- The `.kadr` bundle: `manifest.json` (`version`, `kind: shot|studio`, `app`, `files`), then the files.
 - `settings.toml` (before 0.4, `settings.json`, moved over on its own): a version + migrations, also edited by hand, a person's comments are kept; a test "settings v1 are read by v<N>".
-- IPC: `{"cmd": "...", "args": {...}, "id": n}` → `{"id": n, "ok": true, "result": ...}`.
+- IPC: `{"cmd": "...", "args": {...}, "id": n}` → `{"id": n, "ok": true, "result": ...}`. Today a call is one line,
+  its arguments as a JSON array; `kadr dev …` waits for a JSON line back with `ok`.
 
 ## 6. Automated tests
 
-Running everything: `just test` (= `just unit && just golden && just ui && just e2e`). Each layer is its own
+Running everything: `just test` (= `just unit && just golden && just ui && just e2e`). Today `just test` is
+`just deps`, `just unit` and `just golden`; `just e2e` and `just bench` run on their own, and there's no `just ui`
+or `just lint` yet. Each layer is its own
 command, so that the AI runs the layer it needs quickly. What each failure leaves is a path to an artifact
 (a diff png, a JSON dump, a log), which the agent opens itself.
 
 ### 6.1 Unit (`just unit` = `cargo test --workspace --exclude kadr-ui-*`)
+
+Today `just unit` is `cargo test --release --workspace -- --skip golden`; `proptest` and `insta` aren't used yet.
 
 - `kadr-core`: geometry/snapping (property tests with `proptest`: normalising is idempotent, snapping doesn't go
   outside the monitor), undo/redo (after `n` do + `n` undo the document equals the original), bundle round-trip,
@@ -267,10 +331,12 @@ command, so that the AI runs the layer it needs quickly. What each failure leave
 
 ### 6.2 Rasteriser golden tests (`just golden` = `cargo test -p kadr-raster --test golden`)
 
-- `tests/golden/cases/<name>/{base.png, doc.json, expected.png}`; one case per tool + combinations
+- `tests/golden/cases/<name>/{base.png, project.json, expected.png}` (a project as `.kadr` keeps it), written from
+  `cases()` in `crates/kadr-raster/tests/golden.rs` by `just golden-cases`; one case per tool + combinations
   (text on a blur, an arrow across a crop, counter 1–99, 2× scale).
-- The comparison is perceptual with a threshold (`image-compare` SSIM ≥ 0.995 or `dssim` ≤ 0.001), plus a limit
-  on the number of pixels with |Δ| > 8. Byte for byte only for `Blur`/`Pixelate` (determinism is a must there).
+- The comparison is perceptual with a threshold (SSIM of the luma ≥ 0.995, computed in the test), plus a limit
+  on the number of pixels with |Δ| > 8 (0.1 % of the picture). Byte for byte only for `Blur`/`Pixelate`
+  (determinism is a must there).
 - On a failure it writes `target/golden/<name>/{actual.png, diff.png}`. The expected pictures are updated
   only with `UPDATE_GOLDEN=1 just golden`, and the commit must mention "golden updated: <cases>":
   that's the signal for a person to look at the diff.
@@ -278,7 +344,7 @@ command, so that the AI runs the layer it needs quickly. What each failure leave
 
 ### 6.3 Dev hooks and UI tests without a compositor (`just ui`)
 
-Hooks in the app (the `dev` feature), available over IPC and the CLI `kadr dev …`:
+Hooks in the app (on with `KADR_DEV=1`), available over IPC and the CLI `kadr dev …`:
 
 | Command | Result |
 |---|---|
@@ -300,13 +366,24 @@ Hooks in the app (the `dev` feature), available over IPC and the CLI `kadr dev �
 - If GPUI CE keeps `test-support` (`TestAppContext`), some of these tests can run in-process
   without a window; that's an optimisation, the contract is the hooks.
 
+Today (`crates/kadr-ui-gpui/src/dev.rs`): the hooks are `windows`, `dump`, `find`, `click`, `drag`, `scroll`, `drop`,
+`key`, `type`, `state`, `shot`, `token` (read or restyle a token for the run), `grab-window` and `mem`; `hover`/`unhover`,
+`set-theme` and `set-scale` aren't there yet. Buttons and switches report themselves by their GPUI element id
+(`theme-Dark`, `section-<name>`); there's no lint test for the ids. There's no `tests/ui/` and no `just ui`: the tests
+that work through the hooks are in `tests/e2e.rs` and run in the nested Hyprland (6.4).
+
 ### 6.4 E2E on a compositor (`just e2e`, Linux; macOS/Windows: desktop-e2e in CI, section 7)
 
-- `scripts/nested.sh` starts a nested Hyprland with a test config (`tests/e2e/hypr.conf`):
-  **a headless output**, not a window on a special workspace (otherwise the frames depend on what the user has open),
-  1920×1080 @1×, no animations, no blur, fixed fonts and cursor theme,
-  `kadr` from `target/release`. The variables `WAYLAND_DISPLAY`/`HYPRLAND_INSTANCE_SIGNATURE` are handed to the tests.
-- Scenarios (`tests/e2e/*.sh` or Rust tests with `std::process`):
+- `scripts/nested.sh` starts a nested Hyprland with a test config (`tests/e2e/hypr.lua`):
+  one 1920×1080 output @1×, no animations, no blur, no gaps or rounding, no X server (Xwayland off),
+  its own runtime folder, D-Bus session bus and kadr folders, `kadr` from `target/release`.
+  Its window sits in the real session, floating on a workspace that's never shown (`name:kadr-e2e`), and keeps
+  rendering there. A headless output would cut the tie to the real screen, but aquamarine can't allocate its
+  buffers on the development machine (GBM on NVIDIA, `docs/traps.md`), so `nested.sh start` checks that frames come.
+  `nested.sh start` prints the variables (`WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, the `XDG_*` folders,
+  `KADR_DEV=1`) for the tests. A real pointer there is `kadr-testkit`'s `kadr-pointer` (wlr-virtual-pointer).
+- Scenarios (Rust tests in `tests/e2e.rs`, each marked `Scenario N`, among others for the editor, the studio and
+  the shared components):
   1. the tray is running → a hotkey (through `hyprctl dispatch`) → the overlay is visible within the budget → drag → a PNG in the history,
      its size and content as from `grim -g` of the same area (SSIM ≥ 0.99).
   2. `kadr edit fixture.png` → `dev click editor.tool.arrow` → `dev drag` → `dev key ctrl+s` →
@@ -315,17 +392,25 @@ Hooks in the app (the `dev` feature), available over IPC and the CLI `kadr dev �
   4. settings: switch the theme → `dev shot` → compare with the expected picture, with a mask over the system font.
   5. single instance: a second `kadr edit` reuses the process (one PID).
 - Screenshots of screens are compared perceptually, as in 6.2; the expected pictures are kept at 1× and 2×.
+- Today: scenario 1 runs the hotkey's command (`kadr shot region`) rather than the key, and compares the shot with
+  the screen grabbed before; scenario 3 covers the studio's half only (gpu-screen-recorder takes the real screen,
+  not the nested one); scenario 4 compares brightness, since the system font differs by machine. No expected
+  screenshots are kept for e2e.
 
 ### 6.5 Benches (`just bench`)
 
-- `scripts/bench.sh` takes the metrics of section 2 into `target/bench.json`, compares them with `docs/perf.md`
-  (the base) and the budgets; fails when a budget is exceeded, warns on a regression > 15 % from the base.
-- It runs in the e2e environment (the same headless Hyprland), 5 runs each, the median.
+- `scripts/bench.py` takes the metrics of section 2 into `target/bench.json`, compares them with `docs/perf.json`
+  (the base; `--save-base` replaces it, the history is in `docs/perf.md`) and the budgets; fails when a budget is
+  exceeded, warns on a regression > 15 % from the base.
+- It runs in the e2e environment (the same nested Hyprland), 5 runs each, the median.
 
 ### 6.6 Static checks (`just lint`)
 
 `cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny` (licences: GPL forbidden, Apache/MIT/ISC/OFL fine),
 `scripts/check-deps.sh` (the dependency graph from section 3), the i18n key test, the `test_id` test.
+
+Today there's no `just lint`: `just deps` runs `scripts/check-deps.sh` and the i18n key test is part of `just unit`;
+fmt, clippy and `cargo deny` aren't wired in.
 
 ## 7. CI
 
@@ -342,6 +427,10 @@ Hooks in the app (the `dev` feature), available over IPC and the CLI `kadr dev �
 - A PR with no changes in `kadr-ui-gpui` doesn't run e2e (path filter), for speed.
 - A release on a `v*` tag: a `dist` build on three OSes, artifacts in GitHub Releases, updating the AUR package
   `kadr-sh-bin` and the Homebrew tap.
+- Today (`.github/workflows`): `build.yml` builds `dist` and runs `cargo test --release` on Linux on every push
+  and pull request, and on all three systems on a `v*` tag or by hand; `desktop-e2e.yml` runs
+  `scripts/desktop_e2e.py gpui` on macOS and Windows on a tag or by hand; `release.yml` is 12.2; `docs.yml` publishes
+  the site (12.5). Lint, e2e and the bench don't run in CI yet, and nothing updates the AUR or Homebrew.
 
 ## 8. Conventions (carried over from CLAUDE.md)
 
@@ -376,11 +465,17 @@ doesn't pay off. GPUI CE works on macOS and Windows, including a runner with no 
 2. Golden tests of the rasteriser on the current `editor.rs` (before splitting out crates: this protects the refactoring).
 3. Dev hooks at a minimum: `dump`, `click`, `key`, `state`, `shot`.
 
+Done (2026-10-23): the base is in `docs/perf.md`, the golden tests in `crates/kadr-raster/tests/golden.rs`, the hooks in 6.3.
+
 ### 9.2 Phase 1: the split (without changing the framework)
 
 Split `kadr-core`, `kadr-raster`, `kadr-platform`, `kadr-media`, `kadr-ipc`, `kadr-ui` (view-models)
 out of the current code. The GPUI screens become `kadr-ui-gpui`. Done when: `scripts/check-deps.sh` is green,
 `just unit && just golden` are green, behaviour hasn't changed (e2e scenarios 1–5 pass on GPUI).
+
+Done (2026-10-23, `docs/perf.md`), with no `kadr-ipc`: the socket went into `kadr-platform` (3.5). Beside the
+crates named here, the workspace has `kadr-tray`, `kadr-overlay` and `kadr-testkit` (section 3), and `kadr-ui`
+has since taken the cards' and settings' state, the shared components' logic and the tokens.
 
 ### 9.3 Phase 2: the spike (time-box 2 evenings, branch `spike/<candidate>`)
 
@@ -390,6 +485,9 @@ tools (arrow, rectangle, text) over `EditorVm` and `kadr-raster`. No more.
 
 Take the metrics of section 2 for each; build and run on macOS **and** Windows (at least one of the two
 on a real machine). Fill in the table in `docs/perf.md`: rows gpui / tauri / iced.
+
+Done: the table is in `docs/perf.md` and at the start of section 9; the decision was to stay on GPUI CE, and the
+`spike/*` branches are gone.
 
 ### 9.4 The decision rule
 
@@ -410,6 +508,8 @@ stays buildable behind a feature until the end; switching is by `--features ui-<
 is accepted when: `just ui` is green on both implementations, the screen's e2e scenario is green, the expected screenshots
 are updated with an explicit review. Removing GPUI is the phase's last commit.
 
+Not taken: the decision (9.4) was to stay on GPUI CE.
+
 ## 10. Definition of Done for the whole specification
 
 - `just test` and `just bench` are green on Linux, locally and in CI; on macOS/Windows, unit/golden are green
@@ -425,10 +525,12 @@ kadr is a "camera" for AI agents: the agent goes through the scenario itself (a 
 and kadr records, annotates and edits. Scenarios: a screencast after a change to a prototype, a UI audit,
 a test with video proof, onboarding, a tutorial. They differ only in the scenario, not in the tools.
 
+Planned: milestone 0.6 in `docs/ROADMAP.md` (its section 8). None of this section is built yet.
+
 ### 11.1 `kadr-mcp`
 
 A separate binary, `kadr mcp`, on `rmcp` (the official Rust SDK for MCP), stdio transport. A thin adapter
-over `kadr-ipc`: each tool is one socket command; the core doesn't change. It is started from the config
+over kadr's socket (`kadr_platform::ipc`): each tool is one socket command; the core doesn't change. It is started from the config
 of an MCP client (Claude Code, Claude Desktop and others).
 
 Tools:
@@ -481,7 +583,8 @@ After 3.10 and `kadr-overlay`: `record.marker` in the recording protocol and `sc
 ### 12.1 Versions
 
 SemVer. While at `0.x`: minor for new features or a change to the `.kadr`/settings format (with a migration),
-patch for fixes. The first public release is `0.3.0` (`Cargo.toml` already says `0.2.0`; the history isn't reset).
+patch for fixes. The first public release is `0.3.0`; its pre-releases are tagged `v0.3.0-alpha.1` and
+`v0.3.0-alpha.2`, and `Cargo.toml` says `0.3.0-alpha.2` (the history isn't reset).
 `1.0.0` comes when all of these hold: macOS and Windows have been checked by real users (not only by runners),
 the overlay is native on all three OSes, the `.kadr` format and `settings.toml` are frozen (they change only with a migration),
 the self-update has survived at least two releases in a row. One version for the workspace (`[workspace.package] version`).
@@ -508,6 +611,16 @@ the self-update has survived at least two releases in a row. One version for the
 - After a release CI updates `kadr-sh-bin` in the AUR (an ssh key in the secrets) and the Homebrew tap; winget gets a PR to
   `microsoft/winget-pkgs` through `wingetcreate`.
 
+Today (`.github/workflows/release.yml`, with no `cargo-dist`): Linux `kadr-<ver>-x86_64-linux.tar.xz`
+(`scripts/package.sh`); macOS `kadr-<ver>-macos-universal.dmg` (`scripts/bundle-macos.sh`, unsigned);
+Windows `kadr-<ver>-x86_64-windows-setup.exe` (Inno Setup, for the user only) and a portable
+`kadr-<ver>-x86_64-windows-portable.exe` (`scripts/package.sh`, unsigned). Each file gets a `.sha256` and,
+with the release key in the secrets, a `minisign` signature; the release body is the version's CHANGELOG section
+followed by `.github/release-notes.md`; `scripts/release.py` writes
+`releases/latest.json` on `gh-pages`, with `channels`, and its `notes_url` is the GitHub release. Until the
+domain is up, kadr reads it from the `gh-pages` branch on GitHub (`kadr_core::update::LATEST_URL`). Nothing goes to
+the AUR, Homebrew or winget yet.
+
 ### 12.3 Self-update (`kadr-update`, a crate in `kadr-platform` or its own)
 
 - **The check**: `kadr-tray` asks for `latest.json` once a day and at start (no more than once an hour);
@@ -523,7 +636,10 @@ the self-update has survived at least two releases in a row. One version for the
   `aur` / `brew` / `winget` / `flatpak` → only a notice "0.4.0 is available: update through <manager>"
   (distributions and Homebrew don't put up with self-updating binaries).
   Detection: Linux, the binary's path (`/usr/bin` → a package, `~/.local/bin` → self) and a marker file from the PKGBUILD;
-  macOS, `brew --prefix` in the path; Windows, a marker from winget/msi.
+  macOS, `brew --prefix` in the path; Windows, a marker from winget/msi. Today (`kadr_platform::update::install`):
+  Linux, under `/usr` → the package manager found there, else self; macOS, a Homebrew path → Homebrew, else
+  the `Kadr.app` it runs from; Windows, the installer's uninstaller beside the exe → installed, else portable;
+  a build under `target/` is left alone.
 - **The flow**: a card in the tray/settings "Version 0.4.0 is available · What's new · Update".
   Pressing it → a background download into `cache_dir()/updates/`, checking the sha256 and the minisign signature → replacing:
   Linux, an atomic replacement of the `kadr` and `kadr-tray` binaries (`self-replace`);
@@ -533,10 +649,16 @@ the self-update has survived at least two releases in a row. One version for the
   The tray restarts at once; kadr itself moves to the new version once its windows close
   (it exits when idle anyway).
 - A "quietly in the background" mode (download ahead, apply at the next start) is a setting, off by default.
-- Rollback: the previous binary is kept as `kadr.prev` until the new version's first successful start;
-  if the new one crashes twice at start, the tray brings `prev` back and says so.
+- Rollback: the previous files are kept beside the new ones (`kadr.prev`, `kadr-tray.prev`; `.Kadr.app.prev` on macOS;
+  `kadr.exe.prev` for the portable one) until the new version settles after a start; if it fails to settle three
+  times (`kadr_core::update::TRIES`), kadr puts the old files back at its next start (`cache_dir()/updates/pending.json`
+  keeps the count).
 - Tests: `latest.json` is parsed from fixtures; the update flow is an e2e test with a local HTTP server
   and a fake release, checking the signature, the replacement and the rollback.
+
+Today the check and the release's data (channels, versions, the signature, what's pending) are `kadr_core::update`;
+how kadr was installed, the download and the replacement are `kadr_platform::update`; the card and Settings → About's
+Check now are the app's `update.rs`. The background mode isn't there yet.
 
 ### 12.4 Changelog
 
@@ -546,16 +668,25 @@ the self-update has survived at least two releases in a row. One version for the
   a screenshot or a GIF for big features. In English only: `CHANGELOG.md`.
 - The GitHub Release body is the version's section of the CHANGELOG (CI cuts it out automatically).
 - **The What's new screen**: at the first start of a new version, a card with the changelog
-  section of that version in the current language; the markdown is drawn by kadr's own components (heading, list,
-  picture). Also reachable from the settings. The text comes from the app's bundle (`data/changelog/<ver>.<lang>.md`,
-  copied by CI at build time), not from the network: it works offline and doesn't depend on GitHub.
+  section of that version; the markdown is drawn by kadr's own components (heading, list,
+  picture). Also reachable from the settings. The text comes from the app's bundle, not from the network:
+  it works offline and doesn't depend on GitHub. The changelog is English only, like kadr's other documents.
+  Today there's no such screen: the update card ("kadr <ver> is out") says that what's new and the downloads are on
+  the release page, links to it (its body is the version's CHANGELOG section) and has Update where kadr updates
+  itself; Settings → About's Check now does the same in its row.
 
 ### 12.5 Open-source repository hygiene
 
 - `README.md`, in English: what it is, a screenshot/GIF of the current interface, installing
   on three OSes (brew / winget / AUR / download), the platforms' status, hotkeys, a link to the spec and CONTRIBUTING.
 - `CONTRIBUTING.md`: how to build, `just test`, conventional commits, what lives where (a link to the spec).
-- The user manual `docs/manual` (a page per screen, all of the same shape, in English; `crates/kadr-core/tests/manual.rs` keeps the pages' shape and the command and settings pages true to the code) and the site on GitHub Pages (`scripts/manual.sh`, Eleventy from `website`): a home page with the download from `releases/latest.json`, and the manual. A feature's commit changes its screen's page.
+- The user manual `docs/manual` (a page per screen, all of the same shape, in English only, plus install, project files,
+  the command line, languages and the glossary; `crates/kadr-core/tests/manual.rs` keeps the pages' shape, the command
+  and settings pages true to the code, and the languages page's share of translated strings for each file of `data/i18n`)
+  is the site on GitHub Pages (`scripts/manual.sh`, Eleventy from `website`, published by `docs.yml`): there's no
+  separate landing page, the manual's first page is the home, with the download from `releases/latest.json`. The site
+  also draws a roadmap page from `docs/ROADMAP.md` and a changelog page from `CHANGELOG.md`, and writes `llms.txt`,
+  `llms-full.txt` and a Markdown copy of every page for language models. A feature's commit changes its screen's page.
 - `CLAUDE.md` stays as the guide for agent contributors (many projects call it `AGENTS.md`;
   you can keep one and symlink the other), with no personal paths or local settings: those go in `.claude/settings.local.json`
   and in `.gitignore`.
