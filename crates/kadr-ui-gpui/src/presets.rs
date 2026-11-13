@@ -7,9 +7,10 @@ use serde_json::Value;
 
 use crate::i18n::t;
 
-use crate::ui::{ButtonLike, Tooltip, prelude::*};
+use crate::ui::{Tooltip, prelude::*};
 use crate::ui::text_field::{self, Event, Options};
 use kadr_ui::text::Field;
+use crate::ui::popover::{self, Align, DropdownLook, Elevation, Outside, Placement, RowLook, RowOptions};
 
 pub const FIELD: usize = 100;
 
@@ -107,14 +108,8 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
         let rows: Vec<_> = p.list.iter().enumerate().map(|(i, (name, look))| {
             let group = SharedString::from(format!("preset-row-{i}"));
             let editing = p.renaming.as_ref().filter(|r| r.0 == i).map(|r| &r.1);
-            let row = h_flex()
-                .id(SharedString::from(format!("preset-{i}")))
+            let row = popover::row_shell(SharedString::from(format!("preset-{i}")), name, active == Some(i), &RowOptions { look: RowLook::Preset, interactive: false, ..Default::default() }, cx)
                 .group(group.clone())
-                .h(px(30.))
-                .gap_2()
-                .pl_2()
-                .pr_1()
-                .rounded(px(7.))
                 .child(Icon::new(IconName::Check).size(IconSize::Small).color(if active == Some(i) { Color::Accent } else { Color::Custom(gpui::transparent_black()) }));
             if let Some(text) = editing {
                 // Typing goes here; the old name shows until the first key.
@@ -164,49 +159,30 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                 .into_any_element()
         }).collect();
         let empty = p.list.is_empty().then(|| div().px_2().py_1p5().child(Label::new(t("presets.empty_hint")).size(LabelSize::Small).color(Color::Muted)));
-        gpui::deferred(
-            v_flex()
-                .id("preset-menu")
-                .occlude()
-                .absolute()
-                .top(px(38.))
-                .left_0()
-                .right_0()
+        popover::show(
+            popover::surface("preset-menu", &p.menu_bounds, Placement::below(38., Align::Stretch), Elevation::Floating, cx)
                 .p_1()
                 .gap_0p5()
-                .elevation_3(cx)
                 .children(rows)
-                .children(empty)
-                .child(crate::ui::track_bounds(&p.menu_bounds)),
+                .children(empty),
+            1,
         )
-        .priority(1)
     });
 
-    div()
-        .relative()
+    popover::dropdown_menu(popover::anchor(div(), p.open, &p.menu_bounds, Outside::AnchorAndMenu, cx.listener(|this: &mut T, _, window, cx| {
+            this.presets().close(window, cx);
+            cx.notify();
+        }))
         .w_full()
         .track_focus(&p.focus)
         .on_key_down(cx.listener(|this: &mut T, e: &KeyDownEvent, window, cx| {
             if this.presets().renaming.is_some() { text_field::key(this, FIELD, e, window, cx); }
-        }))
-        .on_mouse_down_out(cx.listener(|this: &mut T, e: &gpui::MouseDownEvent, window, cx| {
-            let p = this.presets();
-            if p.open && !p.menu_bounds.get().contains(&e.position) {
-                p.close(window, cx);
-                cx.notify();
-            }
-        }))
-        .child(
+        })),
             h_flex()
                 .w_full()
                 .gap_1()
                 .child(
-                    ButtonLike::new("presets")
-                        .style(ButtonStyle::Filled)
-                        .size(ButtonSize::Large)
-                        .full_width()
-                        .toggle_state(p.open)
-                        .child(h_flex().flex_1().min_w_0().gap_2().child(div().flex_1().min_w_0().child(title.truncate())).child(Icon::new(IconName::ChevronDown).size(IconSize::Small).color(Color::Muted)))
+                    popover::dropdown_label("presets", title, p.open, DropdownLook::Presets)
                         .on_click(cx.listener(|this: &mut T, _, window, cx| {
                             let p = this.presets();
                             if p.open {
@@ -230,7 +206,6 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                             cx.notify();
                         })),
                 ),
-        )
-        .children(menu)
+        menu)
         .into_any_element()
 }

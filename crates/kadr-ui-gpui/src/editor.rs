@@ -32,6 +32,7 @@ use crate::kit::{self, Anchor, KeyboardInteractivity, LayerSpec};
 use crate::ui::{fill, outline};
 use crate::{cards, ocr, palette, studio_editor, util};
 use crate::i18n::t;
+use crate::ui::popover::{self, Align, DropdownLook, Elevation, Outside, Placement, RowOptions};
 
 mod crop;
 mod redact;
@@ -654,6 +655,7 @@ pub struct Editor {
     cursors_menu: crate::ui::MenuBounds,
     /// The "⋯" menu with the style controls, when the toolbar is too narrow.
     more_open: bool,
+    more_menu_bounds: crate::ui::MenuBounds,
     size: (f32, f32),
     focus: FocusHandle,
 }
@@ -871,6 +873,7 @@ fn open_as(path: PathBuf, card: bool, cx: &mut App) {
                 cursors_open: false,
                 cursors_menu: Default::default(),
                 more_open: false,
+                more_menu_bounds: Default::default(),
                 size,
                 focus,
             };
@@ -2507,13 +2510,9 @@ impl Editor {
             .when(!self.recent.is_empty(), |d| d.child(heading(t("editor.recent_colors"))).child(row().children(recent)))
             .child(heading(t("editor.saved_colors")))
             .child(row().children(saved).child(keep));
-        let palette = div()
-            .relative()
-            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                if this.colors_open && !this.colors_menu.get().contains(&e.position) {
-                    this.colors_open = false;
-                    cx.notify();
-                }
+        let palette = popover::anchor(div(), self.colors_open, &self.colors_menu, Outside::AnchorAndMenu, cx.listener(|this, _, _, cx| {
+                this.colors_open = false;
+                cx.notify();
             }))
             .child(
             ButtonLike::new("colors")
@@ -2534,17 +2533,12 @@ impl Editor {
                 })),
         )
         .when(self.colors_open, |d| {
-            d.child(gpui::deferred(
-                h_flex()
-                    .id("color-menu")
-                    .occlude()
-                    .absolute()
-                    .top(px(38.))
-                    .right_0()
+            d.child(popover::show(
+                popover::surface("color-menu", &self.colors_menu, Placement::below(38., Align::End), Elevation::Floating, cx)
+                    .flex_row().items_center()
                     .p_2()
-                    .elevation_3(cx)
-                    .child(swatches)
-                    .child(crate::ui::track_bounds(&self.colors_menu)),
+                    .child(swatches),
+                0,
             ))
         });
         // A dot as thick as the stroke, in the current colour, then the slider.
@@ -2651,13 +2645,9 @@ impl Editor {
                         cx.notify();
                     }))
             });
-            h_flex()
-                .relative()
-                .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                    if this.text_styles_open && !this.text_styles_menu.get().contains(&e.position) {
-                        this.text_styles_open = false;
-                        cx.notify();
-                    }
+            popover::anchor(h_flex(), self.text_styles_open, &self.text_styles_menu, Outside::AnchorAndMenu, cx.listener(|this, _, _, cx| {
+                    this.text_styles_open = false;
+                    cx.notify();
                 }))
                 .child(
                     ButtonLike::new("text-style")
@@ -2672,18 +2662,13 @@ impl Editor {
                         })),
                 )
                 .when(self.text_styles_open, |d| {
-                    d.child(gpui::deferred(
-                        h_flex()
-                            .id("text-style-menu")
-                            .occlude()
-                            .absolute()
-                            .top(px(38.))
-                            .right_0()
+                    d.child(popover::show(
+                        popover::surface("text-style-menu", &self.text_styles_menu, Placement::below(38., Align::End), Elevation::Floating, cx)
+                            .flex_row().items_center()
                             .gap_0p5()
                             .p_1p5()
-                            .elevation_3(cx)
-                            .children(options)
-                            .child(crate::ui::track_bounds(&self.text_styles_menu)),
+                            .children(options),
+                        0,
                     ))
                 })
                 .child(Divider::vertical().h_5().mx_1())
@@ -2742,13 +2727,9 @@ impl Editor {
             }).collect::<Vec<_>>();
             h_flex()
                 .child(
-                    div()
-                        .relative()
-                        .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                            if this.cursors_open && !this.cursors_menu.get().contains(&e.position) {
-                                this.cursors_open = false;
-                                cx.notify();
-                            }
+                    popover::anchor(div(), self.cursors_open, &self.cursors_menu, Outside::AnchorAndMenu, cx.listener(|this, _, _, cx| {
+                            this.cursors_open = false;
+                            cx.notify();
                         }))
                         .child(
                             ButtonLike::new("cursor-kinds")
@@ -2763,18 +2744,13 @@ impl Editor {
                                 })),
                         )
                         .when(self.cursors_open, |d| {
-                            d.child(gpui::deferred(
-                                h_flex()
-                                    .id("cursor-menu")
-                                    .occlude()
-                                    .absolute()
-                                    .top(px(38.))
-                                    .right_0()
+                            d.child(popover::show(
+                                popover::surface("cursor-menu", &self.cursors_menu, Placement::below(38., Align::End), Elevation::Floating, cx)
+                                    .flex_row().items_center()
                                     .gap_0p5()
                                     .p_1()
-                                    .elevation_3(cx)
-                                    .children(options)
-                                    .child(crate::ui::track_bounds(&self.cursors_menu)),
+                                    .children(options),
+                                0,
                             ))
                         }),
                 )
@@ -2927,29 +2903,20 @@ impl Editor {
             h_flex().gap_0p5().child(palette).child(weights)
         } else if compact {
             let menu = self.more_open.then(|| {
-                gpui::deferred(
-                    v_flex()
-                        .id("more-menu")
-                        .occlude()
-                        .absolute()
-                        .top(px(38.))
-                        .right_0()
+                popover::show(
+                    popover::surface("more-menu", &self.more_menu_bounds, Placement::below(38., Align::End), Elevation::Floating, cx)
                         .gap_2()
                         .p_2()
-                        .elevation_3(cx)
                         .children(sensitive)
                         .child(palette)
                         .child(weights),
+                    0,
                 )
             });
             h_flex().child(
-                div()
-                    .relative()
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                        if this.more_open {
-                            this.more_open = false;
-                            cx.notify();
-                        }
+                popover::anchor(div(), self.more_open, &self.more_menu_bounds, Outside::AnchorOnly, cx.listener(|this, _, _, cx| {
+                        this.more_open = false;
+                        cx.notify();
                     }))
                     .child(
                         ButtonLike::new("more")
@@ -3021,20 +2988,19 @@ impl Editor {
         let half = (mid - sx).min(sx + sw - mid) - 8.;
         let (x, w) = if self.context_w.get() <= 2. * half { (mid - half, 2. * half) } else { (sx + 8., sw - 16.) };
         Some(
-            gpui::deferred(
+            popover::show(
                 gpui::anchored().position(gpui::point(px(x), px(y))).child(
                     h_flex().w(px(w)).justify_center().child(
-                        h_flex()
+                        popover::panel(cx, Elevation::Floating).flex_row().items_center()
                             .id("context-bar")
                             .occlude()
                             .h(px(h))
                             .px_1p5()
-                            .rounded(px(12.))
-                            .elevation_3(cx)
                             .child(options)
                             .child(crate::ui::track_width(&self.context_w)),
                     ),
                 ),
+                0,
             )
             .into_any_element(),
         )
@@ -3257,33 +3223,14 @@ impl Editor {
     /// `menu_popup` with an icon before each choice that has one; the
     /// current one is marked at the right.
     fn menu_list(&self, items: Vec<MenuItem>, icons: Vec<Option<Icon>>, up: bool, right: bool, cx: &mut Context<Self>) -> AnyElement {
-        let hover = cx.theme().colors().element_hover;
         let mut icons = icons.into_iter();
         let rows: Vec<_> = items
             .into_iter()
             .enumerate()
             .map(|(i, (text, on, pick))| {
                 let id: gpui::ElementId = SharedString::from(format!("menu-row-{i}")).into();
-                let probe = crate::dev::on().then(|| crate::dev::probe(&id, "menu-item", text.clone(), false, on));
                 let icon = icons.next().flatten();
-                let with_icon = icon.is_some();
-                let check = || Icon::new(IconName::Check).size(IconSize::XSmall);
-                h_flex()
-                    .id(id)
-                    .relative()
-                    .w_full()
-                    .gap_1p5()
-                    .px_2()
-                    .h(px(28.))
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(move |d| d.bg(hover))
-                    .when(!with_icon, |row| row.child(div().w(px(14.)).children(on.then(check))))
-                    .when(with_icon, |row| row.pr_1())
-                    .children(icon.map(|icon| icon.size(IconSize::Small)))
-                    .child(Label::new(text).size(LabelSize::Small))
-                    .when(with_icon, |row| row.child(div().flex_1()).child(div().w(px(14.)).children(on.then(check))))
-                    .children(probe)
+                popover::row(id, text, on, RowOptions { full_width: true, leading: icon, ..Default::default() }, cx)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.crop_menu = None;
                         pick(this, window, cx);
@@ -3291,31 +3238,21 @@ impl Editor {
                     }))
             })
             .collect();
-        gpui::deferred(
-            v_flex()
-                .id("dropdown-menu")
-                .occlude()
-                .absolute()
-                .when(up, |d| d.bottom(px(38.)))
-                .when(!up, |d| d.top(px(38.)))
-                .when(right, |d| d.right_0())
-                .when(!right, |d| d.left_0())
+        popover::show(
+            popover::surface("dropdown-menu", &self.crop_menu_bounds, if up { Placement::above(38., if right { Align::End } else { Align::Start }) } else { Placement::below(38., if right { Align::End } else { Align::Start }) }, Elevation::Floating, cx)
                 .min_w(px(150.))
                 .p_1()
-                .elevation_3(cx)
-                .children(rows)
-                .child(crate::ui::track_bounds(&self.crop_menu_bounds)),
+                .children(rows),
+            0,
         )
         .into_any_element()
     }
 
     /// Closes `which` on a click outside it and its list.
     fn menu_anchor(&self, which: CropMenu, cx: &mut Context<Self>) -> Div {
-        div().relative().on_mouse_down_out(cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-            if this.crop_menu == Some(which) && !this.crop_menu_bounds.get().contains(&e.position) {
-                this.crop_menu = None;
-                cx.notify();
-            }
+        popover::anchor(div(), self.crop_menu == Some(which), &self.crop_menu_bounds, Outside::AnchorAndMenu, cx.listener(move |this, _, _, cx| {
+            this.crop_menu = None;
+            cx.notify();
         }))
     }
 
@@ -3325,19 +3262,14 @@ impl Editor {
         let open = self.crop_menu == Some(which);
         let native = items.clone();
         let menu = open.then(|| self.menu_popup(items, up, false, cx));
-        self.menu_anchor(which, cx)
-            .child(
-                ButtonLike::new(match which {
+        popover::dropdown_menu(self.menu_anchor(which, cx),
+                popover::dropdown(match which {
                     CropMenu::Aspect => "dropdown-aspect",
                     CropMenu::Scale => "dropdown-scale",
                     CropMenu::ExportScale => "dropdown-export-scale",
                     CropMenu::Zoom => "dropdown-zoom",
                     CropMenu::Tools | CropMenu::Actions | CropMenu::Fill => "dropdown",
-                })
-                    .style(if open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                    .size(ButtonSize::Large)
-                    .toggle_state(open)
-                    .child(h_flex().gap_1().px_1().child(Label::new(label)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+                }, label, open, DropdownLook::Editor)
                     .tip(Tooltip::text(tip))
                     .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
                         if Editor::native_menu(&native, e, window, cx) {
@@ -3346,8 +3278,7 @@ impl Editor {
                         this.crop_menu = if this.crop_menu == Some(which) { None } else { Some(which) };
                         cx.notify();
                     })),
-            )
-            .children(menu)
+            menu)
             .into_any_element()
     }
 
@@ -3434,18 +3365,13 @@ impl Editor {
                     })),
             )
             .when(open, |d| {
-                d.child(gpui::deferred(
-                    h_flex()
-                        .id("fill-menu")
-                        .occlude()
-                        .absolute()
-                        .top(px(38.))
-                        .left_0()
+                d.child(popover::show(
+                    popover::surface("fill-menu", &self.crop_menu_bounds, Placement::below(38., Align::Start), Elevation::Floating, cx)
+                        .flex_row().items_center()
                         .gap_1()
                         .p_1p5()
-                        .elevation_3(cx)
-                        .children(swatches)
-                        .child(crate::ui::track_bounds(&self.crop_menu_bounds)),
+                        .children(swatches),
+                    0,
                 ))
             })
             .into_any_element()

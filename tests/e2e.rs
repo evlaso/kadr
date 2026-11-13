@@ -1003,6 +1003,62 @@ fn preset_renaming_shares_text_editing() {
     assert_eq!(name(), "ello мирello мир", "closing the menu commits");
 }
 
+/// Rich editor popovers and plain dropdowns share surfaces, not hidden state.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn editor_popovers_keep_their_dismissal_and_choice_behavior() {
+    let s = Session::start();
+    let path = fixture(&s, "popover.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("picture never loaded");
+    let shown = |id: &str| s.dev(&["dump"]).as_array().unwrap().iter().any(|n| n["id"] == id);
+    s.dev(&["click", "colors"]);
+    assert!(shown("color-pipette"));
+    s.dev(&["key", "escape"]);
+    assert!(!shown("color-pipette"));
+    s.dev(&["click", "colors"]);
+    s.dev(&["click", "tool-r"]);
+    assert!(!shown("color-pipette"));
+    assert_eq!(s.dev(&["state"])["view"]["tool"], "rect", "outside clicks still reach the toolbar");
+    s.dev(&["click", "colors"]);
+    s.dev(&["click", "dropdown-export-scale"]);
+    assert!(!shown("color-pipette"));
+    assert!(shown("menu-row-2"));
+    s.dev(&["click", "menu-row-2"]);
+    assert_eq!(s.dev(&["state"])["view"]["export_density"], 2.);
+    assert!(!shown("menu-row-2"));
+    s.dev(&["click", "dropdown-export-scale"]);
+    s.dev(&["key", "escape"]);
+    assert!(!shown("menu-row-2"));
+    s.dev(&["click", "colors"]);
+    s.dev(&["click", "color-pipette"]);
+    assert_eq!(s.dev(&["state"])["view"]["picking"], true);
+    assert!(!shown("color-pipette"));
+}
+
+/// Settings keep native dispatch and their host's Escape, not a new menu keymap.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn a_settings_dropdown_reports_rows_and_keeps_host_keys() {
+    let s = Session::start();
+    s.spawn(&["settings"]);
+    s.window("kadr-settings");
+    let shown = |id: &str| s.dev(&["dump"]).as_array().unwrap().iter().any(|n| n["id"] == id);
+    s.dev(&["click", "language"]);
+    assert!(shown("language-1"));
+    s.dev(&["click", "language-1"]);
+    assert!(!shown("language-1"));
+    let settings = s.var("XDG_CONFIG_HOME").join("kadr/settings.toml");
+    assert!(std::fs::read_to_string(settings).unwrap().contains("language = \"ru\""));
+    s.dev(&["click", "language"]);
+    s.dev(&["click", "tray"]);
+    assert!(!shown("language-1"));
+    s.dev(&["click", "language"]);
+    s.dev(&["key", "escape"]);
+    wait(Duration::from_secs(3), || s.try_dev(&["windows"]).is_none_or(|w| w.as_array().is_some_and(Vec::is_empty)).then_some(())).expect("Escape no longer closes settings");
+}
+
 /// The tray runs once: a second `kadr-tray` (or `kadr tray`) leaves at once.
 #[test]
 #[ignore = "e2e: just e2e"]

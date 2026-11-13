@@ -1,8 +1,8 @@
 //! The interface's shared values in one place, with no UI framework: radii,
 //! spacing, control sizes, type, icon sizes, borders, the alphas and tones
 //! the theme is mixed from, shadows, and the few metrics of the shared
-//! components (tooltip, scrollbar, knob). The app's components read them
-//! through `get()`, while drawing; `set` replaces the whole set for the
+//! components (tooltip, scrollbar, knob, text field, menu). The app reads
+//! them through `get()`, while drawing; `set` replaces the whole set for the
 //! process, so the look can change while kadr runs.
 //!
 //! Units: most sizes are design units, pixels at a 16 px base that the app
@@ -322,6 +322,33 @@ group! {
 }
 
 group! {
+    /// Menu rows and the studio's dropdown field. Distinct units and radii
+    /// preserve the screens' old looks until normalization.
+    Menu {
+        /// Compact choice rows in the editor, history and studio.
+        compact_row: 28., Px;
+        /// Compact rows' corners (not rems).
+        compact_radius: 6., Px;
+        /// Natural-height settings rows' corners. Normalisation candidate.
+        settings_radius: 6., Design;
+        /// Recording menu rows, scaled with the UI.
+        recording_row: 32., Design;
+        /// Recording rows' corners. Normalisation candidate.
+        recording_radius: 7., Design;
+        /// Saved looks' rows, including their inline actions.
+        preset_row: 30., Px;
+        /// Saved looks' row corners. Normalisation candidate.
+        preset_radius: 7., Px;
+        /// Reserved space for a compact row's check (not the icon size).
+        check_column: 14., Px;
+        /// The studio's full-width aspect field.
+        field_height: 30., Px;
+        /// That field's corners. Normalisation candidate.
+        field_radius: 8., Px;
+    }
+}
+
+group! {
     /// Single-line text editing, matching the canvas text's bar proportions.
     TextField {
         /// The caret's width, in logical pixels.
@@ -433,6 +460,7 @@ pub struct Tokens {
     pub scrollbar: Scrollbar,
     pub knob: Knob,
     pub text_field: TextField,
+    pub menu: Menu,
     pub shadow: Shadows,
 }
 
@@ -454,6 +482,7 @@ impl Tokens {
             ("scrollbar", self.scrollbar.entries()),
             ("knob", self.knob.entries()),
             ("text_field", self.text_field.entries()),
+            ("menu", self.menu.entries()),
         ]
     }
 
@@ -474,6 +503,7 @@ impl Tokens {
             "scrollbar" => self.scrollbar.get_mut(name),
             "knob" => self.knob.get_mut(name),
             "text_field" => self.text_field.get_mut(name),
+            "menu" => self.menu.get_mut(name),
             _ => None,
         }
     }
@@ -561,7 +591,7 @@ mod tests {
     fn every_value_is_listed_and_reachable_by_name() {
         let mut t = Tokens::default();
         let groups = t.groups();
-        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 91);
+        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 101);
         for (group, entries) in groups {
             for e in entries {
                 assert!(!e.doc.is_empty(), "{group}.{} has no role", e.name);

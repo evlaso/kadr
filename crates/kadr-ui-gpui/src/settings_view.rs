@@ -17,6 +17,7 @@ use crate::i18n::t;
 use kadr_core::update::Channel;
 use kadr_ui::settings::{Effect, SettingsVm, Tab};
 use crate::ui::text_field::{self, Event as FieldEvent, Options as FieldOptions};
+use crate::ui::popover::{self, Align, DropdownLook, Elevation, Outside, Placement, RowLook, RowOptions};
 
 /// A section's icon in the list.
 fn tab_icon(tab: Tab) -> Icon {
@@ -120,50 +121,27 @@ impl SettingsView {
         let open = self.open_menu == Some(id);
         let current = entries.get(selected).cloned().unwrap_or_default();
         let menu = open.then(|| {
-            gpui::deferred(
-                v_flex()
-                    .id(SharedString::from(format!("{id}-menu")))
-                    .occlude()
-                    .absolute()
-                    .top(px(30.))
-                    .right_0()
+            popover::show(
+                popover::surface(SharedString::from(format!("{id}-menu")), &self.menu_bounds, Placement::below(30., Align::End), Elevation::Floating, cx)
                     .min_w(px(160.))
                     .p_1()
                     .gap_0p5()
-                    .elevation_3(cx)
                     .children(entries.iter().enumerate().map(|(i, label)| {
-                        h_flex()
-                            .id(SharedString::from(format!("{id}-{i}")))
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .rounded(crate::ui::rems_from_px(6.))
-                            .cursor_pointer()
-                            .hover(|d| d.bg(cx.theme().colors().element_hover))
-                            .child(Icon::new(IconName::Check).size(IconSize::Small).color(if i == selected { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
-                            .child(Label::new(label.clone()))
+                        popover::row(SharedString::from(format!("{id}-{i}")), label.clone(), i == selected, RowOptions { look: RowLook::Settings, ..Default::default() }, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_menu = None;
                                 pick(this, i, cx);
                                 cx.notify();
                             }))
-                    }))
-                    .child(crate::ui::track_bounds(&self.menu_bounds)),
+                    })),
+                0,
             )
         });
-        div()
-            .relative()
-            .on_mouse_down_out(cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
-                if this.open_menu == Some(id) && !this.menu_bounds.get().contains(&e.position) {
-                    this.open_menu = None;
-                    cx.notify();
-                }
-            }))
-            .child(
-                ButtonLike::new(id)
-                    .style(ButtonStyle::Filled)
-                    .toggle_state(open)
-                    .child(h_flex().gap_1p5().px_2().child(Label::new(current).size(LabelSize::Small)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+        popover::dropdown_menu(popover::anchor(div(), open, &self.menu_bounds, Outside::AnchorAndMenu, cx.listener(move |this, _, _, cx| {
+                this.open_menu = None;
+                cx.notify();
+            })),
+                popover::dropdown(id, current, open, DropdownLook::Settings)
                     .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
                         let items = entries.iter().enumerate().map(|(i, label)| kadr_platform::menu::Item::new(label.clone(), i == selected)).collect();
                         if crate::ui::native_menu(window, cx, e.position(), items, move |this: &mut SettingsView, i, _, cx| pick(this, i, cx)) {
@@ -172,8 +150,7 @@ impl SettingsView {
                         this.open_menu = if this.open_menu == Some(id) { None } else { Some(id) };
                         cx.notify();
                     })),
-            )
-            .children(menu)
+            menu)
             .into_any_element()
     }
 

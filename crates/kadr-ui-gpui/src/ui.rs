@@ -1,6 +1,6 @@
 //! kadr's own components: buttons, icons, labels, a switch, a tooltip, key
-//! hints and a progress bar, in kadr's palette. They depend on GPUI alone,
-//! so kadr can follow GPUI (or a fork of it) and tune every detail.
+//! hints, popovers, menus and a progress bar, in kadr's palette. They depend
+//! on GPUI alone, so kadr can follow GPUI (or a fork of it) and tune every detail.
 //!
 //! Sizes are in rems built from pixel values at a 16px base, so they grow
 //! with the window's rem size (`kit::REM`). Every value they're drawn with
@@ -20,6 +20,9 @@ use crate::kit;
 
 #[path = "text_field.rs"]
 pub mod text_field;
+
+#[path = "popover.rs"]
+pub mod popover;
 
 pub mod prelude {
     pub use gpui::prelude::*;

@@ -29,6 +29,7 @@ use crate::studio::{
 use crate::track::Track;
 use crate::{palette, trim, util};
 use crate::i18n::t;
+use crate::ui::popover::{self, Align, Elevation, Outside, Placement, RowOptions};
 
 const FILMSTRIP: f32 = 52.;
 const RULER: f32 = 22.;
@@ -1560,17 +1561,11 @@ impl StudioEditor {
                     this.changed(cx);
                 }), cx)
             });
-            gpui::deferred(
-                v_flex()
-                    .id("export-popover")
-                    .occlude()
-                    .absolute()
-                    .top(px(40.))
-                    .right_0()
+            popover::show(
+                popover::surface("export-popover", &self.menu_bounds, Placement::below(40., Align::End), Elevation::Floating, cx)
                     .w(px(420.))
                     .p_3()
                     .gap_3()
-                    .elevation_3(cx)
                     .child(row(t("studio.row_format"), format))
                     .child(row(t("studio.row_size"), size))
                     .child(row(t("studio.row_fps"), fps))
@@ -1604,17 +1599,13 @@ impl StudioEditor {
                                     .key_binding(kit::keys("secondary-s"))
                                     .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
                             ),
-                    )
-                    .child(crate::ui::track_bounds(&self.menu_bounds)),
+                    ),
+                0,
             )
         });
-        div()
-            .relative()
-            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                if this.export_open && !this.menu_bounds.get().contains(&e.position) {
-                    this.export_open = false;
-                    cx.notify();
-                }
+        popover::anchor(div(), self.export_open, &self.menu_bounds, Outside::AnchorAndMenu, cx.listener(|this, _, _, cx| {
+                this.export_open = false;
+                cx.notify();
             }))
             .child(button)
             .children(popover)
@@ -2247,21 +2238,8 @@ impl StudioEditor {
     /// The output's shape as a dropdown, wide shapes then tall ones.
     fn aspect_dropdown(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
-        let (field, hover) = (colors.element_background, colors.element_hover);
         let label = |i: usize| t(ASPECTS[i].0);
-        let field_el = h_flex()
-            .id("aspect")
-            .w_full()
-            .h(px(30.))
-            .px_2p5()
-            .justify_between()
-            .rounded(px(8.))
-            .bg(field)
-            .cursor_pointer()
-            .hover(move |d| d.bg(hover))
-            .child(Label::new(label(self.project.aspect)).size(LabelSize::Small))
-            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted))
-            .on_click(cx.listener(|this, e: &gpui::ClickEvent, window, cx| {
+        let field_el = popover::field_dropdown("aspect", label(self.project.aspect), self.aspect_open, cx, cx.listener(|this, e: &gpui::ClickEvent, window, cx| {
                 this.export_open = false;
                 let order: Vec<usize> = ASPECT_ORDER.iter().flat_map(|g| g.iter().copied()).collect();
                 let items = ASPECT_ORDER
@@ -2288,17 +2266,7 @@ impl StudioEditor {
                 for &i in group.iter() {
                     let on = self.project.aspect == i;
                     rows.push(
-                        h_flex()
-                            .id(SharedString::from(format!("aspect-{i}")))
-                            .w_full()
-                            .gap_1p5()
-                            .px_2()
-                            .h(px(28.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .hover(move |d| d.bg(hover))
-                            .child(div().w(px(14.)).children(on.then(|| Icon::new(IconName::Check).size(IconSize::XSmall))))
-                            .child(Label::new(label(i)).size(LabelSize::Small))
+                        popover::row(SharedString::from(format!("aspect-{i}")), label(i), on, RowOptions { full_width: true, ..Default::default() }, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.aspect_open = false;
                                 this.project.aspect = i;
@@ -2308,19 +2276,13 @@ impl StudioEditor {
                     );
                 }
             }
-            gpui::deferred(v_flex().id("aspect-menu").occlude().absolute().top(px(34.)).left_0().right_0().p_1().elevation_3(cx).children(rows).child(crate::ui::track_bounds(&self.menu_bounds)))
+            popover::show(popover::surface("aspect-menu", &self.menu_bounds, Placement::below(34., Align::Stretch), Elevation::Floating, cx).p_1().children(rows), 0)
         });
-        div()
-            .relative()
-            .w_full()
-            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                if this.aspect_open && !this.menu_bounds.get().contains(&e.position) {
-                    this.aspect_open = false;
-                    cx.notify();
-                }
+        popover::dropdown_menu(popover::anchor(div(), self.aspect_open, &self.menu_bounds, Outside::AnchorAndMenu, cx.listener(|this, _, _, cx| {
+                this.aspect_open = false;
+                cx.notify();
             }))
-            .child(field_el)
-            .children(menu)
+            .w_full(), field_el, menu)
             .into_any_element()
     }
 

@@ -22,6 +22,7 @@ use crate::presets::{HasPresets, Presets};
 use crate::settings::Settings;
 use crate::ui::{ButtonLike, Divider, KeyBinding, ProgressBar, smoothing, Switch, Theme, ToggleState, Tooltip, prelude::*, rems_from_px};
 use kadr_platform::keymap::Command as Keys;
+use crate::ui::popover::{self, Align, DropdownLook, Elevation, Outside, Placement, RowLook, RowOptions};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
@@ -109,6 +110,10 @@ pub struct Gallery {
     switch_on: bool,
     fields: Vec<kadr_ui::text::Field>,
     active_field: Option<usize>,
+    open_demo: Option<usize>,
+    demo_choice: usize,
+    demo_bounds: Vec<crate::ui::MenuBounds>,
+    demo_anchors: Vec<crate::ui::MenuBounds>,
 }
 
 pub fn open(cx: &mut App) {
@@ -151,6 +156,10 @@ pub fn open(cx: &mut App) {
                     kadr_ui::text::Field::single_line(""),
                 ],
                 active_field: None,
+                open_demo: None,
+                demo_choice: 0,
+                demo_bounds: (0..10).map(|_| Default::default()).collect(),
+                demo_anchors: (0..10).map(|_| Default::default()).collect(),
             }
         })
     });
@@ -699,7 +708,7 @@ impl Gallery {
 
     // ------------------------------------------------------------ patterns
 
-    fn patterns(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn patterns(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         let shared = vec![
             wide_spec("presets::render: the saved-looks dropdown and +", 300., div().w_full().child(crate::presets::render(&self.presets, &self.preset_look.clone(), cx))),
@@ -758,8 +767,66 @@ impl Gallery {
             .collect();
         vec![
             group("Shared", Some("Patterns that can be reused as they are."), shared, cx),
+            group("Popover and dropdown", Some("Live: open, pick, click outside, or Escape. Hosts keep their state and key ordering. The four placement samples stay inside the window."), self.popovers(window, cx), cx),
+            group("Menu rows", Some("The existing row looks: checks, icons, hints, disabled and keyboard-highlighted states. Separators use space unless a screen already draws a line."), self.menu_rows(cx), cx),
             group("Not yet shared", Some("Components in practice, private to their screens: copying them here would only be another copy. The backlog for making them shared."), backlog, cx),
         ]
+    }
+
+    fn popovers(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        (0..10).map(|i| {
+            let open = self.open_demo == Some(i);
+            let id = SharedString::from(format!("demo-dropdown-{i}"));
+            let title = ["Below · start", "Below · end", "Above · start", "Above · end", "Settings", "Editor", "History", "Studio field", "Presets", "Recording"][i];
+            let close = cx.listener(|this, _, _, cx| { this.open_demo = None; cx.notify(); });
+            let anchor = popover::anchor(div(), open, &self.demo_bounds[i], Outside::AnchorAndMenu, close)
+                .child(crate::ui::track_bounds(&self.demo_anchors[i]));
+            let click = cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.open_demo = if this.open_demo == Some(i) { None } else { Some(i) };
+                cx.notify();
+            });
+            let button = if i == 7 {
+                popover::field_dropdown(id, t("settings.system"), open, cx, click).into_any_element()
+            } else {
+                let look = match i { 4 => DropdownLook::Settings, 6 => DropdownLook::History, 8 => DropdownLook::Presets, 9 => DropdownLook::Recording, _ => DropdownLook::Editor };
+                popover::dropdown(id, if i < 4 { title } else { t("settings.system") }, open, look).on_click(click).into_any_element()
+            };
+            let menu = open.then(|| {
+                let rows = [t("settings.system"), t("settings.dark"), t("settings.light")].into_iter().enumerate().map(|(k, label)| {
+                    popover::row(SharedString::from(format!("demo-menu-{i}-{k}")), label, self.demo_choice == k, RowOptions { look: if i == 4 { RowLook::Settings } else if i == 8 { RowLook::Preset } else if i == 9 { RowLook::Recording } else { RowLook::Compact }, full_width: true, ..Default::default() }, cx)
+                        .on_click(cx.listener(move |this, _, _, cx| { this.demo_choice = k; this.open_demo = None; cx.notify(); }))
+                }).collect::<Vec<_>>();
+                let at = match i {
+                    1 | 6 => Placement::below(38., Align::End), 2 => Placement::above(38., Align::Start), 3 => Placement::above(38., Align::End),
+                    4 => Placement::below(30., Align::End), 7 => Placement::below(34., Align::Stretch), 8 => Placement::below(38., Align::Stretch),
+                    9 => Placement::below(6., Align::Start).edge(), _ => Placement::below(38., Align::Start),
+                };
+                if i < 4 {
+                    let body = popover::panel(cx, Elevation::Floating).id(SharedString::from(format!("demo-popover-{i}"))).occlude().w(px(210.)).p_1().children(rows).child(crate::ui::track_bounds(&self.demo_bounds[i]));
+                    let t = crate::ui::tokens();
+                    let height = 3. * t.menu.compact_row + 2. * (t.spacing.step_4 * kit::SCALE + t.border.hairline);
+                    popover::show(popover::constrained(self.demo_anchors[i].get(), (210., height), at, window, body), 1)
+                } else {
+                    popover::show(popover::surface(SharedString::from(format!("demo-popover-{i}")), &self.demo_bounds[i], at, if i == 9 { Elevation::Popover } else { Elevation::Floating }, cx)
+                        .when(!matches!(i, 7 | 8), |d| d.w(px(210.))).p_1().when(matches!(i, 4 | 8 | 9), |d| d.gap_0p5()).children(rows), 1)
+                }
+            });
+            spec(title, anchor.w(px(220.)).child(button).children(menu))
+        }).collect()
+    }
+
+    fn menu_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        [RowLook::Compact, RowLook::Settings, RowLook::Recording, RowLook::Preset].into_iter().enumerate().map(|(i, look)| {
+            let rows = (0..5).map(|k| {
+                popover::row(SharedString::from(format!("spec-menu-{i}-{k}")), t(if k == 4 { "common.delete_preset" } else { "common.save" }), k == 0,
+                    RowOptions { look, full_width: true, leading: (k == 1).then(|| Icon::new(IconName::Image)), disabled: k == 4, highlighted: k == 2, ..Default::default() }, cx)
+                    .when(k == 3, |r| r.child(div().flex_1()).child(kit::keys("secondary-s")))
+            });
+            spec(["Compact · 28 px / 6 px", "Settings · natural / 6 rem-base", "Recording · 38 px / 7 rem-base", "Preset · 30 px / 7 px"][i], popover::panel(cx, Elevation::Popover).w(px(220.)).p_1().gap_0p5().children(rows)
+                .child(div().h(px(6.)))
+                .child(popover::row_shell(SharedString::from(format!("spec-swatch-{i}")), "Colour", false, &RowOptions { look, ..Default::default() }, cx)
+                    .child(div().size(px(14.)).rounded_full().bg(cx.theme().colors().text_accent)).child(Label::new(t("common.save")).size(LabelSize::Small))))
+        }).collect()
     }
 
     // ------------------------------------------------------------ sizes
@@ -836,6 +903,7 @@ fn group_note(name: &str) -> &'static str {
         "scrollbar" => "ui::scrollbar, in px.",
         "knob" => "ui::paint_knob, in px.",
         "text_field" => "Single-line caret, selection and input-method composition marks.",
+        "menu" => "Menu row and dropdown field metrics. Logical px and rem-base radii deliberately remain distinct.",
         _ => "",
     }
 }
@@ -1032,13 +1100,11 @@ fn window_controls_name() -> &'static str {
 /// the name, where they live, and their copies.
 const PRIVATE: &[(&str, &str, &str)] = &[
     ("Option chips (segmented choice)", "settings_view.rs `chips`, trim.rs, studio_editor.rs `choices`, editor.rs aspect row", "4 looks: Filled/Subtle chips (settings, trim, the theme row), accent-filled tabs 28 px (studio), a tray of cells (editor)"),
-    ("Dropdown button + kadr-drawn menu", "settings_view.rs `dropdown`, editor.rs `crop_dropdown`/`menu_list`, studio_editor.rs `aspect_dropdown`, history.rs filter, panel.rs size and mic menus", "6 copies; rows 28 or 30 px or MENU_ROW, corners 6 or 7, the check Small/Accent or XSmall/Default"),
     ("Slider", "editor.rs `slider`, studio_editor.rs `slider` + `labeled_slider`", "2 near-identical copies (the studio's has ticks)"),
     ("Checkbox", "studio_editor.rs `check`, editor.rs crop footer (snap to edges)", "2 copies"),
     ("Colour swatch", "editor.rs colour menu and fill picker, editor.rs + studio_editor.rs backdrop tiles, settings_view.rs studio backdrops", "5; the chosen ring is the text colour in some, the accent in others"),
     ("Colour menu", "editor.rs `render_toolbar`", "1: own colours, pipette, recent, saved and +"),
     ("Backdrop picker", "editor.rs, studio_editor.rs (TILE, TILE_RADIUS, TILE_GAP, DOT, GRADIENT_ROWS)", "2 copies with the same constants; the settings' studio backdrops are a third, not concentric (7 outer, 5 inner, 4 inset)"),
-    ("Popover surface (deferred, bounds tracked, closes outside)", "editor.rs colour/text/fill/more menus, studio_editor.rs export, presets.rs", "about a dozen, each with its own offset"),
     ("Settings group (inset card, hairlines) and heading", "settings_view.rs `render_body`, `heading`", "1; studio_editor.rs `group` is a plainer cousin"),
     ("Labelled switch row (compact)", "studio_editor.rs `switch_row`", "1, beside settings_view.rs `row`"),
     ("Section list", "settings_view.rs sidebar, studio_editor.rs `render_rail`", "2 looks: accent-filled rows, accent-filled 36 px icons"),
@@ -1057,7 +1123,7 @@ impl Render for Gallery {
             Section::Icons => self.icons(cx),
             Section::Buttons => self.buttons(cx),
             Section::Controls => self.controls(cx),
-            Section::Patterns => self.patterns(cx),
+            Section::Patterns => self.patterns(window, cx),
             Section::Sizes => self.sizes(cx),
         };
         kit::root(cx)
@@ -1070,7 +1136,7 @@ impl Render for Gallery {
                     return;
                 }
                 if e.keystroke.key == "escape" {
-                    window.remove_window();
+                    if this.open_demo.take().is_some() { cx.notify(); } else { window.remove_window(); }
                 }
             }))
             .child(self.render_list(width, cx))

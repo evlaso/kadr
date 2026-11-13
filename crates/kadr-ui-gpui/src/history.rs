@@ -16,6 +16,7 @@ use crate::ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
 use crate::kit;
 use crate::{editor, pin, util};
 use crate::i18n::t;
+use crate::ui::popover::{self, Align, DropdownLook, Elevation, Outside, Placement, RowOptions};
 
 /// Tiles are at least this wide; a row stretches them to fill the window.
 const MIN_ITEM: f32 = 210.;
@@ -655,30 +656,14 @@ impl Render for History {
         }).collect();
         let filters = if dropdown {
             let label = Filter::ALL.iter().find(|(f, _)| *f == self.filter).map(|&(_, l)| t(l)).unwrap_or_default();
-            let hover = cx.theme().colors().element_hover;
             let menu = self.filter_open.then(|| {
-                gpui::deferred(
-                    v_flex()
-                        .id("filter-menu")
-                        .occlude()
-                        .absolute()
-                        .top(px(38.))
-                        .right_0()
+                popover::show(
+                    popover::surface("filter-menu", &self.filter_menu, Placement::below(38., Align::End), Elevation::Floating, cx)
                         .min_w(px(170.))
                         .p_1()
-                        .elevation_3(cx)
                         .children(Filter::ALL.iter().map(|&(filter, label)| {
                             let count = self.matching(filter).len();
-                            h_flex()
-                                .id(SharedString::from(format!("filter-row-{label}")))
-                                .gap_1p5()
-                                .px_2()
-                                .h(px(28.))
-                                .rounded(px(6.))
-                                .cursor_pointer()
-                                .hover(move |d| d.bg(hover))
-                                .child(div().w(px(14.)).children((self.filter == filter).then(|| Icon::new(IconName::Check).size(IconSize::XSmall))))
-                                .child(Label::new(t(label)).size(LabelSize::Small))
+                            popover::row(SharedString::from(format!("filter-row-{label}")), t(label), self.filter == filter, RowOptions::default(), cx)
                                 .child(div().flex_1())
                                 .when(count > 0, |row| row.child(Label::new(count.to_string()).size(LabelSize::Small).color(Color::Muted)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -687,24 +672,15 @@ impl Render for History {
                                     this.filter_open = false;
                                     cx.notify();
                                 }))
-                        }))
-                        .child(crate::ui::track_bounds(&self.filter_menu)),
+                        })),
+                    0,
                 )
             });
-            h_flex()
-                .relative()
-                .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                    if this.filter_open && !this.filter_menu.get().contains(&e.position) {
-                        this.filter_open = false;
-                        cx.notify();
-                    }
-                }))
-                .child(
-                    ButtonLike::new("filter-dropdown")
-                        .style(if self.filter_open { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                        .size(ButtonSize::Large)
-                        .toggle_state(self.filter_open)
-                        .child(h_flex().px_2().gap_1().child(Label::new(label)).child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)))
+            popover::dropdown_menu(popover::anchor(h_flex(), self.filter_open, &self.filter_menu, Outside::AnchorAndMenu, cx.listener(|this, _, _, cx| {
+                    this.filter_open = false;
+                    cx.notify();
+                })),
+                    popover::dropdown("filter-dropdown", label, self.filter_open, DropdownLook::History)
                         .on_click(cx.listener(|this, e: &ClickEvent, window, cx| {
                             let items = Filter::ALL.iter().map(|&(f, label)| kadr_platform::menu::Item::new(t(label), f == this.filter)).collect();
                             if crate::ui::native_menu(window, cx, e.position(), items, |this: &mut History, i, _, _| {
@@ -716,8 +692,7 @@ impl Render for History {
                             this.filter_open = !this.filter_open;
                             cx.notify();
                         })),
-                )
-                .children(menu)
+                menu)
                 .child(self.filter_fit.track(1, 0))
                 .into_any_element()
         } else {

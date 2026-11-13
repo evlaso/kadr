@@ -6,6 +6,7 @@
 pub mod cards;
 pub mod editor;
 pub mod history;
+pub mod popover;
 pub mod settings;
 pub mod text;
 pub mod tokens;

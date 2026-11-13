@@ -9,7 +9,7 @@
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     AnyView, App, Bounds, Context, CursorStyle, DispatchPhase, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, WeakEntity,
-    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, deferred, div, point, popup::*, px, rgba, size,
+    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div, point, popup::*, px, rgba, size,
 };
 use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
 
@@ -18,6 +18,7 @@ use crate::picker::{BOTTOM, LEFT, RIGHT, Rect, TOP};
 use crate::record::{self, Opts, PanelChoice, Target};
 use crate::util::{self, Mon};
 use crate::i18n::t;
+use crate::ui::popover::{self, Align, DropdownLook, Elevation, Placement, RowLook, RowOptions};
 
 /// Height of the bar, for placing it around the area.
 const BAR_HEIGHT: f32 = 56. * kit::SCALE;
@@ -42,6 +43,7 @@ pub struct Panel {
     /// pointer when it started.
     drag: Option<(u8, Rect, (f32, f32))>,
     size_menu: bool,
+    size_menu_bounds: crate::ui::MenuBounds,
     /// The microphone's level 0..1 while it's on, and what reads it.
     level: f32,
     meter: Option<crate::meter::Meter>,
@@ -119,6 +121,7 @@ impl Panel {
             part,
             drag: None,
             size_menu: false,
+            size_menu_bounds: Default::default(),
             level: 0.,
             meter: None,
             region: InputRegion::default(),
@@ -249,17 +252,7 @@ impl Panel {
         let (_, _, w, h) = self.rect;
         let current = ((w * s).round(), (h * s).round());
         let text = format!("{} × {}", current.0, current.1);
-        let button = ButtonLike::new("size")
-            .style(if self.size_menu { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-            .size(ButtonSize::Large)
-            .toggle_state(self.size_menu)
-            .child(
-                h_flex()
-                    .px_1()
-                    .gap_1()
-                    .child(div().font_family(kit::MONO_FONT).text_sm().child(text))
-                    .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall).color(Color::Muted)),
-            )
+        let button = popover::dropdown("size", text, self.size_menu, DropdownLook::Recording)
             // No tooltip over its own open menu.
             .when(!self.size_menu, |b| b.tip(Tooltip::text(t("record_bar.area_size"))))
             .on_click(cx.listener(|this, _, _, cx| {
@@ -268,8 +261,6 @@ impl Panel {
             }));
 
         let menu = self.size_menu.then(|| {
-            let colors = cx.theme().colors();
-            let (hover, selected) = (colors.element_hover, colors.element_selected);
             let phys = (self.mon.phys.0 as f32, self.mon.phys.1 as f32);
             let mut sizes: Vec<((f32, f32), Option<SharedString>)> = PRESETS.iter().map(|&(pw, ph)| ((pw as f32, ph as f32), None)).collect();
             sizes.push((phys, Some(t("common.fullscreen").into())));
@@ -278,18 +269,7 @@ impl Panel {
                 .enumerate()
                 .map(|(i, (size, hint))| {
                     let checked = (size.0.min(phys.0), size.1.min(phys.1)) == current;
-                    h_flex()
-                        .id(("size", i))
-                        .h(px(MENU_ROW))
-                        .flex_none()
-                        .px_2()
-                        .gap_2()
-                        .rounded(crate::ui::rems_from_px(7.))
-                        .cursor_pointer()
-                        .when(checked, |row| row.bg(selected))
-                        .hover(move |st| st.bg(hover))
-                        .child(Icon::new(IconName::Check).size(IconSize::Small).color(if checked { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
-                        .child(Label::new(format!("{} × {}", size.0, size.1)))
+                    popover::row(("size", i), format!("{} × {}", size.0, size.1), checked, RowOptions { look: RowLook::Recording, ..Default::default() }, cx)
                         .children(hint.map(|hint| Label::new(hint).color(Color::Muted)))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.size_menu = false;
@@ -299,27 +279,21 @@ impl Panel {
                 })
                 .collect();
             let n = rows.len() as f32;
-            let height = n * MENU_ROW + (n - 1.) * MENU_GAP + 2. * MENU_PAD;
+            let height = n * menu_row() + (n - 1.) * MENU_GAP + 2. * MENU_PAD;
             // Down when it fits under the bar, else up.
-            let below = bar_y + BAR_HEIGHT + height + 8. < self.mon.h as f32;
-            deferred(
-                v_flex()
-                    .id("size-menu")
-                    .occlude()
-                    .absolute()
-                    .left_0()
+            let below = kadr_ui::popover::fits_below(bar_y + BAR_HEIGHT, height, 8., self.mon.h as f32);
+            popover::show(
+                popover::surface("size-menu", &self.size_menu_bounds, if below { Placement::below(6., Align::Start).edge() } else { Placement::above(6., Align::Start).edge() }, Elevation::Popover, cx)
                     // Just off the size button's edge, not the bar's.
-                    .when(below, |d| d.top(gpui::relative(1.)).mt(px(6.)))
-                    .when(!below, |d| d.bottom(gpui::relative(1.)).mb(px(6.)))
                     .w(px(240. * kit::SCALE))
                     .p(px(MENU_PAD))
                     .gap(px(MENU_GAP))
-                    .elevation_2(cx)
                     .child(self.region.mark())
                     .children(rows),
+                0,
             )
         });
-        div().relative().child(button).children(menu).into_any_element()
+        popover::dropdown_menu(div().relative(), button, menu).into_any_element()
     }
 
     /// The area's frame and knobs, and what grabs them.
@@ -407,7 +381,7 @@ impl Panel {
         // Exactly the rows, their gaps, the padding and the border: the popup
         // can't size itself to its content.
         let n = entries.len().max(1) as f32;
-        let height = n * MENU_ROW + (n - 1.) * MENU_GAP + 2. * MENU_PAD + 2.;
+        let height = n * menu_row() + (n - 1.) * MENU_GAP + 2. * MENU_PAD + 2.;
         let mut options = WindowOptions {
             titlebar: None,
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin: point(px(0.), px(0.)), size: size(px(380. * kit::SCALE), px(height)) })),
@@ -670,30 +644,17 @@ struct MicMenu {
 }
 
 /// Microphone menu metrics, shared by the popup's size and its layout.
-const MENU_ROW: f32 = 32. * kit::SCALE;
+fn menu_row() -> f32 { crate::ui::tokens().menu.recording_row * kit::SCALE }
 const MENU_GAP: f32 = 2. * kit::SCALE;
 const MENU_PAD: f32 = 5. * kit::SCALE;
 
 impl Render for MicMenu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        let (hover, selected) = (colors.element_hover, colors.element_selected);
         let rows = self.entries.iter().enumerate().map(|(i, (name, desc))| {
             let panel = self.panel.clone();
             let name = name.clone();
             let checked = name == self.selected;
-            h_flex()
-                .id(i)
-                .h(px(MENU_ROW))
-                .flex_none()
-                .px_2()
-                .gap_2()
-                .rounded(crate::ui::rems_from_px(7.))
-                .cursor_pointer()
-                .when(checked, |row| row.bg(selected))
-                .hover(move |s| s.bg(hover))
-                .child(Icon::new(IconName::Check).size(IconSize::Small).color(if checked { Color::Accent } else { Color::Custom(gpui::transparent_black()) }))
-                .child(Label::new(desc.clone()))
+            popover::row(i, desc.clone(), checked, RowOptions { look: RowLook::Recording, ..Default::default() }, cx)
                 .on_click(move |_, window, cx| {
                     let _ = panel.update(cx, |panel, cx| {
                         panel.opts.mic_device = name.clone();
@@ -703,6 +664,6 @@ impl Render for MicMenu {
                     window.remove_window();
                 })
         });
-        kit::root(cx).child(v_flex().size_full().p(px(MENU_PAD)).gap(px(MENU_GAP)).elevation_2(cx).children(rows))
+        kit::root(cx).child(popover::panel(cx, Elevation::Popover).size_full().p(px(MENU_PAD)).gap(px(MENU_GAP)).children(rows))
     }
 }
