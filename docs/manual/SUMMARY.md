@@ -11,4 +11,5 @@
 - [Settings](settings.md)
 - [Project files](projects.md)
 - [Command line](cli.md)
+- [Languages](languages.md)
 - [Glossary](glossary.md)

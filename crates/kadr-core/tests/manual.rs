@@ -213,3 +213,30 @@ fn the_roadmap_keeps_the_shape_the_site_reads() {
         }
     }
 }
+
+/// The languages page lists every file of `data/i18n` with how much of the
+/// English it has: "source" for English, a percentage for the rest.
+#[test]
+fn the_languages_page_says_how_much_is_translated() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/i18n");
+    let strings = |name: &str| -> std::collections::BTreeMap<String, String> {
+        serde_json::from_str(&fs::read_to_string(dir.join(name)).unwrap()).unwrap()
+    };
+    let english = strings("en.json");
+    let page = fs::read_to_string(manual().join("languages.md")).unwrap();
+    for entry in fs::read_dir(&dir).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        let row = page
+            .lines()
+            .find(|l| l.starts_with('|') && l.contains(&format!("/data/i18n/{name})")))
+            .unwrap_or_else(|| panic!("languages.md has no row for {name}"));
+        let wanted = if name == "en.json" {
+            "source".to_owned()
+        } else {
+            let theirs = strings(&name);
+            let done = english.keys().filter(|k| theirs.get(*k).is_some_and(|t| !t.is_empty())).count();
+            format!("{}%", done * 100 / english.len())
+        };
+        assert!(row.contains(&format!("| {wanted} |")), "languages.md's row for {name} should say \"{wanted}\": {row}");
+    }
+}

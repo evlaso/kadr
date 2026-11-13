@@ -45,7 +45,8 @@ a real pointer, screenshots kept as artifacts.
 - Anything that differs between systems: `crates/kadr-platform`.
 - Drawing onto pictures: `crates/kadr-raster`, with a golden case.
 - Text in the UI goes through `i18n` by key; add every new string to both
-  `data/i18n/en.json` and `ru.json`.
+  `data/i18n/en.json` and `ru.json`. Translations and corrections are welcome: see
+  [Languages](https://evlaso.github.io/kadr/languages/).
 - Icons are Lucide; fonts are OFL. Nothing GPL.
 - What a person can see or do is in the manual, `docs/manual`, one page
   per screen, in English (kadr's documents are English only; the app
