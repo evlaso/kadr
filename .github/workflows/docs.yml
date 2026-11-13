@@ -1,15 +1,17 @@
 name: docs
 
-# The site on GitHub Pages (the manual in two languages, its first page
-# the home; scripts/manual.sh: Eleventy and Pagefind): built on every push
-# to main that touches it, and put on the gh-pages branch in place of
-# everything there but releases/: the release job keeps latest.json in it,
-# which the tray's update check reads.
+# The site on GitHub Pages (the manual, its first page the home, with the
+# roadmap and the changelog; scripts/manual.sh: Eleventy and Pagefind):
+# built on every push to main that touches it, and put on the gh-pages
+# branch in place of everything there but releases/: the release job keeps
+# latest.json in it, which the tray's update check reads.
 on:
   push:
     branches: [main]
     paths:
       - docs/manual/**
+      - CHANGELOG.md
+      - docs/ROADMAP.md
       - website/**
       - docs/images/**
       - scripts/manual.sh

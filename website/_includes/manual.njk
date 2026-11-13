@@ -1,14 +1,14 @@
 ---
 layout: base.njk
 ---
-{%- set t = strings[lang] -%}
+{%- set t = strings -%}
 {%- set root = page.url | root -%}
-{%- set pages = nav[lang] -%}
+{%- set pages = nav -%}
 <div class="manual">
   <aside class="menu">
     <div class="menu-inner">
     <div class="menu-head">
-      <a class="wordmark" href="{{ root }}{{ lang | pageUrl('') }}">kadr</a>
+      <a class="wordmark" href="{{ root }}">kadr</a>
       <button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
         <span>{{ t.search }}</span><kbd>Ctrl K</kbd>
@@ -20,10 +20,11 @@ layout: base.njk
     </div>
     <details class="menu-fold" open>
       <summary>{{ t.pages }}</summary>
-      <ul class="pages">
-        {%- for p in pages %}
+      {%- for group in [pages, projectNav] %}
+      <ul class="pages{% if loop.index0 %} project-pages{% endif %}">
+        {%- for p in group %}
         <li>
-          <a href="{{ root }}{{ lang | pageUrl(p.slug) }}"{% if p.slug == slug %} aria-current="page"{% endif %}>{{ p.title if p.slug else t.intro }}</a>
+          <a href="{{ root }}{{ p.slug | pageUrl }}"{% if p.slug == slug %} aria-current="page"{% endif %}>{{ p.title if p.slug else t.intro }}</a>
           {%- if p.slug == slug %}
           {%- set outline = content | outline %}
           {%- if outline.length %}
@@ -37,6 +38,7 @@ layout: base.njk
         </li>
         {%- endfor %}
       </ul>
+      {%- endfor %}
     </details>
     </div>
   </aside>
@@ -54,14 +56,16 @@ layout: base.njk
     <img class="shot" src="{{ root }}images/editor.png" alt="{{ t.shotAlt }}" width="1401" height="777">
     {{ content | withoutTitle | afterFirstParagraph | safe }}
     {%- endif %}
+    {%- if not sourceFile %}
     <footer class="turn">
       {%- for p in pages %}{% if p.slug == slug %}
       {%- set prev = pages[loop.index0 - 1] if loop.index0 > 0 %}
       {%- set next = pages[loop.index0 + 1] %}
-      <span>{% if prev %}<a href="{{ root }}{{ lang | pageUrl(prev.slug) }}">← {{ prev.title if prev.slug else t.intro }}</a>{% endif %}</span>
-      <span>{% if next %}<a href="{{ root }}{{ lang | pageUrl(next.slug) }}">{{ next.title }} →</a>{% endif %}</span>
+      <span>{% if prev %}<a href="{{ root }}{{ prev.slug | pageUrl }}">← {{ prev.title if prev.slug else t.intro }}</a>{% endif %}</span>
+      <span>{% if next %}<a href="{{ root }}{{ next.slug | pageUrl }}">{{ next.title }} →</a>{% endif %}</span>
       {%- endif %}{% endfor %}
     </footer>
-    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a> · <a href="{{ root }}{{ lang | mdUrl(slug) }}">{{ t.asMarkdown }}</a> · <a href="{{ root }}{{ lang | pageUrl('') }}llms-full.txt" title="{{ t.llmsTip }}">{{ t.llms }}</a></span> <span class="theme" role="group" aria-label="{{ t.theme }}"><button type="button" data-theme-is="system">{{ t.system }}</button><button type="button" data-theme-is="light">{{ t.light }}</button><button type="button" data-theme-is="dark">{{ t.dark }}</button></span></div>
+    {%- endif %}
+    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/{% if sourceFile %}{{ sourceFile }}{% else %}docs/manual/{{ slug or 'README' }}.md{% endif %}">{{ t.edit }}</a> · <a href="{{ root }}{{ slug | mdUrl }}">{{ t.asMarkdown }}</a> · <a href="{{ root }}llms-full.txt" title="{{ t.llmsTip }}">{{ t.llms }}</a></span> <span class="theme" role="group" aria-label="{{ t.theme }}"><button type="button" data-theme-is="system">{{ t.system }}</button><button type="button" data-theme-is="light">{{ t.light }}</button><button type="button" data-theme-is="dark">{{ t.dark }}</button></span></div>
   </main>
 </div>

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Builds the site that GitHub Pages serves into target/site: the manual in
-# English (at the root) and Russian (/ru/), with Eleventy from
-# docs/manual and website (its config, layouts and styles), and a search
-# index over the result (Pagefind). Needs Node; `--serve` then shows it on
+# Builds the site that GitHub Pages serves into target/site: the manual,
+# the roadmap and the changelog, with Eleventy from docs/manual,
+# docs/ROADMAP.md, CHANGELOG.md and website (its config, layouts and
+# styles), and a search index over the result (Pagefind). Needs Node; `--serve` then shows it on
 # localhost:8000.
 set -euo pipefail
 cd "$(dirname "$0")/.."
