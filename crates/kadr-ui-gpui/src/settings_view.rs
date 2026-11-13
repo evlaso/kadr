@@ -641,7 +641,7 @@ fn update_row(cx: &App) -> (String, AnyElement) {
     (about, right.into_any_element())
 }
 
-fn row(title: &str, description: &str, control: AnyElement) -> (String, AnyElement) {
+pub(crate) fn row(title: &str, description: &str, control: AnyElement) -> (String, AnyElement) {
     let el = h_flex()
         .w_full()
         .flex_wrap()

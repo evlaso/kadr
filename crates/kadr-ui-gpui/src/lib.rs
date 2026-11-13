@@ -12,6 +12,7 @@ mod capture;
 mod cards;
 mod dev;
 mod editor;
+mod gallery;
 mod history;
 mod launcher;
 mod hotkeys;
@@ -97,6 +98,7 @@ fn run_command(command: Command, cx: &mut App) {
         Command::Capture => launcher::toggle(cx),
         Command::UpdateAvailable(version, page) => cards::show_update(version, page, cx),
         Command::Update => update::check_now(cx),
+        Command::Gallery => gallery::open(cx),
     }
 }
 

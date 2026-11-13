@@ -78,6 +78,9 @@ pub enum Command {
     UpdateAvailable(String, String),
     /// Look for a newer release now.
     Update,
+    /// Every component in each of its states, in one window: a tool for
+    /// whoever works on kadr's look, not listed in the usage.
+    Gallery,
 }
 
 impl Command {
@@ -123,6 +126,7 @@ impl Command {
             Some("settings") => Ok(Command::Settings),
             Some("capture") => Ok(Command::Capture),
             Some("update") => Ok(Command::Update),
+            Some("gallery") => Ok(Command::Gallery),
             Some("update-available") => match (args.get(1), args.get(2)) {
                 (Some(version), Some(page)) => Ok(Command::UpdateAvailable(version.clone(), page.clone())),
                 _ => Err(crate::tr!("cli.unknown_command", "update-available")),
