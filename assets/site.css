@@ -5,15 +5,16 @@
   --reading: 42rem; --menu: 12rem; --gap: 3.5rem;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --shot-light: none; --shot-dark: block;
   color-scheme: dark;
 }
 /* Light when the system is, unless the reader picked a theme under a page. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) { --bg: #fff; --text: #100f0f; --soft: #6f6e69; --faint: #b7b5ac; --line: #e8e7e3; --tint: #f5f4f1; --accent: #205ea6;
-    --muted: #66655f; --panel: #fff; --hover: #f5f4f1; --mark: #205ea6; --dim: rgb(16 15 15 / 0.24); color-scheme: light; }
+    --muted: #66655f; --panel: #fff; --hover: #f5f4f1; --mark: #205ea6; --dim: rgb(16 15 15 / 0.24); --shot-light: block; --shot-dark: none; color-scheme: light; }
 }
 :root[data-theme="light"] { --bg: #fff; --text: #100f0f; --soft: #6f6e69; --faint: #b7b5ac; --line: #e8e7e3; --tint: #f5f4f1; --accent: #205ea6;
-    --muted: #66655f; --panel: #fff; --hover: #f5f4f1; --mark: #205ea6; --dim: rgb(16 15 15 / 0.24); color-scheme: light; }
+    --muted: #66655f; --panel: #fff; --hover: #f5f4f1; --mark: #205ea6; --dim: rgb(16 15 15 / 0.24); --shot-light: block; --shot-dark: none; color-scheme: light; }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-padding-top: 1.5rem; }
 body {
@@ -136,7 +137,11 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .button { background: var(--text); color: var(--bg); text-decoration: none; padding: 0.5rem 1.1rem; border-radius: 8px; font-weight: 600; }
 .button:hover { color: var(--bg); background: var(--accent); }
 .note { color: var(--soft); font-size: 0.875rem; }
-.shot { display: block; width: 100%; height: auto; border-radius: 10px; margin: 0 0 2.5rem; border: 1px solid var(--line); }
+.shot { display: block; max-width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); }
+.themed-shot { display: block; }
+.shot-light { display: var(--shot-light); }
+.shot-dark { display: var(--shot-dark); }
+.home-shot { margin: 0 0 2.5rem; }
 
 /* Release history: one quiet spine, with dates outside the heading's anchor. */
 .releases { margin-top: 2.5rem; padding-left: 1.5rem; border-left: 1px solid var(--line); }

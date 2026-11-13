@@ -2,6 +2,8 @@
 
 The editor is where a screenshot gets its arrows, boxes, text and step numbers, where private details are hidden, and where the picture is cropped and put on a background. What you draw stays editable: open the saved file in the editor again and every shape comes back.
 
+![An arrow, rectangle, caption and step number mark the first draft in a drawn planning app](https://evlaso.github.io/kadr/images/editor-light.webp)
+
 It opens PNG, JPEG and WebP pictures, and `.kadr` project files.
 
 ## How to open
@@ -48,6 +50,8 @@ Hold Shift while drawing for squares, circles, and lines and arrows at 45° step
 ## Background and presets
 
 The background button in the top bar opens a sidebar:
+
+![The editor's background sidebar applies a warm gradient behind the annotated picture](https://evlaso.github.io/kadr/images/editor-background-light.webp)
 
 - **Presets** at the top: + saves the current look as a preset, the dropdown picks one, and each can be renamed or deleted from there.
 - **None**, **Gradients** (**Show more** for the rest), **Wallpapers** (the Omarchy themes' backgrounds, where there are any, plus **Your own image…**), **Blurred** (the screenshot itself, blurred), **Plain color** (including **Transparent**).

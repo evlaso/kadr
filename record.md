@@ -13,6 +13,8 @@ First you pick the area, the same way as for a screenshot (see [Capture](capture
 
 ## The recording bar
 
+![The recording bar below an adjustable 800 × 450 area, ready to record the drawn sample app](https://evlaso.github.io/kadr/images/record-light.webp)
+
 The bar sits under the area (or above it, or inside it, where there's no room), and the rest of the screen is dimmed. From the left:
 
 - **Cancel** (Esc).

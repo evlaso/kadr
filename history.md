@@ -2,6 +2,8 @@
 
 Every screenshot, recording and GIF in your screenshots and recordings folders, newest first, as a grid of thumbnails. Find one by typing, then open, copy, pin or delete it, or drag it out into a chat.
 
+![History shows four drawn sample screenshots with dates, type filters and capture actions](https://evlaso.github.io/kadr/images/history-light.webp)
+
 ## How to open
 
 - **The hotkey.** On macOS and Windows the default is Ctrl+Shift+4; on Linux kadr starts from your Hyprland bindings. Set it in Settings → Shortcuts → History.

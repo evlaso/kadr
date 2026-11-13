@@ -17,6 +17,8 @@ kadr takes screenshots and records the screen. Capture an area, a window or the 
 
 This manual says what kadr does today, screen by screen. Each page has the same shape: what the screen is for, how to open it, what's on it, its keys, the settings that change it and the commands that start it. What changed between versions is in the [changelog](https://evlaso.github.io/kadr/changelog/); where the project is going is the [roadmap](https://evlaso.github.io/kadr/roadmap/).
 
+![The capture bar offers area, previous area, fullscreen, window, scrolling, timer, text and recording modes](https://evlaso.github.io/kadr/images/capture-bar-light.webp)
+
 ## Pages
 
 - [Install](https://evlaso.github.io/kadr/install/): the builds, what kadr needs on each system, the Hyprland hook.
@@ -159,6 +161,8 @@ Click a mode, press its digit, or move with the left and right arrows and press 
 
 ## Picking an area
 
+![The area picker keeps an 800 × 450 selection, its size label, adjustment handles and key hints over a drawn sample](https://evlaso.github.io/kadr/images/capture-light.webp)
+
 The screen freezes, and you drag a box over it. A hint bar says what the keys do at each moment.
 
 - **Drag** to draw the area; it's taken when you let go. Shift while dragging makes a square. Holding Space while dragging moves the whole box instead.
@@ -186,6 +190,8 @@ The Area mode and `kadr shot region` don't snap to windows: a click there only c
 A frame shows round the area, and a bar by it says "Scroll — kadr stitches it" with the length so far in pixels. Press Done, or the same hotkey again, to save it; Cancel throws it away. Scrolling shots work on Linux, macOS and Windows.
 
 ## The card after a capture
+
+![A sample screenshot's quick-access card with Copy, Edit, pin, text recognition and file actions visible](https://evlaso.github.io/kadr/images/card-light.webp)
 
 A card with the picture slides in at the corner of the screen. By default the screenshot is also copied to the clipboard right away. Hover over the card for its buttons:
 
@@ -294,6 +300,8 @@ On the site: https://evlaso.github.io/kadr/editor/
 
 The editor is where a screenshot gets its arrows, boxes, text and step numbers, where private details are hidden, and where the picture is cropped and put on a background. What you draw stays editable: open the saved file in the editor again and every shape comes back.
 
+![An arrow, rectangle, caption and step number mark the first draft in a drawn planning app](https://evlaso.github.io/kadr/images/editor-light.webp)
+
 It opens PNG, JPEG and WebP pictures, and `.kadr` project files.
 
 ## How to open
@@ -340,6 +348,8 @@ Hold Shift while drawing for squares, circles, and lines and arrows at 45° step
 ## Background and presets
 
 The background button in the top bar opens a sidebar:
+
+![The editor's background sidebar applies a warm gradient behind the annotated picture](https://evlaso.github.io/kadr/images/editor-background-light.webp)
 
 - **Presets** at the top: + saves the current look as a preset, the dropdown picks one, and each can be renamed or deleted from there.
 - **None**, **Gradients** (**Show more** for the rest), **Wallpapers** (the Omarchy themes' backgrounds, where there are any, plus **Your own image…**), **Blurred** (the screenshot itself, blurred), **Plain color** (including **Transparent**).
@@ -442,6 +452,8 @@ Records an area or the whole screen to an MP4, with the microphone, the computer
 First you pick the area, the same way as for a screenshot (see [Capture](https://evlaso.github.io/kadr/capture/)): drag a box, or click a window to record it, or click elsewhere to record the whole screen. The recording bar then shows by the area as soon as you let go of the mouse.
 
 ## The recording bar
+
+![The recording bar below an adjustable 800 × 450 area, ready to record the drawn sample app](https://evlaso.github.io/kadr/images/record-light.webp)
 
 The bar sits under the area (or above it, or inside it, where there's no room), and the rest of the screen is dimmed. From the left:
 
@@ -562,6 +574,8 @@ On the site: https://evlaso.github.io/kadr/studio/
 
 The studio turns a screen recording into a finished video: it zooms in where you clicked, cuts out the dull parts, draws a large smooth cursor, puts the video on a background with the camera in a corner, and exports MP4 or GIF.
 
+![A drawn planning app in the studio, with a selected 180% zoom on the filmstrip's zoom track](https://evlaso.github.io/kadr/images/studio-light.webp)
+
 It works best with a recording made in studio mode (the sparkle button on the recording bar): then the system's cursor stays out of the video, kadr draws its own, and the camera is recorded separately, so all of them can be changed here. See [Recording](https://evlaso.github.io/kadr/record/).
 
 kadr keeps your edit as you go: open the same recording again and it's all there. **Edited** next to the name in the title bar says it's changed. **Project** saves the recording with its edit as a `.kadr` file, next to the recordings (see [Project files](https://evlaso.github.io/kadr/projects/)).
@@ -676,6 +690,8 @@ On the site: https://evlaso.github.io/kadr/history/
 
 Every screenshot, recording and GIF in your screenshots and recordings folders, newest first, as a grid of thumbnails. Find one by typing, then open, copy, pin or delete it, or drag it out into a chat.
 
+![History shows four drawn sample screenshots with dates, type filters and capture actions](https://evlaso.github.io/kadr/images/history-light.webp)
+
 ## How to open
 
 - **The hotkey.** On macOS and Windows the default is Ctrl+Shift+4; on Linux kadr starts from your Hyprland bindings. Set it in Settings → Shortcuts → History.
@@ -758,6 +774,8 @@ kadr history                                   history of screenshots and record
 On the site: https://evlaso.github.io/kadr/settings/
 
 Settings controls capture behaviour, shortcuts, the editor and studio defaults, and storage. Changes are saved right away. Search looks across sections, so you do not need to remember which section holds a row.
+
+![Settings on General, with the language, appearance, update and thumbnail choices](https://evlaso.github.io/kadr/images/settings-light.webp)
 
 ## How to open
 

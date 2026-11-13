@@ -28,6 +28,8 @@ Click a mode, press its digit, or move with the left and right arrows and press 
 
 ## Picking an area
 
+![The area picker keeps an 800 × 450 selection, its size label, adjustment handles and key hints over a drawn sample](https://evlaso.github.io/kadr/images/capture-light.webp)
+
 The screen freezes, and you drag a box over it. A hint bar says what the keys do at each moment.
 
 - **Drag** to draw the area; it's taken when you let go. Shift while dragging makes a square. Holding Space while dragging moves the whole box instead.
@@ -55,6 +57,8 @@ The Area mode and `kadr shot region` don't snap to windows: a click there only c
 A frame shows round the area, and a bar by it says "Scroll — kadr stitches it" with the length so far in pixels. Press Done, or the same hotkey again, to save it; Cancel throws it away. Scrolling shots work on Linux, macOS and Windows.
 
 ## The card after a capture
+
+![A sample screenshot's quick-access card with Copy, Edit, pin, text recognition and file actions visible](https://evlaso.github.io/kadr/images/card-light.webp)
 
 A card with the picture slides in at the corner of the screen. By default the screenshot is also copied to the clipboard right away. Hover over the card for its buttons:
 
