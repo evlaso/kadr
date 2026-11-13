@@ -62,6 +62,6 @@ layout: base.njk
       <span>{% if next %}<a href="{{ root }}{{ lang | pageUrl(next.slug) }}">{{ next.title }} →</a>{% endif %}</span>
       {%- endif %}{% endfor %}
     </footer>
-    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a> · <a href="{{ root }}{{ lang | mdUrl(slug) }}">{{ t.asMarkdown }}</a> · <a href="{{ root }}{{ lang | pageUrl('') }}llms-full.txt" title="{{ t.llmsTip }}">{{ t.llms }}</a></span> <button class="theme" type="button"><span class="to-light">{{ t.light }}</span><span class="to-dark">{{ t.dark }}</span></button></div>
+    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/{{ lang }}/{{ slug or 'README' }}.md">{{ t.edit }}</a> · <a href="{{ root }}{{ lang | mdUrl(slug) }}">{{ t.asMarkdown }}</a> · <a href="{{ root }}{{ lang | pageUrl('') }}llms-full.txt" title="{{ t.llmsTip }}">{{ t.llms }}</a></span> <span class="theme" role="group" aria-label="{{ t.theme }}"><button type="button" data-theme-is="system">{{ t.system }}</button><button type="button" data-theme-is="light">{{ t.light }}</button><button type="button" data-theme-is="dark">{{ t.dark }}</button></span></div>
   </main>
 </div>
