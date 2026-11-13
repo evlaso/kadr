@@ -16,8 +16,8 @@ golden:
 golden-cases:
     cargo test --release -p kadr-raster --test golden make_golden_cases -- --ignored
 
-# The budgets of SPEC.md section 2, on the live Hyprland session (the
-# picker and an editor show for a moment). Writes target/bench.json; fails
+# The budgets of SPEC.md section 2, in a nested Hyprland of its own
+# (scripts/nested.sh), so nothing shows. Writes target/bench.json; fails
 # over budget, warns >15% worse than docs/perf.json.
 bench *args:
     python3 scripts/bench.py {{args}}
