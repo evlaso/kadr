@@ -2,6 +2,8 @@
 
 The studio turns a screen recording into a finished video: it zooms in where you clicked, cuts out the dull parts, draws a large smooth cursor, puts the video on a background with the camera in a corner, and exports MP4 or GIF.
 
+![A drawn planning app in the studio, with a selected 180% zoom on the filmstrip's zoom track](../images/studio-light.webp)
+
 It works best with a recording made in studio mode (the sparkle button on the recording bar): then the system's cursor stays out of the video, kadr draws its own, and the camera is recorded separately, so all of them can be changed here. See [Recording](record.md).
 
 kadr keeps your edit as you go: open the same recording again and it's all there. **Edited** next to the name in the title bar says it's changed. **Project** saves the recording with its edit as a `.kadr` file, next to the recordings (see [Project files](projects.md)).

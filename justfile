@@ -26,6 +26,10 @@ bench *args:
 deps:
     scripts/check-deps.sh
 
+# The manual's real UI pictures, with drawn sample media (build release first).
+shots:
+    scripts/shots.sh
+
 # kadr end to end in a nested Hyprland of its own (scripts/nested.sh; needs a
 # running Hyprland). Each test starts its own session.
 e2e *args:

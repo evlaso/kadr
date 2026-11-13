@@ -2,7 +2,7 @@
 
 Screenshots and screen recording for the desktop: capture an area, a window or the screen, annotate it, record with your camera and clicks, and turn a recording into a polished video. Written in Rust on [GPUI CE](https://github.com/gpui-ce/gpui-ce). Made first for Linux on [Omarchy](https://omarchy.org) (Arch, Hyprland, Wayland), coming to macOS and Windows. English and Russian; dark and light themes follow the system.
 
-![The editor: an arrow, a box and a caption on a screenshot, on a gradient backdrop](docs/images/editor.png)
+![The editor: an arrow, a box, a caption and a step number on a drawn sample app](docs/images/editor-light.webp)
 
 **Status:** works on Linux (Wayland, Hyprland). macOS and Windows build and pass their end-to-end test in CI (the editor, typing, the system's menus, the area overlay), but nobody has used them on a real machine yet, and the camera and the studio's click log aren't ported there. The latest pre-release is on [Releases](https://github.com/evlaso/kadr/releases); testers on macOS and Windows are very welcome.
 

@@ -4,6 +4,8 @@ kadr takes screenshots and records the screen. Capture an area, a window or the 
 
 This manual says what kadr does today, screen by screen. Each page has the same shape: what the screen is for, how to open it, what's on it, its keys, the settings that change it and the commands that start it. What changed between versions is in the [changelog](https://evlaso.github.io/kadr/changelog/); where the project is going is the [roadmap](https://evlaso.github.io/kadr/roadmap/).
 
+![The capture bar offers area, previous area, fullscreen, window, scrolling, timer, text and recording modes](../images/capture-bar-light.webp)
+
 ## Pages
 
 - [Install](install.md): the builds, what kadr needs on each system, the Hyprland hook.

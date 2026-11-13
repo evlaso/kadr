@@ -53,7 +53,7 @@ layout: base.njk
       <a class="button" href="https://github.com/evlaso/kadr/releases">{{ t.download }}</a>
       <span class="note">{{ t.downloadNote }}</span>
     </p>
-    <img class="shot" src="{{ root }}images/editor.png" alt="{{ t.shotAlt }}" width="1401" height="777">
+    <div class="home-shot">{{ "editor-light.webp" | manualImage(t.shotAlt, root, false) | safe }}</div>
     {{ content | withoutTitle | afterFirstParagraph | safe }}
     {%- endif %}
     {%- if not sourceFile %}

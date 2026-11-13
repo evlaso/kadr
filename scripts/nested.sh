@@ -3,7 +3,7 @@
 # (tests/e2e/hypr.lua, one 1920×1080 output), its own runtime folder, its own
 # D-Bus session bus (the tray and notifications stay out of the real panel),
 # and kadr's folders under it. The nested window is kept off screen in the
-# real session (a special workspace) and still renders.
+# real session (a workspace never shown there) and still renders.
 #
 #   eval "$(scripts/nested.sh start)"   # prints `export KEY=…` lines
 #   scripts/nested.sh stop "$KADR_E2E_DIR"

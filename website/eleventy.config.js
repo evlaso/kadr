@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import anchor from "markdown-it-anchor";
 import MarkdownIt from "markdown-it";
+import { imageSize } from "image-size";
 
 const MANUAL = "docs/manual";
 // The site's address, for the files read outside it (llms.txt and
@@ -25,7 +26,7 @@ const STRINGS = {
   headline: "Screenshots and screen recording for the desktop",
   description: "Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.",
   download: "Download", downloadNote: "Linux, macOS and Windows. Alpha.", allReleases: "all releases",
-  shotAlt: "The editor: an arrow, a box and a caption on a screenshot, on a gradient backdrop",
+  shotAlt: "The editor: an arrow, a box, a caption and a step number on a drawn sample app",
   roadmap: "Roadmap", changelog: "Changelog", unreleased: "Next", progress: "Progress", of: "of",
   done: "Done", partial: "Partly done", later: "Not yet", excluded: "Not planned", na: "Not applicable",
   milestoneDone: "Done", milestoneNow: "Now", milestoneLater: "Later",
@@ -153,6 +154,9 @@ function searchIndex(items, includeProject = true) {
 // of every page beside its HTML (editor.md). All of it is made from the
 // manual's sources, so it needs no upkeep of its own.
 const source = (slug) => fs.readFileSync(path.join(MANUAL, `${slug || "README"}.md`), "utf8");
+// The Markdown copies live beside index.md, not under docs/manual. Images
+// need the same absolute site addresses as llms-full.txt's other resources.
+const imageLinks = (markdown) => markdown.replace(/(!\[[^\]]*\]\()\.\.\/images\/([^\s)]+)(\))/g, `$1${SITE_URL}images/$2$3`);
 // Rewrites a page's links to other pages ("editor.md#keys") and within it
 // ("#commands"): `to(slug, hash)` gives the new address, slug "" for the
 // home page and null for a link within the page. Other links stay.
@@ -210,7 +214,7 @@ function llmsFull() {
   const s = LLMS;
   const url = (slug) => SITE_URL + pagePath(slug);
   const pages = summary().map(({ slug }) => {
-    const text = relink(source(slug), (to, hash) => url(to ?? slug) + slugifyHash(hash));
+    const text = imageLinks(relink(source(slug), (to, hash) => url(to ?? slug) + slugifyHash(hash)));
     // The address goes under the page's own heading.
     return text.trim().replace(/^(# .*)$/m, `$1\n\n${s.page}: ${url(slug)}`);
   });
@@ -239,6 +243,17 @@ const slugifyHash = (hash) => (hash ? "#" + slugify(decodeURIComponent(hash.slic
 const PROJECT = { roadmap: "docs/ROADMAP.md", changelog: "CHANGELOG.md" };
 const projectNav = () => Object.keys(PROJECT).map((slug) => ({ slug, title: STRINGS[slug] }));
 const escape = (text) => String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+// Both images reserve their real dimensions. CSS follows exactly the colour
+// theme rules, including a reader's choice overriding the system preference.
+function manualImage(file, alt, root, lazy = true) {
+  const image = (name, theme = "") => {
+    const { width, height } = imageSize(fs.readFileSync(path.join("docs/images", name)));
+    return `<img class="shot${theme ? ` shot-${theme}` : ""}" src="${escape(root)}images/${escape(name)}" alt="${escape(alt)}" width="${width}" height="${height}"${lazy ? ' loading="lazy"' : ""}>`;
+  };
+  const dark = file.replace(/-light(\.[^.]+)$/, "-dark$1");
+  if (dark === file || !fs.existsSync(path.join("docs/images", dark))) return image(file);
+  return `<span class="themed-shot">${image(file, "light")}${image(dark, "dark")}</span>`;
+}
 const STATUS = { "✅": "done", "🟡": "partial", "⬜": "later", "❌": "excluded", "—": "na" };
 
 // Marks use shape, not colour or emoji; the same names reach screen readers.
@@ -458,12 +473,19 @@ export default function (config) {
       ...plainFile((data) => "/" + mdPath(data.mdPage)),
     },
     render: ({ mdPage: slug }) =>
-      withNewline(relink(source(slug), (to, hash) => (to === null ? hash : (to || "index") + ".md" + hash))),
+      withNewline(imageLinks(relink(source(slug), (to, hash) => (to === null ? hash : (to || "index") + ".md" + hash)))),
   });
 
   config.amendLibrary("md", (md) => {
     md.set({ html: true, linkify: false, typographer: false });
     md.use(anchor, { slugify, level: [2, 3], tabIndex: false });
+    const originalImage = md.renderer.rules.image;
+    md.renderer.rules.image = (tokens, i, options, env, renderer) => {
+      const token = tokens[i], match = /^\.\.\/images\/([^/]+)$/.exec(token.attrGet("src") ?? "");
+      if (!match) return originalImage(tokens, i, options, env, renderer);
+      const alt = renderer.renderInlineAsText(token.children, options, env);
+      return manualImage(match[1], alt, env.slug ? "../" : "", Boolean(env.slug));
+    };
     // Links between pages are written for GitHub ("editor.md#keys"); here
     // each page is a folder, so they become "../editor/#keys".
     md.core.ruler.push("page_links", (state) => {
@@ -487,6 +509,7 @@ export default function (config) {
   config.addFilter("pageUrl", pagePath);
   // Its Markdown copy, for the HTML's <link rel="alternate">.
   config.addFilter("mdUrl", mdPath);
+  config.addFilter("manualImage", manualImage);
   // The page's h2 headings, for the outline under its name in the menu.
   config.addFilter("outline", (html) =>
     [...(html ?? "").matchAll(/<h2 id="([^"]+)"(?![^>]*data-outline="false")[^>]*>(.*?)<\/h2>/g)].map(([, id, inner]) => ({

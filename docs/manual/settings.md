@@ -2,6 +2,8 @@
 
 Settings controls capture behaviour, shortcuts, the editor and studio defaults, and storage. Changes are saved right away. Search looks across sections, so you do not need to remember which section holds a row.
 
+![Settings on General, with the language, appearance, update and thumbnail choices](../images/settings-light.webp)
+
 ## How to open
 
 Run `kadr settings`, click the tray icon, or press the assigned settings hotkey. Its default on macOS and Windows is Ctrl+Shift+5; Linux starts with your Hyprland bindings.

@@ -2,7 +2,8 @@
 //! SUMMARY.md lists every page, every screen's page has the fixed sections,
 //! the command-line page carries `kadr --help` word for word, the settings
 //! page names every key of `settings.toml`, and no page links to one that
-//! isn't there. Also the roadmap (`docs/ROADMAP.md`) keeps the shape the
+//! isn't there. Pictures exist in docs/images, with both theme variants.
+//! Also the roadmap (`docs/ROADMAP.md`) keeps the shape the
 //! site's parser needs. The rules are in CLAUDE.md ("Manual").
 
 use std::fs;
@@ -131,7 +132,22 @@ fn links_between_pages_lead_somewhere() {
     let pages = pages();
     for page in &pages {
         let text = read(page);
-        for target in text.split("](").skip(1).map(|r| r.split(')').next().unwrap()) {
+        for (at, _) in text.match_indices("](") {
+            let target = text[at + 2..].split(')').next().unwrap();
+            let image = text[..at].rfind('[').is_some_and(|start| text[..start].ends_with('!'));
+            if image {
+                let name = target.strip_prefix("../images/").unwrap_or_else(|| panic!("{page}: image {target} must live in docs/images"));
+                assert!(!name.contains('/') && !name.contains('\\'), "{page}: image {target} must be directly in docs/images");
+                let image = root().join("docs/images").join(name);
+                assert!(image.is_file(), "{page}: image {target} doesn't exist");
+                if let Some((stem, ext)) = name.rsplit_once('.')
+                    && let Some(screen) = stem.strip_suffix("-light")
+                {
+                    let dark = image.with_file_name(format!("{screen}-dark.{ext}"));
+                    assert!(dark.is_file(), "{page}: image {target} has no dark sibling {}", dark.display());
+                }
+                continue;
+            }
             if target.contains("://") || target.starts_with('#') {
                 continue;
             }
