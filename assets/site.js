@@ -310,3 +310,15 @@
     get.appendChild(note);
   }).catch(function () {});
 })();
+
+// The theme switch under a page: dark unless the reader chose light.
+(function () {
+  var button = document.querySelector(".theme");
+  if (!button) return;
+  button.addEventListener("click", function () {
+    var root = document.documentElement;
+    var light = root.dataset.theme !== "light";
+    if (light) root.dataset.theme = "light"; else delete root.dataset.theme;
+    try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+  });
+})();

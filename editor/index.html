@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
+<script>try { if (localStorage.getItem("theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}</script>
 <title>Editor · kadr</title>
 <meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
 <link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
@@ -329,7 +330,7 @@ kadr open &lt;file&gt;                               show the thumbnail for an e
       <span><a href="../capture/">← Capture</a></span>
       <span><a href="../record/">Recording →</a></span>
     </footer>
-    <p class="edit" data-pagefind-ignore><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/editor.md">Edit this page</a> · <a href="../editor.md">This page as Markdown</a> · <a href="../llms-full.txt" title="The whole manual as plain text, to give to an AI assistant">For language models</a></p>
+    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/en/editor.md">Edit this page</a> · <a href="../editor.md">This page as Markdown</a> · <a href="../llms-full.txt" title="The whole manual as plain text, to give to an AI assistant">For language models</a></span> <button class="theme" type="button"><span class="to-light">Light theme</span><span class="to-dark">Dark theme</span></button></div>
   </main>
 </div>
 
