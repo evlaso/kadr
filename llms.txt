@@ -21,6 +21,7 @@ kadr is alpha software. Where it works today:
 - [Settings](https://evlaso.github.io/kadr/settings.md): Settings controls capture behaviour, shortcuts, the editor and studio defaults, and storage. Sections: How to open, Sections, Shortcuts, Storage, Settings file, Keys, Commands.
 - [Project files](https://evlaso.github.io/kadr/projects.md): A .kadr project keeps an edit, not just its finished picture or video. Sections: How to open, Saving, Inside the file, Keys, Commands.
 - [Command line](https://evlaso.github.io/kadr/cli.md): Run kadr --help to see the command list. Sections: Screenshots, Recording, Editing, Other commands.
+- [Languages](https://evlaso.github.io/kadr/languages.md): kadr's interface comes in English and Russian. Sections: Choosing a language, How much is translated, Helping with a translation.
 - [Glossary](https://evlaso.github.io/kadr/glossary.md): The words this manual and kadr use.
 
 ## Optional

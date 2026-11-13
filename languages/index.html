@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<script>try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<title>Languages · kadr</title>
+<meta name="description" content="Screenshots and screen recording for Linux, macOS and Windows. Native, written in Rust.">
+<link rel="icon" type="image/svg+xml" href="../assets/kadr.svg">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="alternate" type="text/markdown" href="../languages.md">
+</head>
+<body>
+<div class="manual">
+  <aside class="menu">
+    <div class="menu-inner">
+    <div class="menu-head">
+      <a class="wordmark" href="../">kadr</a>
+      <button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <span>Search</span><kbd>Ctrl K</kbd>
+      </button>
+      <a class="out" href="https://github.com/evlaso/kadr">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+    <details class="menu-fold" open>
+      <summary>Pages</summary>
+      <ul class="pages">
+        <li>
+          <a href="../">Introduction</a>
+        </li>
+        <li>
+          <a href="../install/">Install</a>
+        </li>
+        <li>
+          <a href="../capture/">Capture</a>
+        </li>
+        <li>
+          <a href="../editor/">Editor</a>
+        </li>
+        <li>
+          <a href="../record/">Recording</a>
+        </li>
+        <li>
+          <a href="../studio/">Studio</a>
+        </li>
+        <li>
+          <a href="../history/">History</a>
+        </li>
+        <li>
+          <a href="../settings/">Settings</a>
+        </li>
+        <li>
+          <a href="../projects/">Project files</a>
+        </li>
+        <li>
+          <a href="../cli/">Command line</a>
+        </li>
+        <li>
+          <a href="../languages/" aria-current="page">Languages</a>
+          <ul class="outline">
+            <li><a href="#choosing-a-language">Choosing a language</a></li>
+            <li><a href="#how-much-is-translated">How much is translated</a></li>
+            <li><a href="#helping-with-a-translation">Helping with a translation</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="../glossary/">Glossary</a>
+        </li>
+      </ul>
+      <ul class="pages project-pages">
+        <li>
+          <a href="../roadmap/">Roadmap</a>
+        </li>
+        <li>
+          <a href="../changelog/">Changelog</a>
+        </li>
+      </ul>
+    </details>
+    </div>
+  </aside>
+  <main class="prose" data-pagefind-body>
+    <h1>Languages</h1>
+    
+<p>kadr's interface comes in English and Russian. English is the source: every string is written in English first, and the other languages are translated from it. This manual is in English only.</p>
+<h2 id="choosing-a-language">Choosing a language</h2>
+<p>Settings → General → <strong>Language</strong>. In <code>settings.toml</code> it's the <code>language</code> key. A string a language doesn't have yet shows in English.</p>
+<h2 id="how-much-is-translated">How much is translated</h2>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th>File</th>
+<th>Translated</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>English</td>
+<td><a href="https://github.com/evlaso/kadr/blob/main/data/i18n/en.json">en.json</a></td>
+<td>source</td>
+</tr>
+<tr>
+<td>Russian</td>
+<td><a href="https://github.com/evlaso/kadr/blob/main/data/i18n/ru.json">ru.json</a></td>
+<td>100%</td>
+</tr>
+</tbody>
+</table>
+<h2 id="helping-with-a-translation">Helping with a translation</h2>
+<p>Corrections to a language that's already here and new languages are both welcome.</p>
+<ul>
+<li><strong>To fix a string:</strong> find it in the language's file, change the text on the right of the colon, and open a pull request. If you'd rather not, <a href="https://github.com/evlaso/kadr/issues">open an issue</a> with the text as it is now and as it should be.</li>
+<li><strong>To add a language:</strong> copy <a href="https://github.com/evlaso/kadr/blob/main/data/i18n/en.json">en.json</a> to a file named by the language's code (<code>de.json</code>, <code>uk.json</code>), translate the text on the right of each colon, and open a pull request. It doesn't have to be complete: untranslated strings show in English. The language appears in the settings once a maintainer adds it to the list.</li>
+</ul>
+<p>A few rules keep a translation working:</p>
+<ul>
+<li>Leave the keys on the left as they are (<code>&quot;editor.save&quot;</code>), and translate only the text on the right.</li>
+<li>Keep every <code>{}</code> in a string: kadr puts a number or a name there. Move it where your language needs it.</li>
+<li>Use the words the interface already uses for the same thing; the <a href="../glossary/">glossary</a> defines them in English.</li>
+<li>Keep it short: buttons and bars have little room, and a longer label may fold away.</li>
+</ul>
+
+    <footer class="turn">
+      <span><a href="../cli/">← Command line</a></span>
+      <span><a href="../glossary/">Glossary →</a></span>
+    </footer>
+    <div class="edit" data-pagefind-ignore><span><a href="https://github.com/evlaso/kadr/edit/main/docs/manual/languages.md">Edit this page</a> · <a href="../languages.md">This page as Markdown</a> · <a href="../llms-full.txt" title="The whole manual as plain text, to give to an AI assistant">For language models</a></span> <span class="theme" role="group" aria-label="Theme"><button type="button" data-theme-is="system">System</button><button type="button" data-theme-is="light">Light</button><button type="button" data-theme-is="dark">Dark</button></span></div>
+  </main>
+</div>
+
+<dialog class="palette" aria-label="Search" data-index="../search.json" data-base="../" data-pagefind="../pagefind/pagefind.js">
+  <div class="palette-field">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+    <input type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="palette-list" aria-label="Search" placeholder="Search documentation…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
+  </div>
+  <ul class="palette-list" id="palette-list" role="listbox" aria-label="Pages and sections"></ul>
+  <p class="palette-none" role="status" hidden>Nothing found</p>
+</dialog>
+<script src="../assets/site.js" defer></script>
+</body>
+</html>
