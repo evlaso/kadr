@@ -218,8 +218,7 @@ impl SettingsView {
     /// highlighted in the accent colour.
     fn render_sidebar(&self, (width, height): (f32, f32), cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
-        let accent = colors.text_accent;
-        let on_accent = crate::ui::on(accent);
+        let on_accent = crate::ui::on(colors.text_accent);
         // Narrower in a narrow window, where the section needs the room.
         v_flex()
             .w(px(if width < 820. { 170. } else { 210. } * kit::SCALE))
@@ -251,16 +250,7 @@ impl SettingsView {
             )
             .children(Tab::ALL.into_iter().map(|tab| {
                 let on = tab == self.vm.tab && self.vm.query.is_empty();
-                h_flex()
-                    .id(SharedString::from(format!("tab-{}", tab.label())))
-                    .gap_2()
-                    .px_2()
-                    .py_1p5()
-                    .rounded(crate::ui::rems_from_px(7.))
-                    .rounded_smoothing(crate::ui::smoothing())
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(accent))
-                    .when(!on, |d| d.hover(|d| d.bg(colors.ghost_element_hover)))
+                crate::ui::controls::section_item(SharedString::from(format!("tab-{}", tab.label())), on, crate::ui::controls::SectionLook::Settings, cx)
                     .child(tab_icon(tab).size(IconSize::Small).color(if on { Color::Custom(on_accent) } else { Color::Muted }))
                     .child(Label::new(tab.label()).color(if on { Color::Custom(on_accent) } else { Color::Default }))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -304,10 +294,7 @@ impl SettingsView {
                             .gap_0p5()
                             .children(modes.into_iter().zip([t("settings.system"), t("settings.dark"), t("settings.light")]).map(|(mode, label)| {
                                 let on = s.theme == mode;
-                                ButtonLike::new(SharedString::from(format!("theme-{label}")))
-                                    .style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                                    .toggle_state(on)
-                                    .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
+                                crate::ui::controls::OptionChip::new(SharedString::from(format!("theme-{label}")), label, on, crate::ui::controls::ChipLook::Compact)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.update(cx, |s| s.theme = mode);
                                         palette::refresh(cx);
@@ -393,18 +380,9 @@ impl SettingsView {
             ],
             Tab::Studio => {
                 let ring = cx.theme().colors().text;
-                let swatches = h_flex().gap_1().children(palette::backdrops().into_iter().enumerate().map(|(i, (c0, c1))| {
-                    div()
-                        .id(("bd", i))
-                        .size(px(26.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(7.))
-                        .border_2()
-                        .border_color(if i == s.studio_backdrop { ring } else { gpui::transparent_black() })
-                        .cursor_pointer()
-                        .child(div().size(px(18.)).rounded(px(5.)).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
+                let swatches = crate::ui::controls::swatch_grid(crate::ui::controls::SwatchLook::Settings).children(palette::backdrops().into_iter().enumerate().map(|(i, (c0, c1))| {
+                    crate::ui::controls::swatch(("bd", i), i == s.studio_backdrop, ring, crate::ui::controls::SwatchLook::Settings)
+                        .child(crate::ui::controls::swatch_content(crate::ui::controls::SwatchLook::Settings, None).bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
                         .on_click(cx.listener(move |this, _, _, cx| this.update(cx, |s| s.studio_backdrop = i)))
                 }));
                 vec![
@@ -649,13 +627,9 @@ fn switch(id: &'static str, on: bool, cx: &mut Context<SettingsView>, set: fn(&m
 }
 
 fn chips(cx: &mut Context<SettingsView>, prefix: &'static str, labels: Vec<String>, selected: Option<usize>, pick: fn(&mut Settings, usize)) -> AnyElement {
-    h_flex()
-        .gap_0p5()
+    crate::ui::controls::segments(crate::ui::controls::ChipLook::Settings, cx)
         .children(labels.into_iter().enumerate().map(|(i, label)| {
-            ButtonLike::new(SharedString::from(format!("{prefix}-{i}")))
-                .style(if selected == Some(i) { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                .toggle_state(selected == Some(i))
-                .child(div().px_2().child(Label::new(label).size(LabelSize::Small)))
+            crate::ui::controls::OptionChip::new(SharedString::from(format!("{prefix}-{i}")), label, selected == Some(i), crate::ui::controls::ChipLook::Settings)
                 .on_click(cx.listener(move |this, _, _, cx| this.update(cx, |s| pick(s, i))))
         }))
         .into_any_element()

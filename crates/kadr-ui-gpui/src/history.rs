@@ -11,7 +11,7 @@ use gpui::{
     MouseDownEvent, ObjectFit, RenderImage, ScrollHandle, SharedString, Window, div, img, px,
     rgba,
 };
-use crate::ui::{ButtonLike, IconButtonShape, Tooltip, prelude::*};
+use crate::ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::kit;
 use crate::{editor, pin, util};
@@ -481,22 +481,14 @@ impl History {
         let (width, height) = (self.item_width, self.item_width / THUMB_ASPECT);
         // Hover looks like the thumbnail card: the picture blurs, white
         // pills on top.
-        let ink = gpui::hsla(0., 0., 0.12, 1.);
-        let pill = |el: gpui::Stateful<Div>| {
-            el.flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(gpui::hsla(0., 0., 1., 0.92))
-                .text_color(ink)
-                .cursor_pointer()
-                .hover(|s| s.bg(gpui::hsla(0., 0., 1., 1.)))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        let ink = crate::ui::controls::pill_ink();
+        let pill = |id: (&'static str, usize)| {
+            crate::ui::controls::picture_pill(id, crate::ui::controls::PillLook::History)
         };
         let corner = |id: &'static str, icon: IconName, tip: &'static str| {
-            pill(div().id((id, index))).size(px(BUTTON)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tip(Tooltip::text(tip))
+            pill((id, index)).size(px(BUTTON)).child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink))).tip(Tooltip::text(tip))
         };
-        let wide = |id: &'static str, label: &'static str| pill(div().id((id, index))).h(px(28.)).px_3().child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)));
+        let wide = |id: &'static str, label: &'static str| pill((id, index)).h(px(28.)).px_3().child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)));
         let overlay = hover.then(|| div()
             .absolute()
             .inset_0()
@@ -637,17 +629,8 @@ impl Render for History {
         // Each filter with how many it shows, unless none.
         let filters: Vec<_> = Filter::ALL.iter().map(|&(filter, label)| {
             let count = self.matching(filter).len();
-            ButtonLike::new(SharedString::from(format!("filter-{label}")))
-                .style(if self.filter == filter { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                .size(ButtonSize::Large)
-                .toggle_state(self.filter == filter)
-                .child(
-                    h_flex()
-                        .px_2()
-                        .gap_1p5()
-                        .child(Label::new(t(label)))
-                        .when(count > 0, |row| row.child(Label::new(count.to_string()).size(LabelSize::Small).color(Color::Muted))),
-                )
+            crate::ui::controls::OptionChip::new(SharedString::from(format!("filter-{label}")), t(label), self.filter == filter, crate::ui::controls::ChipLook::HistoryFilter)
+                .count(count)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.filter = filter;
                     this.selected = 0;
@@ -696,7 +679,7 @@ impl Render for History {
                 .child(self.filter_fit.track(1, 0))
                 .into_any_element()
         } else {
-            h_flex().relative().gap_0p5().children(filters).child(self.filter_fit.track(0, 0)).into_any_element()
+            crate::ui::controls::segments(crate::ui::controls::ChipLook::HistoryFilter, cx).relative().children(filters).child(self.filter_fit.track(0, 0)).into_any_element()
         };
         // Big and bold: typing is the main way through the history.
         let search = crate::ui::text_field::render("search", 0, &self.query, &self.focus, true, crate::ui::text_field::Options {

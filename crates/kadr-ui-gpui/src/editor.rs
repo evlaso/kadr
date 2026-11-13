@@ -67,14 +67,6 @@ const COMPACT_TOOLBAR: f32 = 1000.;
 const WIDE_TOOLBAR: f32 = 1600.;
 /// Width of the background panel.
 const PANEL: f32 = 264.;
-/// The background sidebar's tiles: a swatch, its gap and ring, and the
-/// space between; five fit across. Plain colours are dots.
-const TILE: f32 = 36.;
-const TILE_RADIUS: f32 = 10.;
-const TILE_GAP: f32 = 4.;
-const DOT: f32 = 22.;
-/// Gradients shown before "Show more".
-const GRADIENT_ROWS: usize = 10;
 /// Output shapes for the framed picture.
 const ASPECTS: [(&str, Option<f32>); 5] = [("editor.auto", None), ("16:9", Some(16. / 9.)), ("4:3", Some(4. / 3.)), ("1:1", Some(1.)), ("9:16", Some(9. / 16.))];
 
@@ -2182,7 +2174,7 @@ impl Editor {
 
     fn slide(&mut self, knob: Knob, x: f32, cx: &mut Context<Self>) {
         let Some(&(x0, w)) = self.sliders.borrow().get(&knob) else { return };
-        let v = ((x - x0) / w.max(1.)).clamp(0., 1.);
+        let v = kadr_ui::controls::fraction(x, x0, w);
         match knob {
             Knob::Padding => self.frame.padding = v * MAX_PAD,
             Knob::Radius => self.frame.radius = v * MAX_ROUND,
@@ -2437,17 +2429,8 @@ impl Editor {
         let hex = |c: Hsla| crate::ui::to_rgba(c).to_hex();
         let now = hex(self.color);
         let swatch = |id: (&'static str, usize), c: Hsla, tip: String| {
-            div()
-                .id(id)
-                .size(px(28.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .border_2()
-                .border_color(if hex(c) == now { ring } else { gpui::transparent_black() })
-                .cursor_pointer()
-                .child(div().size(px(20.)).rounded_full().bg(c).border_1().border_color(cx.theme().colors().border))
+            crate::ui::controls::swatch(id, hex(c) == now, ring, crate::ui::controls::SwatchLook::Colour)
+                .child(crate::ui::controls::swatch_content(crate::ui::controls::SwatchLook::Colour, Some(cx.theme().colors().border)).bg(c))
                 .tip(Tooltip::text(tip))
         };
         let own = self.colors.iter().enumerate().map(|(i, &c)| {
@@ -2501,7 +2484,7 @@ impl Editor {
                 cx.notify();
             }));
         let heading = |text: &'static str| Label::new(text).size(LabelSize::XSmall).color(Color::Muted);
-        let row = || h_flex().flex_wrap().gap_1();
+        let row = || crate::ui::controls::swatch_grid(crate::ui::controls::SwatchLook::Colour).flex_wrap();
         let swatches = v_flex()
             // As wide as kadr's colours and the pipette; the other rows wrap.
             .w(px(8. * 28. + 36. + 8. * 4.))
@@ -3330,16 +3313,7 @@ impl Editor {
         }
         let open = self.crop_menu == Some(CropMenu::Fill);
         let swatches = choices.into_iter().enumerate().map(|(i, fill)| {
-            div()
-                .id(("fill", i))
-                .size(px(28.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .border_2()
-                .border_color(if fill == self.vm.doc.fill { ring } else { gpui::transparent_black() })
-                .cursor_pointer()
+            crate::ui::controls::swatch(("fill", i), fill == self.vm.doc.fill, ring, crate::ui::controls::SwatchLook::Colour)
                 .child(dot(fill, 20.))
                 .when(fill.is_none(), |d| d.tip(Tooltip::text(t("editor.fill_transparent"))))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -3505,28 +3479,10 @@ impl Editor {
     /// The crop mode's bottom bar: zoom, snapping, and going back to the
     /// picture as taken.
     fn render_crop_footer(&self, width: f32, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors();
-        let (accent, edge) = (colors.text_accent, colors.border);
         let zoom = self.zoom_menu(cx);
 
         let on = self.snap;
-        let check = div()
-            .size(px(16.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(4.))
-            .border_1()
-            .border_color(if on { accent } else { edge })
-            .when(on, |d| d.bg(accent).child(gpui::svg().path("icons/check.svg").size(px(12.)).text_color(gpui::white())));
-        let snap = h_flex()
-            .id("crop-snap")
-            .gap_1p5()
-            .px_1()
-            .h(px(28.))
-            .cursor_pointer()
-            .child(check)
-            .child(Label::new(t("editor.snap_to_edges")).size(LabelSize::Small))
+        let snap = crate::ui::controls::checkbox("crop-snap", t("editor.snap_to_edges"), on, true, crate::ui::controls::CheckLook::CropFooter, cx)
             .on_click(cx.listener(|this, _, _, cx| {
                 this.snap = !this.snap;
                 cx.notify();
@@ -3568,30 +3524,11 @@ impl Editor {
     }
 
     fn slider(&self, knob: Knob, value: f32, label: String, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors();
-        let (track, filled, knob_color, knob_edge) = (colors.element_active, colors.text_accent, gpui::white(), colors.border);
         let sliders = self.sliders.clone();
-        let v = value.clamp(0., 1.);
-        let bar = canvas(
-            move |bounds, _, _| {
+        let slider = crate::ui::controls::slider(SharedString::from(format!("slider-{}", knob as u8)), value, 0, crate::ui::controls::SliderLook::Editor,
+            move |bounds| {
                 sliders.borrow_mut().insert(knob, (f32::from(bounds.origin.x), f32::from(bounds.size.width)));
-                bounds
-            },
-            move |_, bounds, window, _| {
-                let mid = bounds.origin.y + bounds.size.height / 2.;
-                let (x0, w) = (bounds.origin.x, bounds.size.width);
-                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
-                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
-                let c = x0 + w * v;
-                window.paint_quad(crate::ui::quad(Bounds::new(point(c - px(9.), mid - px(8.)), size(px(18.), px(18.))), px(9.), gpui::hsla(0., 0., 0., 0.18), px(0.), knob_edge, BorderStyle::Solid));
-                window.paint_quad(crate::ui::quad(Bounds::new(point(c - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.5), knob_edge, BorderStyle::Solid));
-            },
-        )
-        .size_full();
-        h_flex()
-            .w_full()
-            .gap_3()
-            .child(div().id(SharedString::from(format!("slider-{}", knob as u8))).flex_1().h(px(22.)).mx_2().cursor(CursorStyle::PointingHand).child(bar).on_mouse_down(
+            }, cx).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
@@ -3601,9 +3538,8 @@ impl Editor {
                     this.drag = Some(Drag::Slider(knob));
                     this.slide(knob, f32::from(e.position.x), cx);
                 }),
-            ))
-            .when(!label.is_empty(), |row| row.child(div().w(px(44.)).flex().justify_end().child(Label::new(label).size(LabelSize::Small).color(Color::Muted))))
-            .into_any_element()
+            );
+        crate::ui::controls::slider_value(slider, label).into_any_element()
     }
 
     /// The background tool as a sidebar: presets, then
@@ -3612,16 +3548,10 @@ impl Editor {
     /// and the output's shape.
     fn render_panel(&self, height: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
-        let (accent, edge, field_bg, track_bg, thumb_bg) = (colors.text_accent, colors.border_variant, colors.element_background, colors.element_hover, colors.element_selected);
+        use crate::ui::controls::{self, BackdropChoice, BackdropOptions, ChipLook, SwatchLook};
+        let (accent, edge, field_bg, track_bg) = (colors.text_accent, colors.border_variant, colors.element_background, colors.element_hover);
         let clear = gpui::transparent_black();
         let heading = |text: &'static str| Label::new(text).size(LabelSize::Small).color(Color::Muted);
-        // A square tile with an accent ring when chosen; the ring, a gap and
-        // the swatch keep their corners concentric.
-        let tile = |id: SharedString, on: bool| {
-            div().id(id).flex_none().p(px(2.)).rounded(px(TILE_RADIUS)).border_2().border_color(if on { accent } else { clear }).cursor_pointer()
-        };
-        let swatch = || div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).overflow_hidden().border_1().border_color(edge);
-        let grid = || h_flex().w_full().flex_wrap().gap(px(TILE_GAP));
         let pick = |backdrop: Backdrop| {
             cx.listener(move |this: &mut Editor, _: &gpui::ClickEvent, _: &mut Window, cx: &mut Context<Editor>| {
                 this.frame.backdrop = backdrop.clone();
@@ -3648,80 +3578,32 @@ impl Editor {
             .on_click(pick(Backdrop::None));
 
         let all = self.backdrops();
-        let gradients: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 != all[i].1).collect();
-        let plains: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 == all[i].1).collect();
-        let more = gradients.len() > GRADIENT_ROWS;
-        let shown = if self.more_gradients { gradients.len() } else { gradients.len().min(GRADIENT_ROWS) };
-        let gradient_tiles = gradients[..shown].iter().map(|&i| {
-            let (c0, c1) = all[i];
-            tile(SharedString::from(format!("gradient-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
-                .child(swatch().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
-                .on_click(pick(Backdrop::Gradient(i)))
-        })
-        .collect::<Vec<_>>();
-        let toggle_more = more.then(|| {
-            Button::new("more-gradients", t(if self.more_gradients { "editor.show_less" } else { "editor.show_more" }))
-                .style(ButtonStyle::Subtle)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.more_gradients = !this.more_gradients;
-                    cx.notify();
-                }))
-        });
-
-        // Wallpapers, and a tile for one's own picture.
-        let mut walls: Vec<AnyElement> = self
-            .walls
-            .iter()
-            .enumerate()
-            .map(|(i, (path, thumb))| {
-                tile(SharedString::from(format!("wall-{i}")), self.frame.backdrop == Backdrop::Wallpaper(path.clone()))
-                    .child(swatch().child(img(thumb.clone()).size_full().object_fit(ObjectFit::Cover)))
-                    .on_click(pick(Backdrop::Wallpaper(path.clone())))
-                    .into_any_element()
-            })
-            .collect();
-        let own = matches!(&self.frame.backdrop, Backdrop::Wallpaper(p) if !self.walls.iter().any(|(w, _)| w == p));
-        walls.push(
-            tile("own-wallpaper".into(), own)
-                .child(
-                    div()
-                        .size(px(TILE))
-                        .rounded(px(TILE_RADIUS - 4.))
-                        .border_1()
-                        .border_dashed()
-                        .border_color(colors.border)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)),
-                )
-                .tip(Tooltip::text(t("common.your_own_image")))
-                .on_click(cx.listener(|this, _, window, cx| this.pick_wallpaper(window, cx)))
-                .into_any_element(),
-        );
-
-        let blurred = tile("backdrop-blurred".into(), self.frame.backdrop == Backdrop::Blurred)
-            .child(swatch().bg(field_bg).children(self.blurred.clone().map(|b| img(b).size_full().object_fit(ObjectFit::Cover))))
+        let blurred = controls::swatch("backdrop-blurred", self.frame.backdrop == Backdrop::Blurred, accent, SwatchLook::Tile)
+            .child(controls::swatch_content(SwatchLook::Tile, Some(edge)).bg(field_bg).children(self.blurred.clone().map(|b| img(b).size_full().object_fit(ObjectFit::Cover))))
             .tip(Tooltip::text(t("editor.blurred_tip")))
             .on_click(pick(Backdrop::Blurred));
 
         // Plain colours as dots, transparency first.
-        let dot = |id: SharedString, on: bool| {
-            div().id(id).flex_none().p(px(2.)).rounded_full().border_2().border_color(if on { accent } else { clear }).cursor_pointer()
-        };
-        let mut plain: Vec<AnyElement> = vec![dot("transparent".into(), self.frame.backdrop == Backdrop::Transparent)
-            .child(div().size(px(DOT)).rounded_full().overflow_hidden().border_1().border_color(edge).child(checker_tile(DOT, 5.)))
+        let dot_size = crate::ui::tokens().small_controls.tile_dot;
+        let plain = vec![controls::swatch("transparent", self.frame.backdrop == Backdrop::Transparent, accent, SwatchLook::Dot)
+            .child(controls::swatch_content(SwatchLook::Dot, Some(edge)).overflow_hidden().child(checker_tile(dot_size, 5.)))
             .tip(Tooltip::text(t("editor.transparent")))
             .on_click(pick(Backdrop::Transparent))
             .into_any_element()];
-        plain.extend(plains.iter().map(|&i| {
-            dot(SharedString::from(format!("plain-{i}")), self.frame.backdrop == Backdrop::Gradient(i))
-                .child(div().size(px(DOT)).rounded_full().border_1().border_color(edge).bg(all[i].0))
-                .on_click(pick(Backdrop::Gradient(i)))
-                .into_any_element()
-        }));
+        let picker = controls::backdrop_picker(BackdropOptions {
+            colors: &all,
+            gradient: match self.frame.backdrop { Backdrop::Gradient(i) => Some(i), _ => None },
+            wallpaper: match &self.frame.backdrop { Backdrop::Wallpaper(p) => Some(p.as_path()), _ => None },
+            walls: &self.walls, expanded: self.more_gradients, leading_plain: plain,
+        }, |this: &mut Editor, choice, window, cx| {
+            match choice {
+                BackdropChoice::Gradient(i) => this.frame.backdrop = Backdrop::Gradient(i),
+                BackdropChoice::Wallpaper(p) => this.frame.backdrop = Backdrop::Wallpaper(p),
+                BackdropChoice::Own => return this.pick_wallpaper(window, cx),
+                BackdropChoice::More => this.more_gradients = !this.more_gradients,
+            }
+            cx.notify();
+        }, cx);
 
         // The output's shape, as a segmented control.
         let aspects: Vec<AnyElement> = ASPECTS
@@ -3729,19 +3611,7 @@ impl Editor {
             .enumerate()
             .map(|(i, (label, _))| {
                 let on = self.frame.aspect == i;
-                div()
-                    .id(SharedString::from(format!("aspect-{i}")))
-                    .flex_grow(1.)
-                    .px_1()
-                    .h(px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(thumb_bg))
-                    .when(!on, |d| d.hover(|d| d.bg(track_bg)))
-                    .child(Label::new(t(label)).size(LabelSize::Small).color(if on { Color::Default } else { Color::Muted }))
+                controls::OptionChip::new(SharedString::from(format!("aspect-{i}")), t(label), on, ChipLook::Tray)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.frame.aspect = i;
                         if !this.frame.on() {
@@ -3806,10 +3676,10 @@ impl Editor {
             .gap_4()
             .p_3()
             .child(v_flex().w_full().gap_2().child(crate::presets::render(&self.presets, &self.frame.to_json(), cx)).child(none))
-            .child(section().child(h_flex().w_full().justify_between().child(heading(t("editor.gradients"))).children(toggle_more)).child(grid().children(gradient_tiles)))
-            .child(section().child(heading(t("editor.wallpapers"))).child(grid().children(walls)))
-            .child(section().child(heading(t("editor.blurred"))).child(grid().child(blurred)))
-            .child(section().child(heading(t("editor.plain_color"))).child(h_flex().w_full().flex_wrap().gap(px(2.)).children(plain)))
+            .child(section().child(h_flex().w_full().justify_between().child(heading(t("editor.gradients"))).children(picker.more)).child(picker.gradients))
+            .child(section().child(heading(t("editor.wallpapers"))).child(picker.wallpapers))
+            .child(section().child(heading(t("editor.blurred"))).child(controls::swatch_grid(SwatchLook::Tile).child(blurred)))
+            .child(section().child(heading(t("editor.plain_color"))).child(picker.plains))
             .child(
                 v_flex()
                     .w_full()
@@ -3822,7 +3692,7 @@ impl Editor {
             .child(
                 section()
                     .child(heading(t("editor.aspect_ratio")))
-                    .child(h_flex().w_full().p(px(2.)).gap(px(2.)).rounded(px(8.)).bg(field_bg).children(aspects))
+                    .child(controls::segments(ChipLook::Tray, cx).children(aspects))
                     .children(size.map(|s| Label::new(s).size(LabelSize::XSmall).color(Color::Muted))),
             )
             .child(section().child(heading(t("editor.position"))).child(h_flex().w_full().gap_3().items_start().child(align_grid).child(v_flex().min_w_0().gap_1().child(balance))));
@@ -5676,6 +5546,8 @@ impl Editor {
             "shapes": self.vm.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
             "crop": self.vm.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
             "cropping": self.cropping.is_some(),
+            "snap": self.snap,
+            "fill": self.vm.doc.fill,
             "size_field": self.size_field.as_ref().map(|(height, f)| serde_json::json!({ "height": height, "text": f.text(), "caret": f.caret(), "selection": [f.selection().start, f.selection().end] })),
             // The picture's size on screen over its real size.
             "zoom": self.disp.0 / self.real.0,

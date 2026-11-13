@@ -1,7 +1,7 @@
 //! The interface's shared values in one place, with no UI framework: radii,
 //! spacing, control sizes, type, icon sizes, borders, the alphas and tones
 //! the theme is mixed from, shadows, and the few metrics of the shared
-//! components (tooltip, scrollbar, knob, text field, menu). The app reads
+//! components (tooltip, scrollbar, knob, text field, menu, small controls). The app reads
 //! them through `get()`, while drawing; `set` replaces the whole set for the
 //! process, so the look can change while kadr runs.
 //!
@@ -89,6 +89,98 @@ macro_rules! group {
             }
         }
     };
+}
+
+group! {
+    /// Small controls, kept at their existing logical-pixel sizes.
+    SmallControls {
+        /// Accent option height.
+        option_height: 28., Px;
+        /// Accent option corners; normalisation candidate.
+        option_radius: 7., Px;
+        /// Accent option text (not rem-based); normalisation candidate.
+        option_text: 13., Px;
+        /// Accent option gap.
+        option_gap: 4., Px;
+        /// Tray option height.
+        tray_height: 24., Px;
+        /// Tray option corners.
+        tray_radius: 6., Px;
+        /// Tray corners.
+        tray_outer: 8., Px;
+        /// Tray cell inset and gap.
+        tray_inset: 2., Px;
+        /// Checkbox box.
+        check_size: 16., Px;
+        /// Checkbox corners.
+        check_radius: 4., Px;
+        /// Checkbox check icon (not rem-based).
+        check_icon: 12., Px;
+        /// Checkbox row in a panel.
+        check_row: 26., Px;
+        /// Checkbox row in the crop footer.
+        check_footer: 28., Px;
+        /// Slider hit height.
+        slider_height: 22., Px;
+        /// Slider hit height with ticks.
+        slider_ticks_height: 28., Px;
+        /// Slider ticked track's vertical shift.
+        slider_tick_shift: 3., Px;
+        /// Slider track thickness.
+        slider_track: 4., Px;
+        /// Slider ticks' size.
+        slider_tick: 2., Px;
+        /// Slider ticks' distance below the track centre.
+        slider_tick_y: 9., Px;
+        /// Slider ticks' alpha.
+        slider_tick_alpha: 0.3, Alpha;
+        /// White slider knob radius; distinct from the selection knob.
+        slider_knob: 8., Px;
+        /// Slider knob shadow radius.
+        slider_shadow: 9., Px;
+        /// Slider knob shadow alpha.
+        slider_shadow_alpha: 0.18, Alpha;
+        /// Slider knob edge width.
+        slider_edge: 0.5, Px;
+        /// Slider value column.
+        slider_label: 44., Px;
+        /// Colour menu's ring diameter.
+        swatch_size: 28., Px;
+        /// Colour menu's dot diameter.
+        swatch_dot: 20., Px;
+        /// Chosen colour ring width.
+        swatch_ring: 2., Px;
+        /// Settings backdrop ring diameter.
+        settings_swatch: 26., Px;
+        /// Settings backdrop dot size.
+        settings_dot: 18., Px;
+        /// Settings backdrop ring corners (not concentric); normalisation candidate.
+        settings_outer: 7., Px;
+        /// Settings backdrop inner corners; normalisation candidate.
+        settings_inner: 5., Px;
+        /// Backdrop square content.
+        tile: 36., Px;
+        /// Backdrop square outer corners.
+        tile_radius: 10., Px;
+        /// Backdrop ring gap.
+        tile_inset: 2., Px;
+        /// Backdrop squares' gap.
+        tile_gap: 4., Px;
+        /// Backdrop plain-colour content.
+        tile_dot: 22., Px;
+        /// Initial number of gradients.
+        gradient_limit: 10., Ratio;
+        /// Over-image pill ink lightness.
+        pill_ink: 0.12, Lightness;
+        /// Over-image pill rest opacity.
+        pill_alpha: 0.92, Alpha;
+        /// Over-image pill pressed lightness.
+        pill_pressed: 0.88, Lightness;
+        /// Studio section icon hit size.
+        rail_size: 36., Px;
+        /// Studio section icon corners.
+        rail_radius: 9., Px;
+    }
 }
 
 group! {
@@ -461,6 +553,7 @@ pub struct Tokens {
     pub knob: Knob,
     pub text_field: TextField,
     pub menu: Menu,
+    pub small_controls: SmallControls,
     pub shadow: Shadows,
 }
 
@@ -483,6 +576,7 @@ impl Tokens {
             ("knob", self.knob.entries()),
             ("text_field", self.text_field.entries()),
             ("menu", self.menu.entries()),
+            ("small_controls", self.small_controls.entries()),
         ]
     }
 
@@ -504,6 +598,7 @@ impl Tokens {
             "knob" => self.knob.get_mut(name),
             "text_field" => self.text_field.get_mut(name),
             "menu" => self.menu.get_mut(name),
+            "small_controls" => self.small_controls.get_mut(name),
             _ => None,
         }
     }
@@ -591,7 +686,7 @@ mod tests {
     fn every_value_is_listed_and_reachable_by_name() {
         let mut t = Tokens::default();
         let groups = t.groups();
-        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 101);
+        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 144);
         for (group, entries) in groups {
             for e in entries {
                 assert!(!e.doc.is_empty(), "{group}.{} has no role", e.name);

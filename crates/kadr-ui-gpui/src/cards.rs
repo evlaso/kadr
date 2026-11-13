@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::kit::{Anchor, KeyboardInteractivity};
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Global, Image, ImageFormat,
-    MouseButton, MouseDownEvent, MouseUpEvent, ObjectFit, Stateful, hsla, Window, WindowHandle, div, ease_out_quint,
+    MouseButton, MouseDownEvent, MouseUpEvent, ObjectFit, hsla, Window, WindowHandle, div, ease_out_quint,
     img, px, rgba,
 };
 use crate::ui::{Tooltip, prelude::*};
@@ -451,26 +451,18 @@ impl CardStack {
             })
         };
         // Solid white pills with dark ink, readable over any picture.
-        let ink = hsla(0., 0., 0.12, 1.);
-        let pill = |el: Stateful<Div>| {
-            el.flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(hsla(0., 0., 1., 0.92))
-                .text_color(ink)
-                .cursor_pointer()
-                .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
-                .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
+        let ink = crate::ui::controls::pill_ink();
+        let pill = |id: (&'static str, usize)| {
+            crate::ui::controls::picture_pill(id, crate::ui::controls::PillLook::Card)
         };
         let big = |key: &'static str, label: &'static str| {
-            pill(div().id((key, id)))
+            pill((key, id))
                 .px_3()
                 .h(px(PILL_H))
                 .child(Label::new(label).size(LabelSize::Small).color(Color::Custom(ink)))
         };
         let corner = |key: &'static str, icon: IconName, tip: &'static str| {
-            pill(div().id((key, id)))
+            pill((key, id))
                 .size(px(CORNER))
                 .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Custom(ink)))
                 .tip(Tooltip::text(tip))
@@ -518,7 +510,7 @@ impl CardStack {
         // Bottom right: text recognition for pictures, GIF for recordings, the folder for both.
         let extra = if video {
             (!gif).then(|| {
-                pill(div().id(("gif", id)))
+                pill(("gif", id))
                     .h(px(CORNER))
                     .px_2()
                     .child(Label::new("GIF").size(LabelSize::XSmall).color(Color::Custom(ink)))
@@ -704,16 +696,9 @@ impl CardStack {
             None => (t("ocr.no_text_found").into(), t("ocr.try_selecting_larger_area").into()),
         };
         let chars = text.filter(|_| notice.is_none()).map(|t| t.chars().count());
-        let ink = hsla(0., 0., 0.12, 1.);
-        let pill = |el: Stateful<Div>| {
-            el.flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(hsla(0., 0., 1., 0.92))
-                .cursor_pointer()
-                .hover(|s| s.bg(hsla(0., 0., 1., 1.)))
-                .active(|s| s.bg(hsla(0., 0., 0.88, 1.)))
+        let ink = crate::ui::controls::pill_ink();
+        let pill = |id: (&'static str, usize)| {
+            crate::ui::controls::picture_pill(id, crate::ui::controls::PillLook::TextCard)
         };
         let copy = text.filter(|_| notice.is_none()).map(|t| t.to_owned());
         let link_label = notice.map_or(t("ocr.open_link"), |n| n.link_label);
@@ -740,7 +725,7 @@ impl CardStack {
             .justify_center()
             .when_some(copy, |d, text| {
                 d.child(
-                    pill(div().id(("again", id)))
+                    pill(("again", id))
                         .w(px(CARD_WIDTH - 2. * INSET))
                         .h(px(PILL_H))
                         .child(Label::new(t("ocr.copy_again")).size(LabelSize::XSmall).color(Color::Custom(ink)))
@@ -775,7 +760,7 @@ impl CardStack {
             })
             .when_some(link.clone().filter(|_| progress.is_none()), |d, link| {
                 d.child(
-                    pill(div().id(("link", id)))
+                    pill(("link", id))
                         .w(px(CARD_WIDTH - 2. * INSET))
                         .h(px(PILL_H))
                         .gap_1()
@@ -791,7 +776,7 @@ impl CardStack {
             })
             .child(
                 div().absolute().top_0().left_0().m(px(INSET)).child(
-                    pill(div().id(("close", id)))
+                    pill(("close", id))
                         .size(px(CORNER))
                         .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Custom(ink)))
                         .tip(Tooltip::text(t("common.close")))

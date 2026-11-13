@@ -783,6 +783,148 @@ fn the_editor_draws_with_a_real_pointer() {
     assert!((w / h - 200. / 150.).abs() < 0.05, "a {w}×{h} box");
 }
 
+/// Shared sliders and choices still change the editor's own state, rather
+/// than keeping a second value inside the drawn control.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn small_controls_change_the_editors_state() {
+    let s = Session::start();
+    let path = fixture(&s, "controls.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("picture never loaded");
+    s.dev(&["click", "tool-a"]);
+    s.dev(&["drag", "900,480", "160,90"]);
+    let before = s.dev(&["state"])["view"]["shapes"][0]["size"].as_f64().unwrap();
+    assert_eq!(s.dev(&["find", "slider-3"])["kind"], "slider");
+    s.dev(&["drag", "slider-3", "45,0"]);
+    let after = s.dev(&["state"])["view"]["shapes"][0]["size"].as_f64().unwrap();
+    assert!(after > before, "weight drag didn't change the selected arrow: {before} -> {after}");
+    s.dev(&["key", "ctrl-z"]);
+    assert_eq!(s.dev(&["state"])["view"]["shapes"][0]["size"], before);
+    s.dev(&["click", "mode-background"]);
+    s.dev(&["scroll", "130,400", "3000"]);
+    for (id, field) in [("slider-0", "padding"), ("slider-1", "radius"), ("slider-2", "shadow")] {
+        let before = s.dev(&["state"])["view"]["frame"][field].as_f64().unwrap();
+        s.dev(&["drag", id, "45,0"]);
+        assert!(s.dev(&["state"])["view"]["frame"][field].as_f64().unwrap() > before, "{field} drag");
+    }
+    s.dev(&["click", "aspect-3"]);
+    assert_eq!(s.dev(&["state"])["view"]["frame"]["aspect"], 3);
+    assert_eq!(s.dev(&["find", "aspect-3"])["selected"], true);
+    s.dev(&["scroll", "130,400", "-3000"]);
+    s.dev(&["click", "gradient-1"]);
+    assert_eq!(s.dev(&["state"])["view"]["frame"]["backdrop"]["gradient"], 1);
+    s.dev(&["click", "mode-crop"]);
+    let checked = s.dev(&["find", "crop-snap"])["selected"].as_bool().unwrap();
+    s.dev(&["click", "crop-snap"]);
+    assert_eq!(s.dev(&["find", "crop-snap"])["selected"], !checked);
+    s.dev(&["click", "crop-fill"]);
+    s.dev(&["click", "fill-1"]);
+    assert_eq!(s.dev(&["state"])["view"]["fill"], serde_json::json!([255, 255, 255, 255]));
+}
+
+/// Every shared look is interactive in the gallery through its public ids.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn gallery_small_controls_are_live() {
+    let s = Session::start();
+    s.spawn(&["gallery"]);
+    s.window("kadr-gallery");
+    s.dev(&["click", "section-controls"]);
+    let reveal = |id: &str| {
+        let b = s.dev(&["find", id])["bounds"].clone();
+        let y = b[1].as_f64().unwrap();
+        s.dev(&["scroll", "700,500", &(y - 240.).to_string()]);
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    for k in 0..5 {
+        let id = format!("demo-chip-{k}-1");
+        reveal(&id);
+        assert_eq!(s.dev(&["find", &id])["kind"], "chip");
+        s.dev(&["click", &id]);
+        assert_eq!(s.dev(&["find", &id])["selected"], true);
+    }
+    for k in 0..2 {
+        let id = format!("demo-check-{k}-0");
+        reveal(&id);
+        let on = s.dev(&["find", &id])["selected"].as_bool().unwrap();
+        s.dev(&["click", &id]);
+        assert_eq!(s.dev(&["find", &id])["selected"], !on);
+        let disabled = format!("demo-check-{k}-2");
+        assert_eq!(s.dev(&["find", &disabled])["disabled"], true);
+    }
+    for k in 0..3 {
+        let id = format!("demo-slider-{k}");
+        reveal(&id);
+        s.dev(&["drag", &id, "1000,0"]);
+        assert_eq!(s.dev(&["find", &id])["text"], "1");
+        s.dev(&["drag", &id, "-1000,0"]);
+        assert_eq!(s.dev(&["find", &id])["text"], "0");
+    }
+    for k in 0..4 {
+        let id = format!("demo-swatch-{k}-0-2");
+        reveal(&id);
+        s.dev(&["click", &id]);
+        assert_eq!(s.dev(&["find", &id])["selected"], true);
+    }
+}
+
+/// Studio controls write the project's values; all media and input samples
+/// are drawn fixtures, not a capture of the desktop.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn studio_small_controls_change_the_project() {
+    let s = Session::start();
+    let video = s.dir.join("controls.mp4");
+    assert!(Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "2", "-pix_fmt", "yuv420p"]).arg(&video).status().unwrap().success());
+    let tracks = s.var("XDG_CACHE_HOME").join("kadr/tracks");
+    std::fs::create_dir_all(&tracks).unwrap();
+    std::fs::write(tracks.join("controls.mp4.json"), serde_json::json!({
+        "rect": [0, 0, 640, 360], "cursor_hidden": true,
+        "cursor": [[0, 100, 100], [2, 400, 200]], "clicks": [[0.5, 200, 150]],
+        "keystrokes": [[0.8, "Ctrl + C"]], "keys": [0.8], "shapes": [[0, "arrow"]],
+    }).to_string()).unwrap();
+    std::fs::copy(&video, tracks.join("controls.mp4.json.camera.mkv")).unwrap();
+    s.spawn(&["studio", video.to_str().unwrap()]);
+    s.window("kadr-studio");
+    let project = || serde_json::from_slice::<Value>(&std::fs::read(tracks.join("controls.mp4.json.studio")).expect("saved studio project")).unwrap();
+    // Timeline zoom is view-only; every other slider writes the project.
+    s.dev(&["drag", "slider-7", "25,0"]);
+    assert_ne!(s.dev(&["find", "slider-7"])["text"], "0");
+    for (section, sliders) in [
+        (1, vec![(3, "cursor_size")]),
+        (3, vec![(6, "volume")]),
+        (4, vec![(4, "cam_size"), (5, "cam_round")]),
+        (5, vec![(0, "pad"), (1, "radius"), (2, "shadow")]),
+    ] {
+        s.dev(&["click", &format!("rail-{section}")]);
+        for (knob, field) in sliders {
+            let id = format!("slider-{knob}");
+            let b = s.dev(&["find", &id])["bounds"].clone();
+            if b[1].as_f64().unwrap() > 600. {
+                s.dev(&["scroll", "200,450", "3000"]);
+            }
+            s.dev(&["drag", &id, "35,0"]);
+            let first = project()[field].clone();
+            s.dev(&["drag", &id, "-35,0"]);
+            assert_ne!(project()[field], first, "{field} didn't follow the slider");
+        }
+    }
+    s.dev(&["scroll", "200,450", "-3000"]);
+    s.dev(&["click", "gradient-1"]);
+    assert_eq!(project()["backdrop"], 1);
+    s.dev(&["click", "rail-0"]);
+    s.dev(&["drag", "slider-8", "40,0"]);
+    assert!(s.dev(&["find", "slider-8"])["text"].as_str().unwrap().parse::<f64>().unwrap() > 0.5);
+    s.dev(&["click", "blur-2"]);
+    assert_eq!(project()["motion_blur"], 2);
+    s.dev(&["click", "rail-1"]);
+    let on = s.dev(&["find", "press-effect"])["selected"].as_bool().unwrap();
+    s.dev(&["click", "press-effect"]);
+    assert_eq!(project()["cursor_motion"], !on);
+}
+
 /// Scenario 3, its studio half: a recording exported through the studio has
 /// the layout's size and the recording's length. (Recording itself isn't
 /// here: gpu-screen-recorder captures the real screen, not a nested one.)

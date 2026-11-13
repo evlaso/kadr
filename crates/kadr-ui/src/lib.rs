@@ -4,6 +4,7 @@
 //! window and another framework could draw the same thing.
 
 pub mod cards;
+pub mod controls;
 pub mod editor;
 pub mod history;
 pub mod popover;

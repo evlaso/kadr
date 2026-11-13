@@ -15,7 +15,7 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, RenderImage, Window, canvas, div, img,
     point, px, rgba, size,
 };
-use crate::ui::{ButtonLike, Divider, Tooltip, prelude::*};
+use crate::ui::{Divider, Tooltip, prelude::*};
 
 use crate::ui::{fill, outline};
 use crate::kit::{self, LayerSpec};
@@ -436,11 +436,8 @@ impl Trimmer {
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let chips = |prefix: &'static str, labels: Vec<String>, selected: usize, pick: fn(&mut Trimmer, usize), cx: &mut Context<Self>| {
-            h_flex().gap_0p5().children(labels.into_iter().enumerate().map(move |(i, label)| {
-                ButtonLike::new(SharedString::from(format!("{prefix}-{i}")))
-                    .style(if i == selected { ButtonStyle::Filled } else { ButtonStyle::Subtle })
-                    .toggle_state(i == selected)
-                    .child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
+            crate::ui::controls::segments(crate::ui::controls::ChipLook::Compact, cx).children(labels.into_iter().enumerate().map(move |(i, label)| {
+                crate::ui::controls::OptionChip::new(SharedString::from(format!("{prefix}-{i}")), label, i == selected, crate::ui::controls::ChipLook::Compact)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         pick(this, i);
                         cx.notify();

@@ -110,20 +110,10 @@ impl Render for Pin {
         let locked = self.locked;
         // Solid white circles with dark ink, like the cards' corner buttons,
         // so they show on any picture.
-        let ink = gpui::hsla(0., 0., 0.12, 1.);
+        let ink = crate::ui::controls::pill_ink();
         let pill = move |id: &'static str, icon: Icon| {
-            div()
-                .id(id)
+            crate::ui::controls::picture_pill(id, crate::ui::controls::PillLook::Pin)
                 .size(px(26.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(gpui::hsla(0., 0., 1., 0.92))
-                .shadow(kit::shadow())
-                .cursor_pointer()
-                .hover(|s| s.bg(gpui::hsla(0., 0., 1., 1.)))
-                .active(|s| s.bg(gpui::hsla(0., 0., 0.88, 1.)))
                 .child(icon.size(IconSize::Small).color(Color::Custom(ink)))
         };
         let lock = |id: &'static str| {

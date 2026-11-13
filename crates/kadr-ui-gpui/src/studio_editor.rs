@@ -44,13 +44,6 @@ const PANEL: f32 = 264.;
 const SIDEBAR: f32 = RAIL + PANEL;
 /// Width of the labels in front of the export settings.
 const ROW_LABEL: f32 = 64.;
-/// Background tiles, like the screenshot editor's.
-const TILE: f32 = 36.;
-const TILE_RADIUS: f32 = 10.;
-const TILE_GAP: f32 = 4.;
-const DOT: f32 = 22.;
-/// Gradients shown before "Show more": two rows.
-const GRADIENT_ROWS: usize = 10;
 /// The zoom level slider's range.
 const ZOOM_RANGE: (f64, f64) = (1., 4.);
 /// Air around the preview inside the window.
@@ -964,7 +957,7 @@ impl StudioEditor {
 
     fn slide(&mut self, knob: Knob, x: f32, cx: &mut Context<Self>) {
         let Some(&(x0, w)) = self.sliders.borrow().get(&knob) else { return };
-        let v = ((x - x0) / w.max(1.)).clamp(0., 1.) as f64;
+        let v = kadr_ui::controls::fraction(x, x0, w) as f64;
         match knob {
             Knob::Padding => self.project.padding = v * MAX_PADDING,
             Knob::Radius => self.project.radius = v * MAX_RADIUS,
@@ -973,14 +966,14 @@ impl StudioEditor {
             Knob::CamSize => self.project.cam_size = studio::MIN_CAM + v * (studio::MAX_CAM - studio::MIN_CAM),
             Knob::CamRound => self.project.cam_round = v,
             // In steps of 5%, like the label shows it.
-            Knob::Volume => self.project.volume = (v * studio::MAX_VOLUME * 20.).round() / 20.,
+            Knob::Volume => self.project.volume = kadr_ui::controls::stepped(v * studio::MAX_VOLUME, 20.),
             Knob::TimelineZoom => {
                 self.timeline_zoom = 1. + v as f32 * (MAX_TIMELINE_ZOOM - 1.);
                 return cx.notify();
             }
             Knob::Zoom => {
                 // In steps of 5%, like the label shows it.
-                let level = ((ZOOM_RANGE.0 + v * (ZOOM_RANGE.1 - ZOOM_RANGE.0)) * 20.).round() / 20.;
+                let level = kadr_ui::controls::stepped(ZOOM_RANGE.0 + v * (ZOOM_RANGE.1 - ZOOM_RANGE.0), 20.);
                 match self.selected.and_then(|i| self.project.segments.get_mut(i)) {
                     Some(seg) => seg.zoom = level,
                     None => {
@@ -1690,36 +1683,11 @@ impl StudioEditor {
 
     /// A slider's track and knob; `ticks` marks under it.
     fn slider(&self, knob: Knob, value: f64, ticks: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        let (track, filled, knob_color, knob_edge) = (colors.element_active, colors.text_accent, gpui::white(), colors.border);
-        let mut tick = colors.text;
-        tick.alpha = 0.3;
         let sliders = self.sliders.clone();
-        let v = value.clamp(0., 1.) as f32;
-        let bar = canvas(
-            move |bounds, _, _| {
+        crate::ui::controls::slider(SharedString::from(format!("slider-{}", knob as u8)), value.clamp(0., 1.) as f32, ticks, crate::ui::controls::SliderLook::Studio,
+            move |bounds| {
                 sliders.borrow_mut().insert(knob, (f32::from(bounds.origin.x), f32::from(bounds.size.width)));
-                bounds
-            },
-            move |_, bounds, window, _| {
-                let mid = bounds.origin.y + bounds.size.height / 2. - px(if ticks > 0 { 3. } else { 0. });
-                let (x0, w) = (bounds.origin.x, bounds.size.width);
-                for i in 0..=ticks.max(1) {
-                    if ticks == 0 {
-                        break;
-                    }
-                    let x = x0 + w * (i as f32 / ticks as f32);
-                    window.paint_quad(crate::ui::quad(Bounds::new(point(x - px(1.), mid + px(9.)), size(px(2.), px(2.))), px(1.), tick, px(0.), tick, BorderStyle::Solid));
-                }
-                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w, px(4.))), px(2.), track, px(0.), track, BorderStyle::Solid));
-                window.paint_quad(crate::ui::quad(Bounds::new(point(x0, mid - px(2.)), size(w * v, px(4.))), px(2.), filled, px(0.), filled, BorderStyle::Solid));
-                let cx0 = x0 + w * v;
-                window.paint_quad(crate::ui::quad(Bounds::new(point(cx0 - px(9.), mid - px(8.)), size(px(18.), px(18.))), px(9.), gpui::hsla(0., 0., 0., 0.18), px(0.), knob_edge, BorderStyle::Solid));
-                window.paint_quad(crate::ui::quad(Bounds::new(point(cx0 - px(8.), mid - px(8.)), size(px(16.), px(16.))), px(8.), knob_color, px(0.5), knob_edge, BorderStyle::Solid));
-            },
-        )
-        .size_full();
-        div().id(SharedString::from(format!("slider-{}", knob as u8))).w_full().h(px(if ticks > 0 { 28. } else { 22. })).px_2().cursor(CursorStyle::PointingHand).child(bar).on_mouse_down(
+            }, cx).on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                 this.drag = Some(Drag::Slider(knob));
@@ -1730,39 +1698,16 @@ impl StudioEditor {
 
     /// A slider under its name, the value at the right.
     fn labeled_slider(&self, name: &'static str, knob: Knob, value: f64, shown: String, ticks: usize, cx: &mut Context<Self>) -> AnyElement {
-        v_flex()
-            .w_full()
-            .gap_1()
-            .child(h_flex().w_full().justify_between().child(Label::new(name).size(LabelSize::Small)).child(Label::new(shown).size(LabelSize::Small).color(Color::Muted)))
-            .child(div().mx(px(-8.)).child(self.slider(knob, value, ticks, cx)))
-            .into_any_element()
+        crate::ui::controls::labeled_slider(name, shown, self.slider(knob, value, ticks, cx)).into_any_element()
     }
 
     /// Options side by side, the chosen one filled with the accent.
     fn choices(&self, id: &'static str, labels: Vec<String>, selected: usize, set: Set<usize>, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors();
-        let (accent, idle, hover) = (colors.text_accent, colors.element_background, colors.element_hover);
-        h_flex()
-            .w_full()
-            .gap(px(4.))
+        crate::ui::controls::segments(crate::ui::controls::ChipLook::Accent, cx)
             .children(labels.into_iter().enumerate().map(|(i, text)| {
                 let on = i == selected;
                 let set = set.clone();
-                div()
-                    .id(SharedString::from(format!("{id}-{i}")))
-                    .flex_grow(1.)
-                    .flex_basis(px(0.))
-                    .min_w_0()
-                    .px_1()
-                    .h(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(7.))
-                    .cursor_pointer()
-                    .bg(if on { accent } else { idle })
-                    .when(!on, |d| d.hover(move |d| d.bg(hover)))
-                    .child(div().text_size(px(13.)).truncate().text_color(if on { gpui::white() } else { colors.text }).child(text))
+                crate::ui::controls::OptionChip::new(SharedString::from(format!("{id}-{i}")), text, on, crate::ui::controls::ChipLook::Accent)
                     .on_click(cx.listener(move |this, _, _, cx| set(this, i, cx)))
             }))
             .into_any_element()
@@ -1770,26 +1715,7 @@ impl StudioEditor {
 
     /// A checkbox and its label, like the crop mode's "Snap to edges".
     fn check(&self, id: &'static str, text: &'static str, on: bool, enabled: bool, set: Set<bool>, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors();
-        let (accent, edge) = (colors.text_accent, colors.border);
-        let boxed = div()
-            .size(px(16.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(4.))
-            .border_1()
-            .border_color(if on { accent } else { edge })
-            .when(on, |d| d.bg(accent).child(gpui::svg().path("icons/check.svg").size(px(12.)).text_color(gpui::white())));
-        h_flex()
-            .id(id)
-            .gap_2()
-            .h(px(26.))
-            .when(enabled, |d| d.cursor_pointer())
-            .when(!enabled, |d| d.opacity(0.45))
-            .child(boxed)
-            .child(Label::new(text).size(LabelSize::Small))
+        crate::ui::controls::checkbox(id, text, on, enabled, crate::ui::controls::CheckLook::Panel, cx)
             .on_click(cx.listener(move |this, _, _, cx| {
                 if enabled {
                     set(this, !on, cx);
@@ -1819,16 +1745,7 @@ impl StudioEditor {
         let colors = cx.theme().colors().clone();
         let item = |section: Section, cx: &mut Context<Self>| {
             let on = self.section == section;
-            div()
-                .id(SharedString::from(format!("rail-{}", section as u8)))
-                .size(px(36.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(9.))
-                .cursor_pointer()
-                .when(on, |d| d.bg(colors.text_accent))
-                .when(!on, |d| d.hover(|d| d.bg(colors.ghost_element_hover)))
+            crate::ui::controls::section_item(SharedString::from(format!("rail-{}", section as u8)), on, crate::ui::controls::SectionLook::Rail, cx)
                 .child(Icon::from_path(section.icon()).size(IconSize::Medium).color(if on { Color::Custom(gpui::white()) } else { Color::Muted }))
                 .tip(Tooltip::text(section.label()))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -2134,100 +2051,32 @@ impl StudioEditor {
     }
 
     fn background_section(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let colors = cx.theme().colors().clone();
-        let (accent, edge) = (colors.text_accent, colors.border_variant);
-        let clear = gpui::transparent_black();
-        // A square tile with an accent ring when chosen; the ring, a gap and
-        // the swatch keep their corners concentric.
-        let tile = |id: SharedString, on: bool| div().id(id).flex_none().p(px(2.)).rounded(px(TILE_RADIUS)).border_2().border_color(if on { accent } else { clear }).cursor_pointer();
-        let swatch = || div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).overflow_hidden().border_1().border_color(edge);
-        let grid = || h_flex().w_full().flex_wrap().gap(px(TILE_GAP));
-
+        use crate::ui::controls::{self, BackdropChoice, BackdropOptions};
         let all = palette::backdrops();
-        let gradients: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 != all[i].1).collect();
-        let plains: Vec<usize> = (0..all.len()).filter(|&i| all[i].0 == all[i].1).collect();
-        let shown = if self.more_gradients { gradients.len() } else { gradients.len().min(GRADIENT_ROWS) };
-        let chosen = |i: usize| self.project.wallpaper.is_none() && self.project.backdrop == i;
-        let gradient_tiles: Vec<AnyElement> = gradients[..shown]
-            .iter()
-            .map(|&i| {
-                let (c0, c1) = all[i];
-                tile(SharedString::from(format!("gradient-{i}")), chosen(i))
-                    .child(swatch().bg(linear_gradient(135., linear_color_stop(c0, 0.), linear_color_stop(c1, 1.))))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.backdrop = i;
-                        this.project.wallpaper = None;
-                        this.changed(cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect();
-        let toggle_more = (gradients.len() > GRADIENT_ROWS).then(|| {
-            Button::new("more-gradients", t(if self.more_gradients { "editor.show_less" } else { "editor.show_more" }))
-                .style(ButtonStyle::Subtle)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.more_gradients = !this.more_gradients;
-                    cx.notify();
-                }))
-        });
-
-        let mut walls: Vec<AnyElement> = self
-            .walls
-            .iter()
-            .enumerate()
-            .map(|(i, (path, thumb))| {
-                let path = path.clone();
-                tile(SharedString::from(format!("wall-{i}")), self.project.wallpaper.as_ref() == Some(&path))
-                    .child(swatch().child(img(thumb.clone()).size_full().object_fit(ObjectFit::Cover)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.wallpaper = Some(path.clone());
-                        this.changed(cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect();
-        let own = self.project.wallpaper.as_ref().is_some_and(|w| !self.walls.iter().any(|(p, _)| p == w));
-        walls.push(
-            tile("own-wallpaper".into(), own)
-                .child(div().size(px(TILE)).rounded(px(TILE_RADIUS - 4.)).border_1().border_dashed().border_color(colors.border).flex().items_center().justify_center().child(Icon::new(IconName::Plus).size(IconSize::Small).color(Color::Muted)))
-                .tip(Tooltip::text(t("common.your_own_image")))
-                .on_click(cx.listener(|this, _, window, cx| this.pick_wallpaper(window, cx)))
-                .into_any_element(),
-        );
-
-        let dots: Vec<AnyElement> = plains
-            .iter()
-            .map(|&i| {
-                div()
-                    .id(SharedString::from(format!("plain-{i}")))
-                    .flex_none()
-                    .p(px(2.))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(if chosen(i) { accent } else { clear })
-                    .cursor_pointer()
-                    .child(div().size(px(DOT)).rounded_full().border_1().border_color(edge).bg(all[i].0))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.project.backdrop = i;
-                        this.project.wallpaper = None;
-                        this.changed(cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect();
+        let picker = controls::backdrop_picker(BackdropOptions {
+            colors: &all, gradient: self.project.wallpaper.is_none().then_some(self.project.backdrop),
+            wallpaper: self.project.wallpaper.as_deref(), walls: &self.walls,
+            expanded: self.more_gradients, leading_plain: Vec::new(),
+        }, |this: &mut StudioEditor, choice, window, cx| {
+            match choice {
+                BackdropChoice::Gradient(i) => { this.project.backdrop = i; this.project.wallpaper = None; }
+                BackdropChoice::Wallpaper(p) => this.project.wallpaper = Some(p),
+                BackdropChoice::Own => return this.pick_wallpaper(window, cx),
+                BackdropChoice::More => { this.more_gradients = !this.more_gradients; return cx.notify(); }
+            }
+            this.changed(cx);
+        }, cx);
 
         vec![
             crate::presets::render(&self.presets, &self.project.look(), cx).into_any_element(),
             v_flex()
                 .w_full()
                 .gap_2()
-                .child(h_flex().w_full().justify_between().child(Label::new(t("editor.gradients")).size(LabelSize::Small).color(Color::Muted)).children(toggle_more))
-                .child(grid().children(gradient_tiles))
+                .child(h_flex().w_full().justify_between().child(Label::new(t("editor.gradients")).size(LabelSize::Small).color(Color::Muted)).children(picker.more))
+                .child(picker.gradients)
                 .into_any_element(),
-            Self::group(t("editor.wallpapers"), vec![grid().children(walls).into_any_element()]),
-            Self::group(t("editor.plain_color"), vec![h_flex().w_full().flex_wrap().gap(px(2.)).children(dots).into_any_element()]),
+            Self::group(t("editor.wallpapers"), vec![picker.wallpapers.into_any_element()]),
+            Self::group(t("editor.plain_color"), vec![picker.plains.into_any_element()]),
             Self::group(t("editor.aspect_ratio"), vec![self.aspect_dropdown(cx)]),
             self.labeled_slider(t("studio.row_padding"), Knob::Padding, self.project.padding / MAX_PADDING, format!("{}%", (self.project.padding * 100.).round()), 0, cx),
             self.labeled_slider(t("studio.row_corners"), Knob::Radius, self.project.radius / MAX_RADIUS, format!("{}", self.project.radius.round()), 0, cx),

@@ -23,6 +23,7 @@ use crate::settings::Settings;
 use crate::ui::{ButtonLike, Divider, KeyBinding, ProgressBar, smoothing, Switch, Theme, ToggleState, Tooltip, prelude::*, rems_from_px};
 use kadr_platform::keymap::Command as Keys;
 use crate::ui::popover::{self, Align, DropdownLook, Elevation, Outside, Placement, RowLook, RowOptions};
+use crate::ui::controls::{self, ChipLook, OptionChip};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
@@ -114,6 +115,14 @@ pub struct Gallery {
     demo_choice: usize,
     demo_bounds: Vec<crate::ui::MenuBounds>,
     demo_anchors: Vec<crate::ui::MenuBounds>,
+    check_on: bool,
+    chip_choices: [usize; 5],
+    slider_values: [f32; 3],
+    slider_bounds: Vec<crate::ui::MenuBounds>,
+    slider_drag: Option<usize>,
+    swatch_choice: usize,
+    backdrop_choice: usize,
+    backdrop_more: bool,
 }
 
 pub fn open(cx: &mut App) {
@@ -160,6 +169,14 @@ pub fn open(cx: &mut App) {
                 demo_choice: 0,
                 demo_bounds: (0..10).map(|_| Default::default()).collect(),
                 demo_anchors: (0..10).map(|_| Default::default()).collect(),
+                check_on: true,
+                chip_choices: [0; 5],
+                slider_values: [0.35, 0.5, 0.65],
+                slider_bounds: (0..3).map(|_| Default::default()).collect(),
+                slider_drag: None,
+                swatch_choice: 0,
+                backdrop_choice: 0,
+                backdrop_more: false,
             }
         })
     });
@@ -259,10 +276,9 @@ fn line(name: &str, items: Vec<AnyElement>) -> AnyElement {
         .into_any_element()
 }
 
-/// The settings' chips (`settings_view::chips`, not shared yet), for the
-/// gallery's own theme and language switches.
-fn chip(id: impl Into<SharedString>, label: impl Into<SharedString>, on: bool) -> ButtonLike {
-    ButtonLike::new(gpui::ElementId::Name(id.into())).style(if on { ButtonStyle::Filled } else { ButtonStyle::Subtle }).toggle_state(on).child(div().px_1p5().child(Label::new(label).size(LabelSize::Small)))
+/// Compact shared chips for the gallery's theme and language switches.
+fn chip(id: impl Into<SharedString>, label: impl Into<SharedString>, on: bool) -> OptionChip {
+    OptionChip::new(gpui::ElementId::Name(id.into()), label, on, ChipLook::Compact)
 }
 
 /// A colour as `#rrggbb`, with its opacity when it has one.
@@ -669,7 +685,77 @@ impl Gallery {
             group("Divider", Some("Only a vertical one can be made: Divider has no constructor for its horizontal hairline."), divider, cx),
             group("Scrollbar", None, scroll, cx),
             group("Knob", None, knob, cx),
+            group("Small controls", Some("Live: click the choices and checkboxes, drag the sliders. Existing dimensions and ring colours are deliberately different."), self.small_controls(cx), cx),
         ]
+    }
+
+    fn small_controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        use controls::{CheckLook, PillLook, SectionLook, SliderLook, SwatchLook};
+        let colors = cx.theme().colors().clone();
+        let mut items = Vec::new();
+        for (k, look) in [ChipLook::Settings, ChipLook::Compact, ChipLook::Accent, ChipLook::Tray, ChipLook::HistoryFilter].into_iter().enumerate() {
+            let chips = (0..3).map(|i| OptionChip::new(SharedString::from(format!("demo-chip-{k}-{i}")), [t("settings.system"), t("settings.dark"), t("settings.light")][i], self.chip_choices[k] == i, look)
+                .count(if k == 4 { i * 3 } else { 0 })
+                .on_click(cx.listener(move |this, _, _, cx| { this.chip_choices[k] = i; cx.notify(); }))).collect::<Vec<_>>();
+            items.push(spec(["Settings · wide soft chips", "Compact · theme / trim", "Accent · equal width", "Tray · editor cells", "History filter · large, with counts"][k], controls::segments(look, cx).w(px(300.)).children(chips)));
+        }
+        for (k, look) in [CheckLook::Panel, CheckLook::CropFooter].into_iter().enumerate() {
+            for (j, (on, enabled)) in [(self.check_on, true), (false, true), (true, false), (false, false)].into_iter().enumerate() {
+                items.push(spec(format!("Checkbox · {} · {}", if k == 0 { "panel" } else { "footer" }, if enabled { "live" } else { "disabled" }),
+                    controls::checkbox(SharedString::from(format!("demo-check-{k}-{j}")), t("editor.snap_to_edges"), on, enabled, look, cx)
+                        .on_click(cx.listener(move |this, _, _, cx| { if enabled { this.check_on = !on; cx.notify(); } }))));
+            }
+        }
+        for i in 0..3 {
+            let bounds = self.slider_bounds[i].clone();
+            let slider = controls::slider(SharedString::from(format!("demo-slider-{i}")), self.slider_values[i], if i == 2 { 6 } else { 0 },
+                if i == 0 { SliderLook::Editor } else { SliderLook::Studio }, move |b| bounds.set(b), cx)
+                .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    this.slider_drag = Some(i);
+                    this.slide_demo(i, f32::from(e.position.x));
+                    cx.notify();
+                }));
+            let shown = format!("{}%", (self.slider_values[i] * 100.).round());
+            let body = if i == 0 { controls::slider_value(slider, shown) } else { controls::labeled_slider(t("studio.row_padding"), shown, slider) };
+            items.push(wide_spec(["Slider · editor, value beside", "Slider · studio, value above", "Slider · studio with visual ticks"][i], 300., body.w(px(300.))));
+        }
+        for (k, look) in [SwatchLook::Colour, SwatchLook::Settings, SwatchLook::Tile, SwatchLook::Dot].into_iter().enumerate() {
+            for (r, ring) in [colors.text, colors.text_accent].into_iter().enumerate() {
+                let row = (0..3).map(|i| controls::swatch(SharedString::from(format!("demo-swatch-{k}-{r}-{i}")), self.swatch_choice == i, ring, look)
+                    .child(controls::swatch_content(look, (!matches!(look, SwatchLook::Settings)).then_some(colors.border_variant)).bg(palette::annotation_colors()[i]))
+                    .on_click(cx.listener(move |this, _, _, cx| { this.swatch_choice = i; cx.notify(); }))).collect::<Vec<_>>();
+                items.push(spec(format!("Swatch {k} · {} ring", if r == 0 { "text" } else { "accent" }), controls::swatch_grid(look).w(px(180.)).children(row)));
+            }
+        }
+        let all = palette::backdrops();
+        let picker = controls::backdrop_picker(controls::BackdropOptions { colors: &all, gradient: Some(self.backdrop_choice), wallpaper: None, walls: &[], expanded: self.backdrop_more, leading_plain: Vec::new() },
+            |this: &mut Gallery, choice, _, cx| {
+                match choice { controls::BackdropChoice::Gradient(i) => this.backdrop_choice = i, controls::BackdropChoice::More => this.backdrop_more = !this.backdrop_more, _ => {} }
+                cx.notify();
+            }, cx);
+        items.push(wide_spec("Backdrop picker · expand and select", 240., v_flex().w(px(240.)).gap_2().children(picker.more).child(picker.gradients).child(picker.wallpapers).child(picker.plains)));
+        for (k, look) in [PillLook::Card, PillLook::TextCard, PillLook::History, PillLook::Pin].into_iter().enumerate() {
+            let row = h_flex().gap_2().p_2().rounded(px(8.)).bg(colors.text_accent)
+                    .child(controls::picture_pill(SharedString::from(format!("demo-pill-{k}")), look).size(px(if k == 2 { 20. } else if k == 3 { 26. } else { 24. }))
+                        .child(Icon::new(IconName::Close).size(IconSize::XSmall).color(Color::Custom(controls::pill_ink()))))
+                    .child(controls::picture_pill(SharedString::from(format!("demo-pill-wide-{k}")), look).h(px(28.)).px_3()
+                        .child(Label::new(t("common.copy")).size(LabelSize::Small).color(Color::Custom(controls::pill_ink()))));
+            items.push(spec(["Picture pill · card", "Picture pill · text card", "Picture pill · history, no pressed", "Picture pill · pin, shadow"][k], row));
+        }
+        for (k, look) in [SectionLook::Settings, SectionLook::Rail].into_iter().enumerate() {
+            items.push(spec(if k == 0 { "Section list · settings" } else { "Section list · rail" }, v_flex().gap_1().children((0..2).map(|i| {
+                controls::section_item(SharedString::from(format!("demo-section-{k}-{i}")), self.demo_choice == i, look, cx)
+                    .child(Icon::new(IconName::Settings).size(IconSize::Small).color(if self.demo_choice == i { Color::Custom(gpui::white()) } else { Color::Muted }))
+                    .when(k == 0, |d| d.child(Label::new(t("common.appearance"))))
+                    .on_click(cx.listener(move |this, _, _, cx| { this.demo_choice = i; cx.notify(); }))
+            }).collect::<Vec<_>>())));
+        }
+        items
+    }
+
+    fn slide_demo(&mut self, slot: usize, x: f32) {
+        let b = self.slider_bounds[slot].get();
+        self.slider_values[slot] = kadr_ui::controls::fraction(x, b.origin.x.into(), b.size.width.into());
     }
 
     fn text_fields(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -760,7 +846,7 @@ impl Gallery {
                     .rounded_smoothing(smoothing())
                     .bg(colors.element_background)
                     .child(Label::new(*name).size(LabelSize::Small))
-                    .child(caption(format!("lives in {lives}, not yet a shared component")))
+                    .child(caption(format!("single-use pattern in {lives}")))
                     .child(caption(*copies))
                     .into_any_element()
             })
@@ -769,7 +855,7 @@ impl Gallery {
             group("Shared", Some("Patterns that can be reused as they are."), shared, cx),
             group("Popover and dropdown", Some("Live: open, pick, click outside, or Escape. Hosts keep their state and key ordering. The four placement samples stay inside the window."), self.popovers(window, cx), cx),
             group("Menu rows", Some("The existing row looks: checks, icons, hints, disabled and keyboard-highlighted states. Separators use space unless a screen already draws a line."), self.menu_rows(cx), cx),
-            group("Not yet shared", Some("Components in practice, private to their screens: copying them here would only be another copy. The backlog for making them shared."), backlog, cx),
+            group("Screen patterns", Some("Single-use patterns stay with their screens; copying them here would only be another copy."), backlog, cx),
         ]
     }
 
@@ -904,6 +990,7 @@ fn group_note(name: &str) -> &'static str {
         "knob" => "ui::paint_knob, in px.",
         "text_field" => "Single-line caret, selection and input-method composition marks.",
         "menu" => "Menu row and dropdown field metrics. Logical px and rem-base radii deliberately remain distinct.",
+        "small_controls" => "Chips, checks, sliders, swatches, picture pills and rail items, at their original logical-pixel sizes.",
         _ => "",
     }
 }
@@ -1099,16 +1186,9 @@ fn window_controls_name() -> &'static str {
 /// Patterns that are components in practice but private to their screens:
 /// the name, where they live, and their copies.
 const PRIVATE: &[(&str, &str, &str)] = &[
-    ("Option chips (segmented choice)", "settings_view.rs `chips`, trim.rs, studio_editor.rs `choices`, editor.rs aspect row", "4 looks: Filled/Subtle chips (settings, trim, the theme row), accent-filled tabs 28 px (studio), a tray of cells (editor)"),
-    ("Slider", "editor.rs `slider`, studio_editor.rs `slider` + `labeled_slider`", "2 near-identical copies (the studio's has ticks)"),
-    ("Checkbox", "studio_editor.rs `check`, editor.rs crop footer (snap to edges)", "2 copies"),
-    ("Colour swatch", "editor.rs colour menu and fill picker, editor.rs + studio_editor.rs backdrop tiles, settings_view.rs studio backdrops", "5; the chosen ring is the text colour in some, the accent in others"),
     ("Colour menu", "editor.rs `render_toolbar`", "1: own colours, pipette, recent, saved and +"),
-    ("Backdrop picker", "editor.rs, studio_editor.rs (TILE, TILE_RADIUS, TILE_GAP, DOT, GRADIENT_ROWS)", "2 copies with the same constants; the settings' studio backdrops are a third, not concentric (7 outer, 5 inner, 4 inset)"),
     ("Settings group (inset card, hairlines) and heading", "settings_view.rs `render_body`, `heading`", "1; studio_editor.rs `group` is a plainer cousin"),
     ("Labelled switch row (compact)", "studio_editor.rs `switch_row`", "1, beside settings_view.rs `row`"),
-    ("Section list", "settings_view.rs sidebar, studio_editor.rs `render_rail`", "2 looks: accent-filled rows, accent-filled 36 px icons"),
-    ("White pill buttons over a picture", "cards.rs `pill` (twice), history.rs `pill`, pin.rs `pill`", "4 copies, sizes 24, 20 and 26; history's has no pressed state"),
     ("Quick-access card frame", "cards.rs `render_card`", "1, with its job and text variants"),
     ("History grid item", "history.rs `render_item`", "1: thumbnail, hover overlay, frosted duration badge"),
     ("Storage bar (stacked progress)", "settings_view.rs `render_usage`", "1"),
@@ -1130,6 +1210,13 @@ impl Render for Gallery {
             .bg(cx.theme().colors().editor_background)
             .flex()
             .track_focus(&self.focus)
+            .on_mouse_move(cx.listener(|this, e: &gpui::MouseMoveEvent, _, cx| {
+                if let Some(i) = this.slider_drag {
+                    if e.dragging() { this.slide_demo(i, f32::from(e.position.x)); } else { this.slider_drag = None; }
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, _| this.slider_drag = None))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 if let Some(slot) = this.active_field {
                     crate::ui::text_field::key(this, slot, e, window, cx);
