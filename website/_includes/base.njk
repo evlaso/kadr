@@ -6,7 +6,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
+<script>try { if (localStorage.getItem("theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}</script>
 <title>{% if slug %}{{ title }} · kadr{% else %}kadr · {{ t.headline }}{% endif %}</title>
 <meta name="description" content="{{ t.description }}">
 <link rel="icon" type="image/svg+xml" href="{{ root }}assets/kadr.svg">

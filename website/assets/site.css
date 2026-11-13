@@ -1,4 +1,4 @@
-/* kadr's site. One column of text, the app's dark colours whatever the system's theme, nothing else. */
+/* kadr's site. One column of text, dark unless the reader picks the light theme under a page, nothing else. */
 :root {
   --bg: #100f0f; --text: #cecdc3; --soft: #878580; --faint: #575653; --line: #282726; --tint: #1c1b1a; --accent: #4385be;
   --muted: #9f9d96; --panel: #1c1b1a; --hover: #282726; --mark: #66a0c8; --dim: rgb(0 0 0 / 0.6);
@@ -6,6 +6,11 @@
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #fff; --text: #100f0f; --soft: #6f6e69; --faint: #b7b5ac; --line: #e8e7e3; --tint: #f5f4f1; --accent: #205ea6;
+  --muted: #66655f; --panel: #fff; --hover: #f5f4f1; --mark: #205ea6; --dim: rgb(16 15 15 / 0.24);
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-padding-top: 1.5rem; }
@@ -95,7 +100,11 @@ a:hover { color: var(--accent); text-decoration-color: currentColor; }
 .menu .outline { margin: 0.1rem 0 0.4rem; padding-left: 0.75rem; border-left: 1px solid var(--line); }
 .menu summary { cursor: pointer; color: var(--text); font-weight: 600; padding: 0.25rem 0 0.75rem; }
 .turn { display: flex; justify-content: space-between; gap: 1rem; margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-size: 0.9375rem; }
-.edit { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--soft); }
+.edit { margin-top: 3rem; font-size: 0.8125rem; line-height: 1.9; color: var(--soft); display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; align-items: baseline; }
+.theme { margin-left: auto; padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 0.2em; }
+.theme:hover { color: var(--text); }
+.theme .to-dark, :root[data-theme="light"] .theme .to-light { display: none; }
+:root[data-theme="light"] .theme .to-dark { display: inline; }
 
 @media (min-width: 76rem) {
   .menu { position: absolute; top: 0; bottom: 0; right: 100%; width: var(--menu); margin-right: var(--gap); padding: 0; }
