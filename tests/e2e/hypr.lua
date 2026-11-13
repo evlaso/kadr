@@ -16,6 +16,9 @@ hl.config({
   },
   cursor = { no_hardware_cursors = true },
   debug = { disable_logs = false },
+  -- kadr is a Wayland program; an X server here would only be one more
+  -- process to end with the session (it aborts when Hyprland goes first).
+  xwayland = { enabled = false },
 })
 
 -- kadr's ordinary windows float in the middle, as data/hypr/kadr.lua has them
