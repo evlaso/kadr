@@ -593,6 +593,8 @@ fn state(window: AnyWindowHandle, cx: &mut App) -> Result<Value, String> {
                 settings.read(cx).dev_state()
             } else if let Some(Some(stack)) = window.root::<crate::cards::CardStack>() {
                 stack.read(cx).dev_state()
+            } else if let Some(Some(history)) = window.root::<crate::history::History>() {
+                history.read(cx).dev_state()
             } else {
                 Value::Null
             };

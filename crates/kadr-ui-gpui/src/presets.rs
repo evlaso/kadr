@@ -8,12 +8,16 @@ use serde_json::Value;
 use crate::i18n::t;
 
 use crate::ui::{ButtonLike, Tooltip, prelude::*};
+use crate::ui::text_field::{self, Event, Options};
+use kadr_ui::text::Field;
+
+pub const FIELD: usize = 100;
 
 pub struct Presets {
     pub list: Vec<(String, Value)>,
     open: bool,
     /// The preset being renamed and its name so far.
-    renaming: Option<(usize, String)>,
+    renaming: Option<(usize, Field)>,
     focus: FocusHandle,
     /// Where typing went before a rename took it.
     back: Option<FocusHandle>,
@@ -24,7 +28,7 @@ pub struct Presets {
 }
 
 /// A view with presets: where they are, its current look and how to take one.
-pub trait HasPresets: Sized + 'static {
+pub trait HasPresets: text_field::Host {
     fn presets(&mut self) -> &mut Presets;
     fn current_look(&self) -> Value;
     fn apply_look(&mut self, look: &Value, cx: &mut Context<Self>);
@@ -49,7 +53,7 @@ impl Presets {
     }
 
     fn rename(&mut self, i: usize, window: &mut Window, cx: &mut App) {
-        self.renaming = Some((i, String::new()));
+        self.renaming = Some((i, Field::single_line("")));
         if self.back.is_none() {
             self.back = window.focused(cx);
         }
@@ -59,7 +63,7 @@ impl Presets {
     /// Finish a rename; an empty name keeps the old one.
     fn commit(&mut self, window: &mut Window, cx: &mut App) {
         if let Some((i, name)) = self.renaming.take() {
-            let name = name.trim();
+            let name = name.text().trim();
             if !name.is_empty()
                 && let Some(p) = self.list.get_mut(i)
             {
@@ -76,11 +80,23 @@ impl Presets {
         self.commit(window, cx);
         self.open = false;
     }
+
+    pub fn field(&mut self) -> Option<&mut Field> {
+        self.renaming.as_mut().map(|(_, field)| field)
+    }
+
+    pub fn field_event(&mut self, event: Event, window: &mut Window, cx: &mut App) {
+        match event {
+            Event::Enter | Event::Blur => self.commit(window, cx),
+            Event::Escape => { self.renaming = None; self.commit(window, cx); }
+            _ => {}
+        }
+    }
 }
 
 /// The dropdown and the "+" beside it, full width.
 pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) -> AnyElement {
-    let colors = cx.theme().colors();
+    let colors = cx.theme().colors().clone();
     let active = p.list.iter().position(|(_, look)| crate::studio::look_matches(look, current));
     let title = match active {
         Some(i) => Label::new(p.list[i].0.clone()),
@@ -88,9 +104,9 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
     };
 
     let menu = p.open.then(|| {
-        let rows = p.list.iter().enumerate().map(|(i, (name, look))| {
+        let rows: Vec<_> = p.list.iter().enumerate().map(|(i, (name, look))| {
             let group = SharedString::from(format!("preset-row-{i}"));
-            let editing = p.renaming.as_ref().filter(|r| r.0 == i).map(|r| r.1.clone());
+            let editing = p.renaming.as_ref().filter(|r| r.0 == i).map(|r| &r.1);
             let row = h_flex()
                 .id(SharedString::from(format!("preset-{i}")))
                 .group(group.clone())
@@ -102,8 +118,8 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                 .child(Icon::new(IconName::Check).size(IconSize::Small).color(if active == Some(i) { Color::Accent } else { Color::Custom(gpui::transparent_black()) }));
             if let Some(text) = editing {
                 // Typing goes here; the old name shows until the first key.
-                let shown = if text.is_empty() { div().text_color(colors.text_placeholder).child(format!("{name}▏")) } else { div().child(format!("{text}▏")) };
-                return row.child(div().flex_1().min_w_0().h(px(24.)).px_1p5().flex().items_center().rounded(px(5.)).border_1().border_color(colors.text_accent).child(shown)).into_any_element();
+                return row.child(text_field::render("preset-name", FIELD, text, &p.focus, true, Options { placeholder: name.clone().into(), legacy_caret_metrics: true, ..Default::default() }, cx)
+                    .flex_1().min_w_0().h(px(24.)).px_1p5().rounded(px(5.)).border_1().border_color(colors.text_accent)).into_any_element();
             }
             let look = look.clone();
             row.cursor_pointer()
@@ -146,7 +162,7 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
                     cx.notify();
                 }))
                 .into_any_element()
-        });
+        }).collect();
         let empty = p.list.is_empty().then(|| div().px_2().py_1p5().child(Label::new(t("presets.empty_hint")).size(LabelSize::Small).color(Color::Muted)));
         gpui::deferred(
             v_flex()
@@ -171,27 +187,7 @@ pub fn render<T: HasPresets>(p: &Presets, current: &Value, cx: &mut Context<T>) 
         .w_full()
         .track_focus(&p.focus)
         .on_key_down(cx.listener(|this: &mut T, e: &KeyDownEvent, window, cx| {
-            let p = this.presets();
-            let Some((_, text)) = p.renaming.as_mut() else { return };
-            cx.stop_propagation();
-            match e.keystroke.key.as_str() {
-                "enter" => p.commit(window, cx),
-                "escape" => {
-                    p.renaming = None;
-                    p.commit(window, cx);
-                }
-                "backspace" => {
-                    text.pop();
-                }
-                _ => {
-                    if !(e.keystroke.modifiers.control || e.keystroke.modifiers.platform)
-                        && let Some(ch) = e.keystroke.key_char.as_deref().filter(|c| !c.chars().any(char::is_control))
-                    {
-                        text.push_str(ch);
-                    }
-                }
-            }
-            cx.notify();
+            if this.presets().renaming.is_some() { text_field::key(this, FIELD, e, window, cx); }
         }))
         .on_mouse_down_out(cx.listener(|this: &mut T, e: &gpui::MouseDownEvent, window, cx| {
             let p = this.presets();

@@ -530,7 +530,7 @@ pub struct Editor {
     /// opens: across, then down.
     edges: Option<Rc<(Vec<f32>, Vec<f32>)>>,
     /// Typing an exact crop size: the height (or the width) so far.
-    size_field: Option<(bool, String)>,
+    size_field: Option<(bool, kadr_ui::text::Field)>,
     /// The crop mode's open dropdown.
     crop_menu: Option<CropMenu>,
     crop_menu_bounds: crate::ui::MenuBounds,
@@ -1211,6 +1211,7 @@ impl Editor {
     /// shape.
     fn apply_size_field(&mut self) {
         let Some((height, text)) = self.size_field.take() else { return };
+        let text = text.text();
         let Ok(v) = text.parse::<f32>() else { return };
         let v = v.clamp(1., 100_000.);
         let (l, t, r, b) = self.crop_or_picture();
@@ -1751,10 +1752,12 @@ impl Editor {
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Printable rename keys must reach the input method, not canvas tools.
+        if self.presets.field().is_some() { return; }
         let k = &e.keystroke;
         let (ctrl, shift) = (k.modifiers.control || k.modifiers.platform, k.modifiers.shift);
 
-        if let Some((height, text)) = &mut self.size_field {
+        if let Some((height, _)) = &self.size_field {
             match k.key.as_str() {
                 "escape" => self.size_field = None,
                 "enter" => self.apply_size_field(),
@@ -1762,13 +1765,13 @@ impl Editor {
                 "tab" | "x" => {
                     let other = !*height;
                     self.apply_size_field();
-                    self.size_field = Some((other, String::new()));
+                    self.size_field = Some((other, kadr_ui::text::Field::digits("", 6)));
                 }
-                "backspace" => {
-                    text.pop();
+                _ => {
+                    let slot = usize::from(*height);
+                    crate::ui::text_field::key(self, slot, e, window, cx);
+                    return;
                 }
-                key if key.len() == 1 && key.chars().all(|c| c.is_ascii_digit()) && text.len() < 6 => text.push_str(key),
-                _ => {}
             }
             return cx.notify();
         }
@@ -1776,30 +1779,12 @@ impl Editor {
         if self.editing.is_some() {
             // The system's text keys; what types goes on to the input
             // handler (and the input method) below.
-            use kadr_platform::keymap::Command as C;
-            use kadr_ui::text::Move;
             let f = &mut self.field;
-            let is = |c| crate::ui::is_command(k, c);
-            let moves = [(C::WordLeft, Move::WordLeft), (C::WordRight, Move::WordRight), (C::LineStart, Move::LineStart), (C::LineEnd, Move::LineEnd)];
-            if let Some(&(_, to)) = moves.iter().find(|(c, _)| is(*c)) {
-                f.go(to, shift);
-            } else if is(C::DeleteWordBack) {
-                f.delete_word_back();
-            } else if is(C::SelectAll) {
-                f.select_all();
-            } else if is(C::Paste) {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    f.insert(&text);
-                }
-            } else {
+            if !crate::ui::text_field::edit_key(f, k, cx) {
                 match k.key.as_str() {
                     "escape" => self.finish_text(),
                     "enter" if !shift => self.finish_text(),
                     "enter" => f.insert("\n"),
-                    "backspace" => f.backspace(),
-                    "delete" => f.delete(),
-                    "left" => f.go(Move::Left, shift),
-                    "right" => f.go(Move::Right, shift),
                     _ => return,
                 }
             }
@@ -3469,7 +3454,7 @@ impl Editor {
     /// The crop mode's top bar: the mode, the shape and
     /// size of the crop, turning, the result's size, then Cancel and Crop.
     fn render_crop_bar(&self, width: f32, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors();
+        let colors = cx.theme().colors().clone();
         let (accent, field_bg) = (colors.text_accent, colors.element_background);
         let (left, top, right, bottom) = self.crop_or_picture();
         let (cw, ch) = ((right - left).round().max(1.) as u32, (bottom - top).round().max(1.) as u32);
@@ -3492,13 +3477,11 @@ impl Editor {
 
         // Click to type an exact size in the picture's pixels.
         let field = |id: &'static str, height: bool, value: u32, cx: &mut Context<Self>| {
-            let typing = self.size_field.as_ref().filter(|(h, _)| *h == height).map(|(_, s)| s.clone());
-            let shown = match &typing {
-                Some(s) if !s.is_empty() => Label::new(s.clone()).size(LabelSize::Small),
-                _ => Label::new(value.to_string()).size(LabelSize::Small).color(if typing.is_some() { Color::Muted } else { Color::Default }),
-            };
-            div()
-                .id(id)
+            let typing = self.size_field.as_ref().filter(|(h, _)| *h == height).map(|(_, s)| s);
+            let rest = kadr_ui::text::Field::digits(&value.to_string(), 6);
+            crate::ui::text_field::render(id, usize::from(height), typing.unwrap_or(&rest), &self.focus, typing.is_some(), crate::ui::text_field::Options {
+                placeholder: value.to_string().into(), centered: true, placeholder_muted: true, ..Default::default()
+            }, cx)
                 .w(px(68.))
                 .h(px(28.))
                 .flex()
@@ -3510,14 +3493,8 @@ impl Editor {
                 .border_1()
                 .border_color(if typing.is_some() { accent } else { gpui::transparent_black() })
                 .cursor(CursorStyle::IBeam)
-                .child(shown)
-                .when(typing.is_some(), |d| d.child(div().w(px(1.)).h(px(14.)).bg(accent)))
+                .text_size(LabelSize::Small.rems())
                 .tip(Tooltip::text(t(if height { "editor.height_px" } else { "editor.width_px" })))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.apply_size_field();
-                    this.size_field = Some((height, String::new()));
-                    cx.notify();
-                }))
         };
         let icon_button = |id: &'static str, icon: &'static str, tip: &'static str| {
             ButtonLike::new(id).style(ButtonStyle::Subtle).size(ButtonSize::Large).child(div().px_1().child(Icon::from_path(icon).size(IconSize::Small))).tip(Tooltip::text(tip))
@@ -4985,19 +4962,44 @@ impl Editor {
     }
 }
 
+impl crate::ui::text_field::Host for Editor {
+    fn field(&mut self, slot: usize) -> Option<&mut kadr_ui::text::Field> {
+        if slot == crate::presets::FIELD { return self.presets.field(); }
+        self.size_field.as_mut().filter(|(height, _)| usize::from(*height) == slot).map(|(_, f)| f)
+    }
+
+    fn field_event(&mut self, slot: usize, event: crate::ui::text_field::Event, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::ui::text_field::Event;
+        if slot == crate::presets::FIELD {
+            self.presets.field_event(event, window, cx);
+        } else {
+            match event {
+                Event::Focus => {
+                    if self.size_field.as_ref().is_none_or(|(height, _)| usize::from(*height) != slot) {
+                        self.apply_size_field();
+                        self.size_field = Some((slot == 1, kadr_ui::text::Field::digits("", 6)));
+                    }
+                }
+                Event::Enter | Event::Blur => self.apply_size_field(),
+                Event::Escape => self.size_field = None,
+                _ => {}
+            }
+        }
+        cx.notify();
+    }
+}
+
 /// The input method's side of typing a text (and plain typing, which GPUI
 /// hands here once the keys above let it through). Offsets are UTF-16.
 impl gpui::EntityInputHandler for Editor {
     fn text_for_range(&mut self, range: std::ops::Range<usize>, adjusted: &mut Option<std::ops::Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
         self.editing?;
-        let range = range.start.min(self.field.len_utf16())..range.end.min(self.field.len_utf16());
-        *adjusted = Some(range.clone());
-        Some(self.field.text_utf16(range))
+        Some(crate::ui::text_field::text_for_range(&self.field, range, adjusted))
     }
 
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<gpui::UTF16Selection> {
         self.editing?;
-        Some(gpui::UTF16Selection { range: self.field.selection_utf16(), reversed: false })
+        Some(crate::ui::text_field::selection(&self.field))
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<std::ops::Range<usize>> {
@@ -5748,6 +5750,7 @@ impl Editor {
             "shapes": self.vm.doc.shapes.iter().map(kadr_core::project::shape_to_json).collect::<Vec<_>>(),
             "crop": self.vm.doc.crop.map(|(a, b)| [[a.0, a.1], [b.0, b.1]]),
             "cropping": self.cropping.is_some(),
+            "size_field": self.size_field.as_ref().map(|(height, f)| serde_json::json!({ "height": height, "text": f.text(), "caret": f.caret(), "selection": [f.selection().start, f.selection().end] })),
             // The picture's size on screen over its real size.
             "zoom": self.disp.0 / self.real.0,
             // The text being typed: its content, the caret and selection

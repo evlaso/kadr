@@ -81,7 +81,7 @@ struct Thumb {
 
 pub struct History {
     items: Vec<Item>,
-    query: String,
+    query: kadr_ui::text::Field,
     filter: Filter,
     /// Index into `visible()`: the current tile, and where a Shift-click
     /// range starts.
@@ -96,8 +96,7 @@ pub struct History {
     /// Where the scrollbar thumb was grabbed, while it is dragged.
     grab: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     focus: FocusHandle,
-    /// The search's caret is showing: it blinks while the window is active.
-    caret: bool,
+    search_focused: bool,
     /// The tile under the pointer: only it carries the hover buttons.
     hovered: Option<usize>,
     /// Only the rows in view are laid out, between two spacers: the
@@ -204,9 +203,6 @@ impl Thumb {
     }
 }
 
-/// How long the search's caret stays on and off.
-const CARET_BLINK: std::time::Duration = std::time::Duration::from_millis(530);
-
 pub fn open(cx: &mut App) {
     // One history window at a time.
     if let Some(window) = cx.windows().into_iter().find_map(|w| w.downcast::<History>()) {
@@ -264,37 +260,41 @@ pub fn open(cx: &mut App) {
                 }
             })
             .detach();
-            // The search's caret blinks like a text field's, only while the
-            // window has the keyboard.
-            cx.spawn_in(window, async move |this, cx| {
-                loop {
-                    cx.background_executor().timer(CARET_BLINK).await;
-                    let alive = this.update_in(cx, |history: &mut History, window, cx| {
-                        let caret = history.focus.is_focused(window) && !history.caret;
-                        if caret != history.caret {
-                            history.caret = caret;
-                            cx.notify();
-                        }
-                    });
-                    if alive.is_err() {
-                        break;
-                    }
-                }
-            })
-            .detach();
-            History { items, query: String::new(), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus, caret: true, hovered: None, pitch: None, first_child: 0, filter_fit: Default::default(), hint_fit: Default::default(), filter_open: false, filter_menu: Default::default() }
+            History { items, query: kadr_ui::text::Field::single_line(""), filter: Filter::All, selected: 0, picked: Default::default(), columns: 4, item_width: MIN_ITEM, scroll: ScrollHandle::new(), grab: Default::default(), focus, search_focused: false, hovered: None, pitch: None, first_child: 0, filter_fit: Default::default(), hint_fit: Default::default(), filter_open: false, filter_menu: Default::default() }
         })
     });
 }
 
+impl crate::ui::text_field::Host for History {
+    fn field(&mut self, _: usize) -> Option<&mut kadr_ui::text::Field> { Some(&mut self.query) }
+
+    fn field_event(&mut self, _: usize, event: crate::ui::text_field::Event, _: &mut Window, cx: &mut Context<Self>) {
+        use crate::ui::text_field::Event;
+        match event {
+            Event::Focus => self.search_focused = true,
+            Event::Blur => self.search_focused = false,
+            Event::Changed => {
+                self.selected = 0;
+                self.picked.clear();
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+}
+
 impl History {
+    pub(crate) fn dev_state(&self) -> serde_json::Value {
+        serde_json::json!({ "query": self.query.text(), "visible": self.visible().len(), "selected": self.selected })
+    }
     fn visible(&self) -> Vec<usize> {
         self.matching(self.filter)
     }
 
     /// The items a filter shows for the current search.
     fn matching(&self, filter: Filter) -> Vec<usize> {
-        let q = self.query.to_lowercase();
+        let q = self.query.text().to_lowercase();
         self.items
             .iter()
             .enumerate()
@@ -406,9 +406,11 @@ impl History {
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        // Typing keeps the caret on, like a text field's.
-        self.caret = true;
         let k = &e.keystroke;
+        if (self.search_focused || !self.query.is_empty()) && !matches!(k.key.as_str(), "escape" | "enter" | "tab" | "up" | "down") {
+            crate::ui::text_field::key(self, 0, e, window, cx);
+            return;
+        }
         let ctrl = k.modifiers.control || k.modifiers.platform;
         let current = self.current();
         let cols = self.columns.max(1);
@@ -448,7 +450,7 @@ impl History {
                 self.delete(&targets, cx);
             }
             ("backspace", _) => {
-                self.query.pop();
+                self.query.backspace();
                 self.selected = 0;
                 self.picked.clear();
             }
@@ -459,13 +461,7 @@ impl History {
                 }
             }
             ("p", false) if self.query.is_empty() => return self.pin(window, cx),
-            (_, false) => {
-                if let Some(ch) = k.key_char.as_deref().filter(|c| !c.chars().any(char::is_control)) {
-                    self.query.push_str(ch);
-                    self.selected = 0;
-                    self.picked.clear();
-                }
-            }
+            (_, false) => return,
             _ => {}
         }
         cx.notify();
@@ -728,22 +724,15 @@ impl Render for History {
             h_flex().relative().gap_0p5().children(filters).child(self.filter_fit.track(0, 0)).into_any_element()
         };
         // Big and bold: typing is the main way through the history.
-        let search = h_flex()
+        let search = crate::ui::text_field::render("search", 0, &self.query, &self.focus, true, crate::ui::text_field::Options {
+            placeholder: t("history.search_by_name_date").into(),
+            icon: Some((IconName::MagnifyingGlass, IconSize::Large)),
+            caret_room: 1.5,
+            ..Default::default()
+        }, cx)
             .flex_1()
             .gap_3()
-            .text_size(crate::ui::rems_from_px(19.))
-            .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Large).color(Color::Muted))
-            // A text field: an I-beam over it, the caret after what's typed
-            // (before the placeholder when nothing is).
-            .child({
-                let caret = div().flex_none().w(px(1.5)).h(crate::ui::rems_from_px(22.)).when(self.caret, |d| d.bg(cx.theme().colors().text_accent));
-                let row = h_flex().id("search").flex_1().cursor(gpui::CursorStyle::IBeam);
-                if self.query.is_empty() {
-                    row.child(caret).child(div().text_color(cx.theme().colors().text_placeholder).child(t("history.search_by_name_date")))
-                } else {
-                    row.child(div().child(self.query.clone())).child(caret)
-                }
-            });
+            .text_size(crate::ui::rems_from_px(19.));
 
         // Only the rows in view, and one either side, are laid out; spacers
         // stand in for the rest so the scrollbar stays true.

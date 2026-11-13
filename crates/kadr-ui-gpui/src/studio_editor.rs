@@ -1065,6 +1065,7 @@ impl StudioEditor {
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.presets.field().is_some() { return; }
         let k = &e.keystroke;
         let ctrl = k.modifiers.control || k.modifiers.platform;
         match (k.key.as_str(), ctrl) {
@@ -2557,6 +2558,17 @@ fn size_label(project: &Project, probe: &Probe) -> String {
 /// "1,2 с"
 fn seconds(t: f64) -> String {
     tr!("common.seconds", crate::i18n::decimal(format!("{:.1}", t)))
+}
+
+impl crate::ui::text_field::Host for StudioEditor {
+    fn field(&mut self, slot: usize) -> Option<&mut kadr_ui::text::Field> {
+        (slot == crate::presets::FIELD).then(|| self.presets.field()).flatten()
+    }
+
+    fn field_event(&mut self, _: usize, event: crate::ui::text_field::Event, window: &mut Window, cx: &mut Context<Self>) {
+        self.presets.field_event(event, window, cx);
+        cx.notify();
+    }
 }
 
 impl crate::presets::HasPresets for StudioEditor {

@@ -107,6 +107,8 @@ pub struct Gallery {
     preset_look: Value,
     /// The switch that can be clicked.
     switch_on: bool,
+    fields: Vec<kadr_ui::text::Field>,
+    active_field: Option<usize>,
 }
 
 pub fn open(cx: &mut App) {
@@ -139,6 +141,16 @@ pub fn open(cx: &mut App) {
                 presets: Presets::new(looks, |_| {}, cx),
                 preset_look: json!({ "padding": 0.1, "radius": 0.5 }),
                 switch_on: true,
+                fields: vec![
+                    kadr_ui::text::Field::single_line(""),
+                    kadr_ui::text::Field::single_line("kadr"),
+                    kadr_ui::text::Field::single_line(""),
+                    kadr_ui::text::Field::single_line("capture-{n}"),
+                    kadr_ui::text::Field::single_line(""),
+                    kadr_ui::text::Field::digits("1920", 6),
+                    kadr_ui::text::Field::single_line(""),
+                ],
+                active_field: None,
             }
         })
     });
@@ -155,6 +167,26 @@ impl HasPresets for Gallery {
 
     fn apply_look(&mut self, look: &Value, _: &mut Context<Self>) {
         self.preset_look = look.clone();
+    }
+}
+
+impl crate::ui::text_field::Host for Gallery {
+    fn field(&mut self, slot: usize) -> Option<&mut kadr_ui::text::Field> {
+        if slot == crate::presets::FIELD { self.presets.field() } else { self.fields.get_mut(slot) }
+    }
+
+    fn field_event(&mut self, slot: usize, event: crate::ui::text_field::Event, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::ui::text_field::Event;
+        if slot == crate::presets::FIELD {
+            self.presets.field_event(event, window, cx);
+        } else {
+            match event {
+                Event::Focus => self.active_field = Some(slot),
+                Event::Enter | Event::Escape | Event::Tab | Event::Blur => self.active_field = None,
+                _ => {}
+            }
+        }
+        cx.notify();
     }
 }
 
@@ -567,6 +599,7 @@ impl Gallery {
     // ------------------------------------------------------------ controls
 
     fn controls(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let fields = self.text_fields(cx);
         let switches = vec![
             spec("on", Switch::new("switch-on", ToggleState::Selected)),
             spec("off", Switch::new("switch-off", ToggleState::Unselected)),
@@ -619,6 +652,7 @@ impl Gallery {
             canvas(|_, _, _| {}, move |bounds, _, window, _| crate::ui::paint_knob(window, bounds.center(), accent)).w(px(40.)).h(px(40.)),
         )];
         vec![
+            group("Text field", Some("Live: click to focus, type, select, copy, cut or paste. The focused caret is steady; there is no idle timer."), fields, cx),
             group("Switch", None, switches, cx),
             group("ProgressBar", Some("No indeterminate variant."), bars, cx),
             group("Key hints", Some("Written the system's way: ⌘ on macOS, Ctrl+ elsewhere."), keys, cx),
@@ -627,6 +661,40 @@ impl Gallery {
             group("Scrollbar", None, scroll, cx),
             group("Knob", None, knob, cx),
         ]
+    }
+
+    fn text_fields(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        use crate::ui::text_field::{self, Options};
+        let colors = cx.theme().colors().clone();
+        (0..self.fields.len()).map(|slot| {
+            let active = self.active_field == Some(slot);
+            let (title, placeholder) = match slot {
+                0 => ("Search · empty, placeholder, icon", t("settings.search")),
+                1 => ("Search · filled (click for focus/selection)", t("settings.search")),
+                2 => ("Search · disabled", t("settings.search")),
+                3 => ("Name template · 28 px, text_sm", ""),
+                4 => ("Preset rename · 24 px, radius 5", "Preset 1"),
+                5 => ("Crop size · digits only, six digits", "1920"),
+                _ => ("History · 19 rem-base, large icon", t("history.search_by_name_date")),
+            };
+            let row = text_field::render(SharedString::from(format!("field-{slot}")), slot, &self.fields[slot], &self.focus, active, Options {
+                placeholder: placeholder.into(),
+                icon: match slot { 0..=2 => Some((IconName::MagnifyingGlass, IconSize::Small)), 6 => Some((IconName::MagnifyingGlass, IconSize::Large)), _ => None },
+                disabled: slot == 2,
+                centered: slot == 5,
+                caret_room: if slot == 6 { 1.5 } else { 0. },
+                legacy_caret_metrics: slot == 1 || slot == 4,
+                ..Default::default()
+            }, cx);
+            let row = match slot {
+                0..=2 => row.w(px(230.)).h(px(30.)).px_2().gap_1p5().rounded(px(7.)).rounded_smoothing(smoothing()).bg(colors.element_background),
+                3 => row.w(px(230. * kit::SCALE)).h(px(28.)).px_2().text_sm().rounded(px(7.)).rounded_smoothing(smoothing()).bg(colors.element_background).border_1().border_color(if active { colors.text_accent } else { gpui::transparent_black() }),
+                4 => row.w(px(230.)).h(px(24.)).px_1p5().rounded(px(5.)).border_1().border_color(colors.text_accent),
+                5 => row.w(px(68.)).h(px(28.)).text_size(LabelSize::Small.rems()).rounded(px(7.)).bg(colors.element_background).border_1().border_color(if active { colors.text_accent } else { gpui::transparent_black() }),
+                _ => row.w(px(460.)).gap_3().text_size(rems_from_px(19.)),
+            };
+            spec(title, row)
+        }).collect()
     }
 
     // ------------------------------------------------------------ patterns
@@ -767,6 +835,7 @@ fn group_note(name: &str) -> &'static str {
         "tooltip" => "The tooltip's measuring and placing, in px.",
         "scrollbar" => "ui::scrollbar, in px.",
         "knob" => "ui::paint_knob, in px.",
+        "text_field" => "Single-line caret, selection and input-method composition marks.",
         _ => "",
     }
 }
@@ -966,7 +1035,6 @@ const PRIVATE: &[(&str, &str, &str)] = &[
     ("Dropdown button + kadr-drawn menu", "settings_view.rs `dropdown`, editor.rs `crop_dropdown`/`menu_list`, studio_editor.rs `aspect_dropdown`, history.rs filter, panel.rs size and mic menus", "6 copies; rows 28 or 30 px or MENU_ROW, corners 6 or 7, the check Small/Accent or XSmall/Default"),
     ("Slider", "editor.rs `slider`, studio_editor.rs `slider` + `labeled_slider`", "2 near-identical copies (the studio's has ticks)"),
     ("Checkbox", "studio_editor.rs `check`, editor.rs crop footer (snap to edges)", "2 copies"),
-    ("Text field", "settings_view.rs search and file name, presets.rs rename, history.rs search, editor.rs crop size and text tool", "6; only the editor's text tool goes through kadr_ui::text::Field and the input handler; the rest keep a String and draw their own caret (a ▏, a 1 px bar, history's blinking one)"),
     ("Colour swatch", "editor.rs colour menu and fill picker, editor.rs + studio_editor.rs backdrop tiles, settings_view.rs studio backdrops", "5; the chosen ring is the text colour in some, the accent in others"),
     ("Colour menu", "editor.rs `render_toolbar`", "1: own colours, pipette, recent, saved and +"),
     ("Backdrop picker", "editor.rs, studio_editor.rs (TILE, TILE_RADIUS, TILE_GAP, DOT, GRADIENT_ROWS)", "2 copies with the same constants; the settings' studio backdrops are a third, not concentric (7 outer, 5 inner, 4 inset)"),
@@ -996,7 +1064,11 @@ impl Render for Gallery {
             .bg(cx.theme().colors().editor_background)
             .flex()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|_, e: &KeyDownEvent, window, _| {
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if let Some(slot) = this.active_field {
+                    crate::ui::text_field::key(this, slot, e, window, cx);
+                    return;
+                }
                 if e.keystroke.key == "escape" {
                     window.remove_window();
                 }

@@ -9,6 +9,7 @@ use kadr_core::i18n::t;
 use kadr_core::settings::Settings;
 
 use crate::Key;
+use crate::text::Field;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -59,7 +60,8 @@ pub struct SettingsVm {
     pub settings: Settings,
     pub tab: Tab,
     /// Type-to-search over every section, like System Settings.
-    pub query: String,
+    pub query: Field,
+    pub name_field: Field,
     /// Typing goes into the file name template instead of the search.
     pub naming: bool,
     /// Key specs for each of `hotkeys::ACTIONS`.
@@ -70,7 +72,8 @@ pub struct SettingsVm {
 
 impl SettingsVm {
     pub fn new(settings: Settings, keys: Vec<Vec<String>>) -> SettingsVm {
-        SettingsVm { settings, tab: Tab::General, query: String::new(), naming: false, keys, recording: None }
+        let name_field = Field::single_line(&settings.name_template);
+        SettingsVm { settings, tab: Tab::General, query: Field::single_line(""), name_field, naming: false, keys, recording: None }
     }
 
     /// Change a setting; it's saved at once. On the file as it is now, so
@@ -79,6 +82,18 @@ impl SettingsVm {
         self.settings = Settings::load();
         f(&mut self.settings);
         self.settings.save();
+        self.sync_name();
+    }
+
+    pub fn sync_name(&mut self) {
+        if self.name_field.text() != self.settings.name_template {
+            self.name_field = Field::single_line(&self.settings.name_template);
+        }
+    }
+
+    pub fn save_name(&mut self) {
+        let text = self.name_field.text().to_owned();
+        self.change(|s| s.name_template = text);
     }
 
     pub fn select(&mut self, tab: Tab) {
@@ -117,7 +132,7 @@ impl SettingsVm {
     /// Whether a row titled `text` in `tab` shows: always, unless a search
     /// matches neither it nor its section.
     pub fn row_shown(&self, tab: Tab, text: &str) -> bool {
-        let query = self.query.to_lowercase();
+        let query = self.query.text().to_lowercase();
         query.is_empty() || tab.label().to_lowercase().contains(&query) || text.to_lowercase().contains(&query)
     }
 
@@ -146,13 +161,13 @@ impl SettingsVm {
                 Effect::Changed
             }
             "backspace" => {
-                self.query.pop();
+                self.query.backspace();
                 Effect::ScrollTop
             }
             // Typing anywhere searches.
             _ => match k.text() {
                 Some(ch) => {
-                    self.query.push_str(ch);
+                    self.query.insert(ch);
                     Effect::ScrollTop
                 }
                 None => Effect::Nothing,
@@ -164,13 +179,11 @@ impl SettingsVm {
     fn name_key(&mut self, k: &Key) -> Effect {
         match k.key.as_str() {
             "escape" | "enter" | "tab" => self.naming = false,
-            "backspace" => self.change(|s| {
-                s.name_template.pop();
-            }),
+            "backspace" => { self.name_field.backspace(); self.save_name(); }
             _ => match k.text() {
                 Some(ch) => {
-                    let ch = ch.to_owned();
-                    self.change(|s| s.name_template.push_str(&ch));
+                    self.name_field.insert(ch);
+                    self.save_name();
                 }
                 None => return Effect::Nothing,
             },
@@ -199,7 +212,9 @@ impl SettingsVm {
     pub fn dev_state(&self) -> serde_json::Value {
         serde_json::json!({
             "tab": format!("{:?}", self.tab).to_lowercase(),
-            "query": self.query,
+            "query": self.query.text(),
+            "query_selection": [self.query.selection().start, self.query.selection().end],
+            "query_caret": self.query.caret(),
             "naming": self.naming,
             "name_template": self.settings.name_template,
             "recording_shortcut": self.recording,
@@ -222,12 +237,12 @@ mod tests {
         assert_eq!(vm.key(&Key::char("t")), Effect::ScrollTop);
         vm.key(&Key::char("r"));
         vm.key(&Key::char("a"));
-        assert_eq!(vm.query, "tra");
+        assert_eq!(vm.query.text(), "tra");
         assert_eq!(vm.tabs_shown().len(), Tab::ALL.len(), "a search looks through every section");
         assert!(vm.row_shown(Tab::General, "Tray icon"));
         assert!(!vm.row_shown(Tab::General, "Language"));
         assert_eq!(vm.key(&Key::named("backspace")), Effect::ScrollTop);
-        assert_eq!(vm.query, "tr");
+        assert_eq!(vm.query.text(), "tr");
         assert_eq!(vm.key(&Key::named("escape")), Effect::ScrollTop);
         assert!(vm.query.is_empty());
         assert_eq!(vm.key(&Key::named("escape")), Effect::Close);

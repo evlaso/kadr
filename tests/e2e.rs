@@ -854,6 +854,155 @@ fn the_settings_switch_theme() {
     assert!(shown("language"));
 }
 
+/// Search and template use the same input-method and selection path.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_settings_fields_share_text_editing() {
+    let s = Session::start();
+    s.spawn(&["settings"]);
+    s.window("kadr-settings");
+    s.dev(&["click", "settings-search"]);
+    s.dev(&["type", "Hello мир"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "Hello мир");
+    s.dev(&["key", "ctrl-shift-left"]);
+    assert_eq!(s.dev(&["state"])["view"]["query_selection"], serde_json::json!([6, 12]));
+    s.dev(&["type", "tray"]);
+    s.dev(&["key", "home", "ctrl-shift-right", "delete"]);
+    // WordRight selects "Hello", not its following space.
+    s.dev(&["key", "delete"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "tray");
+    let nodes = s.dev(&["dump"]);
+    assert!(nodes.as_array().unwrap().iter().any(|n| n["id"] == "tray"));
+    assert!(!nodes.as_array().unwrap().iter().any(|n| n["id"] == "language"));
+    s.dev(&["key", "ctrl-a", "ctrl-c"]);
+    std::thread::sleep(Duration::from_millis(150));
+    s.dev(&["key", "end", "ctrl-v"]);
+    wait(Duration::from_secs(3), || s.try_dev(&["state"]).filter(|v| v["view"]["query"] == "traytray")).expect("search paste");
+    s.dev(&["key", "ctrl-a", "ctrl-x"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "");
+    std::thread::sleep(Duration::from_millis(150));
+    s.dev(&["key", "ctrl-v"]);
+    wait(Duration::from_secs(3), || s.try_dev(&["state"]).filter(|v| v["view"]["query"] == "traytray")).expect("search cut/paste");
+    s.dev(&["key", "escape"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "");
+    s.dev(&["key", "down"]);
+    s.dev(&["scroll", "600,450", "1200"]);
+    s.dev(&["click", "name-shot"]);
+    s.dev(&["key", "ctrl-a"]);
+    s.dev(&["type", "capture-мир"]);
+    s.dev(&["key", "left", "shift-left"]);
+    s.dev(&["type", "И"]);
+    s.dev(&["key", "enter"]);
+    let state = s.dev(&["state"]);
+    assert_eq!(state["view"]["name_template"], "capture-мИр");
+    assert_eq!(state["view"]["naming"], false);
+    let settings = std::fs::read_to_string(s.var("XDG_CONFIG_HOME").join("kadr/settings.toml")).unwrap();
+    assert!(settings.contains("capture-мИр"));
+    s.dev(&["click", "name-shot"]);
+    s.dev(&["key", "end"]);
+    s.dev(&["type", "!"]);
+    s.dev(&["key", "escape"]);
+    assert_eq!(s.dev(&["state"])["view"]["name_template"], "capture-мИр!");
+}
+
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_crop_size_fields_share_text_editing() {
+    let s = Session::start();
+    let path = fixture(&s, "crop.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("picture never loaded");
+    s.dev(&["click", "mode-crop"]);
+    s.dev(&["click", "crop-width"]);
+    s.dev(&["type", "2aж40"]);
+    assert_eq!(s.dev(&["state"])["view"]["size_field"]["text"], "240");
+    s.dev(&["key", "home", "delete"]);
+    s.dev(&["type", "3"]);
+    assert_eq!(s.dev(&["state"])["view"]["size_field"]["text"], "340");
+    s.dev(&["key", "ctrl-a", "ctrl-c"]);
+    std::thread::sleep(Duration::from_millis(150));
+    s.dev(&["key", "ctrl-v"]);
+    s.dev(&["key", "tab"]);
+    assert_eq!(s.dev(&["state"])["view"]["size_field"]["height"], true);
+    s.dev(&["type", "120"]);
+    s.dev(&["key", "enter"]);
+    let state = s.dev(&["state"]);
+    let crop = &state["view"]["crop"];
+    assert_eq!(crop[1][0].as_f64().unwrap() - crop[0][0].as_f64().unwrap(), 340.);
+    assert_eq!(crop[1][1].as_f64().unwrap() - crop[0][1].as_f64().unwrap(), 120.);
+    s.dev(&["click", "crop-width"]);
+    s.dev(&["type", "99"]);
+    s.dev(&["key", "escape"]);
+    assert_eq!(s.dev(&["state"])["view"]["crop"], *crop, "Escape cancels the draft");
+    s.dev(&["click", "crop-width"]);
+    s.dev(&["type", "200"]);
+    s.dev(&["click", "crop-height"]);
+    let crop = s.dev(&["state"])["view"]["crop"].clone();
+    assert_eq!(crop[1][0].as_f64().unwrap() - crop[0][0].as_f64().unwrap(), 200., "blur commits");
+}
+
+/// Typing still filters history; editing commands act on its search text.
+#[test]
+#[ignore = "e2e: just e2e"]
+fn the_history_search_shares_text_editing() {
+    let s = Session::start();
+    let path = s.var("OMARCHY_SCREENSHOT_DIR").join("screenshot-2026-11-13_12-00-00.png");
+    std::fs::copy(root().join("tests/golden/cases/arrow/base.png"), path).unwrap();
+    s.spawn(&["history"]);
+    s.window("kadr-history");
+    s.dev(&["click", "search"]);
+    s.dev(&["type", "Hello мир"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "Hello мир");
+    assert_eq!(s.dev(&["state"])["view"]["visible"], 0);
+    s.dev(&["key", "ctrl-shift-left", "backspace", "home", "delete"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "ello ");
+    s.dev(&["key", "ctrl-a"]);
+    s.dev(&["type", "screenshot"]);
+    assert_eq!(s.dev(&["state"])["view"]["visible"], 1);
+    s.dev(&["key", "ctrl-a", "ctrl-x"]);
+    std::thread::sleep(Duration::from_millis(150));
+    s.dev(&["key", "ctrl-v"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "screenshot");
+    s.dev(&["key", "end"]);
+    s.dev(&["type", "nothing"]);
+    s.dev(&["key", "enter"]);
+    assert_eq!(s.dev(&["state"])["view"]["visible"], 0, "Enter without a match leaves the search");
+    s.dev(&["key", "escape"]);
+    assert_eq!(s.dev(&["state"])["view"]["query"], "");
+    assert_eq!(s.dev(&["state"])["view"]["visible"], 1);
+}
+
+#[test]
+#[ignore = "e2e: just e2e"]
+fn preset_renaming_shares_text_editing() {
+    let s = Session::start();
+    let path = fixture(&s, "preset.png");
+    s.spawn(&["edit", path.to_str().unwrap()]);
+    s.window("kadr-editor");
+    wait(Duration::from_secs(5), || s.try_dev(&["state"]).filter(|v| !v["view"]["image"].is_null())).expect("picture never loaded");
+    s.dev(&["click", "mode-background"]);
+    s.dev(&["click", "preset-add"]);
+    s.dev(&["type", "Hello мир"]);
+    s.dev(&["key", "ctrl-shift-left"]);
+    s.dev(&["type", "кадр"]);
+    s.dev(&["key", "enter"]);
+    let file = s.var("XDG_CONFIG_HOME").join("kadr/editor-presets.json");
+    let name = || serde_json::from_slice::<Value>(&std::fs::read(&file).unwrap()).unwrap()[0]["name"].as_str().unwrap().to_owned();
+    assert_eq!(name(), "Hello кадр");
+    s.dev(&["click", "preset-rename-0"]);
+    s.dev(&["type", "canceled"]);
+    s.dev(&["key", "escape"]);
+    assert_eq!(name(), "Hello кадр");
+    s.dev(&["click", "preset-rename-0"]);
+    s.dev(&["type", "Hello мир"]);
+    s.dev(&["key", "home", "delete", "ctrl-a", "ctrl-c"]);
+    std::thread::sleep(Duration::from_millis(150));
+    s.dev(&["key", "end", "ctrl-v"]);
+    s.dev(&["click", "presets"]);
+    assert_eq!(name(), "ello мирello мир", "closing the menu commits");
+}
+
 /// The tray runs once: a second `kadr-tray` (or `kadr tray`) leaves at once.
 #[test]
 #[ignore = "e2e: just e2e"]

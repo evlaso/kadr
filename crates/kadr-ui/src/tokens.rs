@@ -322,6 +322,22 @@ group! {
 }
 
 group! {
+    /// Single-line text editing, matching the canvas text's bar proportions.
+    TextField {
+        /// The caret's width, in logical pixels.
+        caret_width: 1.5, Px;
+        /// The caret's height as a fraction of the line box.
+        caret_height: 0.76, Ratio;
+        /// The caret's top inset as a fraction of the line box.
+        caret_inset: 0.12, Ratio;
+        /// Selected text's accent wash.
+        selection: 0.25, Alpha;
+        /// Under the input method's composing text, in logical pixels.
+        composition_line: 1., Px;
+    }
+}
+
+group! {
     /// The selection knob (`ui::paint_knob`): an accent dot in a white ring, in logical pixels.
     Knob {
         /// Its radius, ring included.
@@ -416,6 +432,7 @@ pub struct Tokens {
     pub tooltip: Tooltip,
     pub scrollbar: Scrollbar,
     pub knob: Knob,
+    pub text_field: TextField,
     pub shadow: Shadows,
 }
 
@@ -436,6 +453,7 @@ impl Tokens {
             ("tooltip", self.tooltip.entries()),
             ("scrollbar", self.scrollbar.entries()),
             ("knob", self.knob.entries()),
+            ("text_field", self.text_field.entries()),
         ]
     }
 
@@ -455,6 +473,7 @@ impl Tokens {
             "tooltip" => self.tooltip.get_mut(name),
             "scrollbar" => self.scrollbar.get_mut(name),
             "knob" => self.knob.get_mut(name),
+            "text_field" => self.text_field.get_mut(name),
             _ => None,
         }
     }
@@ -542,7 +561,7 @@ mod tests {
     fn every_value_is_listed_and_reachable_by_name() {
         let mut t = Tokens::default();
         let groups = t.groups();
-        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 86);
+        assert_eq!(groups.iter().map(|(_, e)| e.len()).sum::<usize>(), 91);
         for (group, entries) in groups {
             for e in entries {
                 assert!(!e.doc.is_empty(), "{group}.{} has no role", e.name);

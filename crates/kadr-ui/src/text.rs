@@ -19,6 +19,16 @@ pub enum Move {
     End,
 }
 
+/// What may be inserted. Filtering lives here so typing, paste and IME
+/// replacements obey the same rules.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Filter {
+    #[default]
+    Any,
+    SingleLine,
+    Digits(usize),
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Field {
     text: String,
@@ -28,12 +38,51 @@ pub struct Field {
     anchor: usize,
     /// The input method's text being composed, if any.
     marked: Option<Range<usize>>,
+    filter: Filter,
 }
 
 impl Field {
     /// `text` with the caret at its end.
     pub fn new(text: &str) -> Field {
-        Field { text: text.to_owned(), caret: text.len(), anchor: text.len(), marked: None }
+        Field { text: text.to_owned(), caret: text.len(), anchor: text.len(), marked: None, filter: Filter::Any }
+    }
+
+    pub fn single_line(text: &str) -> Field {
+        Field { filter: Filter::SingleLine, ..Field::new(text) }
+    }
+
+    pub fn digits(text: &str, limit: usize) -> Field {
+        Field { filter: Filter::Digits(limit), ..Field::new(text) }
+    }
+
+    pub fn is_empty(&self) -> bool { self.text.is_empty() }
+
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.caret = 0;
+        self.anchor = 0;
+        self.marked = None;
+    }
+
+    /// A mouse hit, in bytes; stale hits are clamped to a character boundary.
+    pub fn place(&mut self, byte: usize, extend: bool) {
+        let mut byte = byte.min(self.text.len());
+        while !self.text.is_char_boundary(byte) { byte -= 1; }
+        self.caret = byte;
+        if !extend { self.anchor = byte; }
+        self.marked = None;
+    }
+
+    pub fn select_word_at(&mut self, byte: usize) {
+        self.place(byte, false);
+        let at = self.caret;
+        let kind = self.text[at..].chars().next().map(is_word);
+        let mut start = at;
+        let mut end = at;
+        while start > 0 && self.text[..start].chars().next_back().map(is_word) == kind { start = self.prev_char(start); }
+        while end < self.text.len() && self.text[end..].chars().next().map(is_word) == kind { end = self.next_char(end); }
+        self.anchor = start;
+        self.caret = end;
     }
 
     pub fn text(&self) -> &str {
@@ -42,6 +91,13 @@ impl Field {
 
     pub fn caret(&self) -> usize {
         self.caret
+    }
+
+    /// A hit from the last frame, clamped before asking the input method.
+    pub fn utf16_at(&self, byte: usize) -> usize {
+        let mut byte = byte.min(self.text.len());
+        while !self.text.is_char_boundary(byte) { byte -= 1; }
+        self.utf16(byte)
     }
 
     /// The selection, in order; empty at the caret when none.
@@ -144,10 +200,15 @@ impl Field {
     pub fn mark(&mut self, range: Option<Range<usize>>, s: &str, selected: Option<Range<usize>>) {
         let range = range.map(|r| self.bytes(r)).or_else(|| self.marked.clone()).unwrap_or_else(|| self.selection());
         let start = range.start;
+        let selected = selected.map(|sel| {
+            let offset = |u| self.filtered(&range, &s[..utf16_to_byte(s, u)]).encode_utf16().count();
+            offset(sel.start)..offset(sel.end)
+        });
         self.splice(range, s);
-        self.marked = (!s.is_empty()).then(|| start..start + s.len());
+        let inserted = self.caret.saturating_sub(start);
+        self.marked = (inserted > 0).then(|| start..start + inserted);
         if let Some(sel) = selected {
-            let in_s = |u: usize| start + utf16_to_byte(s, u);
+            let in_s = |u: usize| start + utf16_to_byte(&self.text[start..start + inserted], u);
             self.anchor = in_s(sel.start);
             self.caret = in_s(sel.end);
         }
@@ -167,9 +228,22 @@ impl Field {
     // ------------------------------------------------------------- inside
 
     fn splice(&mut self, range: Range<usize>, s: &str) {
-        self.text.replace_range(range.clone(), s);
+        let s = self.filtered(&range, s);
+        self.text.replace_range(range.clone(), &s);
         self.caret = range.start + s.len();
         self.anchor = self.caret;
+        self.marked = None;
+    }
+
+    fn filtered(&self, range: &Range<usize>, s: &str) -> String {
+        match self.filter {
+            Filter::Any => s.to_owned(),
+            Filter::SingleLine => s.chars().filter(|c| !c.is_control()).collect(),
+            Filter::Digits(limit) => {
+                let room = limit.saturating_sub(self.text.len() - range.len());
+                s.chars().filter(char::is_ascii_digit).take(room).collect()
+            }
+        }
     }
 
     fn prev_char(&self, at: usize) -> usize {
@@ -235,6 +309,37 @@ fn utf16_to_byte(s: &str, u: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_line_and_size_replacements_are_filtered() {
+        let mut f = Field::single_line("Hello");
+        f.insert("\nмир\t");
+        assert_eq!(f.text(), "Helloмир");
+        let mut f = Field::digits("123", 6);
+        f.insert("a45б67");
+        assert_eq!(f.text(), "123456");
+        f.select_all();
+        f.replace(None, "ж98\n7");
+        assert_eq!(f.text(), "987");
+        f.select_all();
+        f.mark(None, "12a34567", Some(20..20));
+        assert_eq!((f.text(), f.selection_utf16(), f.marked_utf16()), ("123456", 6..6, Some(0..6)));
+        f.mark(None, "1a2", Some(2..2));
+        assert_eq!((f.text(), f.selection_utf16()), ("12", 1..1));
+    }
+
+    #[test]
+    fn mouse_hits_and_word_selection_keep_unicode_boundaries() {
+        let mut f = Field::single_line("Hello мир!");
+        f.place(7, false);
+        assert_eq!(f.caret(), 6);
+        f.select_word_at(8);
+        assert_eq!(&f.text()[f.selection()], "мир");
+        f.place(f.text().len(), true);
+        assert_eq!(&f.text()[f.selection()], "мир!");
+        f.clear();
+        assert_eq!((f.text(), f.caret(), f.selection()), ("", 0, 0..0));
+    }
 
     #[test]
     fn typing_goes_over_the_selection() {

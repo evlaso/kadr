@@ -16,6 +16,7 @@ use crate::{hotkeys, ocr, palette, storage, util};
 use crate::i18n::t;
 use kadr_core::update::Channel;
 use kadr_ui::settings::{Effect, SettingsVm, Tab};
+use crate::ui::text_field::{self, Event as FieldEvent, Options as FieldOptions};
 
 /// A section's icon in the list.
 fn tab_icon(tab: Tab) -> Icon {
@@ -101,6 +102,7 @@ impl SettingsView {
     /// The settings as the file has them now.
     fn reload(&mut self) {
         self.vm.settings = Settings::load();
+        self.vm.sync_name();
         self.problem = kadr_core::settings::problem();
     }
 
@@ -238,7 +240,7 @@ impl SettingsView {
     /// The section list on the left, like System Settings: the current one
     /// highlighted in the accent colour.
     fn render_sidebar(&self, (width, height): (f32, f32), cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
+        let colors = cx.theme().colors().clone();
         let accent = colors.text_accent;
         let on_accent = crate::ui::on(accent);
         // Narrower in a narrow window, where the section needs the room.
@@ -256,20 +258,19 @@ impl SettingsView {
             // Under macOS's traffic lights.
             .when(matches!(crate::platform::window_controls(), crate::platform::WindowControls::Left(_)), |d| d.pt(px(30.)))
             .child(
-                h_flex()
+                text_field::render("settings-search", 0, &self.vm.query, &self.focus, !self.vm.naming && self.vm.recording.is_none(), FieldOptions {
+                    placeholder: t("settings.search").into(),
+                    icon: Some((IconName::MagnifyingGlass, IconSize::Small)),
+                    legacy_caret_metrics: !self.vm.query.is_empty(),
+                    ..Default::default()
+                }, cx)
                     .mb_2()
                     .h(px(30.))
                     .px_2()
                     .gap_1p5()
                     .rounded(px(7.))
                     .rounded_smoothing(crate::ui::smoothing())
-                    .bg(colors.element_background)
-                    .child(Icon::new(IconName::MagnifyingGlass).size(IconSize::Small).color(Color::Muted))
-                    .child(if self.vm.query.is_empty() {
-                        div().text_color(colors.text_placeholder).child(t("settings.search")).into_any_element()
-                    } else {
-                        div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(format!("{}▏", self.vm.query)).into_any_element()
-                    }),
+                    .bg(colors.element_background),
             )
             .children(Tab::ALL.into_iter().map(|tab| {
                 let on = tab == self.vm.tab && self.vm.query.is_empty();
@@ -785,12 +786,11 @@ impl SettingsView {
     /// The file name: a field to type the template into, an example of
     /// the name it makes, and the tokens to put in with a click.
     fn render_name(&self, kind: crate::storage::Capture, ext: &str, cx: &mut Context<Self>) -> (String, AnyElement) {
-        let colors = cx.theme().colors();
+        let colors = cx.theme().colors().clone();
         let template = &self.vm.settings.name_template;
         let example = format!("{}.{ext}", crate::storage::render_name(template, kind, chrono::Local::now(), 1));
         let id = if ext == "png" { "name-shot" } else { "name-video" };
-        let field = h_flex()
-            .id(id)
+        let field = text_field::render(id, 1, &self.vm.name_field, &self.focus, self.vm.naming, FieldOptions::default(), cx)
             .w(px(230. * kit::SCALE))
             .h(px(28.))
             .px_2()
@@ -801,17 +801,7 @@ impl SettingsView {
             .border_color(if self.vm.naming { colors.text_accent } else { gpui::transparent_black() })
             .cursor_text()
             .overflow_hidden()
-            .child(div().whitespace_nowrap().text_sm().child(if self.vm.naming { format!("{template}▏") } else { template.clone() }))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.vm.naming = true;
-                cx.notify();
-            }))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if this.vm.naming {
-                    this.vm.naming = false;
-                    cx.notify();
-                }
-            }));
+            .text_sm();
         let tokens = h_flex().gap_0p5().children(["{date}", "{time}", "{type}", "{n}"].into_iter().map(|token| {
             ButtonLike::new(SharedString::from(format!("{id}-{token}")))
                 .style(ButtonStyle::Subtle)
@@ -842,6 +832,18 @@ impl SettingsView {
 
     /// A key in the window, as `kadr_ui` takes it; what's left to do here.
     fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.vm.recording.is_none() {
+            if self.vm.naming {
+                text_field::key(self, 1, e, window, cx);
+                return;
+            }
+            // Section navigation stays with the screen; printable text goes
+            // through the input method, not SettingsVm's key fallback.
+            if !matches!(e.keystroke.key.as_str(), "escape" | "tab" | "up" | "down") {
+                text_field::key(self, 0, e, window, cx);
+                return;
+            }
+        }
         let k = &e.keystroke;
         let key = kadr_ui::Key {
             key: k.key.clone(),
@@ -875,6 +877,29 @@ impl SettingsView {
         if let Err(e) = hotkeys::save(&self.vm.keys) {
             util::notify(t("settings.couldnt_save_shortcuts"), &e.to_string());
         }
+    }
+}
+
+impl text_field::Host for SettingsView {
+    fn field(&mut self, slot: usize) -> Option<&mut kadr_ui::text::Field> {
+        if self.vm.recording.is_some() { return None; }
+        match slot {
+            0 if !self.vm.naming => Some(&mut self.vm.query),
+            1 if self.vm.naming => Some(&mut self.vm.name_field),
+            _ => None,
+        }
+    }
+
+    fn field_event(&mut self, slot: usize, event: FieldEvent, _: &mut Window, cx: &mut Context<Self>) {
+        match (slot, event) {
+            (1, FieldEvent::Focus) => { self.vm.sync_name(); self.vm.naming = true; }
+            (1, FieldEvent::Changed) => self.vm.save_name(),
+            (1, FieldEvent::Enter | FieldEvent::Escape | FieldEvent::Tab | FieldEvent::Blur) => self.vm.naming = false,
+            (0, FieldEvent::Focus) => self.vm.naming = false,
+            (0, FieldEvent::Changed) => self.scroll.set_offset(gpui::point(px(0.), px(0.))),
+            _ => {}
+        }
+        cx.notify();
     }
 }
 

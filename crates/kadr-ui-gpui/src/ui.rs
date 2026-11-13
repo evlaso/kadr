@@ -18,6 +18,9 @@ use smallvec::SmallVec;
 
 use crate::kit;
 
+#[path = "text_field.rs"]
+pub mod text_field;
+
 pub mod prelude {
     pub use gpui::prelude::*;
     pub use gpui::{AnyElement, Div, InteractiveElement, ParentElement, SharedString, Styled, div, px};
