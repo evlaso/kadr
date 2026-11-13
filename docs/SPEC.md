@@ -20,8 +20,8 @@ unless the question comes up again. Where this document describes a target the c
 | Product name | kadr |
 | Licence | MIT, `Copyright (c) 2026 Evgeniy Vlasov` |
 | Repository | `github.com/evlaso/kadr` (public); if it moves, the `kadr-sh` organisation |
-| Domain | `kadr.sh`; the site is GitHub Pages; releases and the updater are `https://kadr.sh/releases` → GitHub Releases |
-| Bundle id | `sh.kadr.app` (macOS), `sh.kadr.Kadr` (desktop entry / Flatpak), the same root in winget |
+| Domain | Not chosen yet (`kadr.sh` or `kadr.run`), and not owned. Until it is, the site is `evlaso.github.io/kadr` (GitHub Pages) and the updater reads `releases/latest.json` there; the `kadr.sh` addresses below stand for the future domain |
+| Bundle id | The domain reversed, once it's chosen: `sh.kadr.app` (macOS), `sh.kadr.Kadr` (desktop entry / Flatpak), the same root in winget; `run.kadr.…` if the domain is `kadr.run`. Settle it before the first people run kadr on macOS: changing it later resets the permissions they granted. Today the code has `sh.kadr.kadr` (macOS) and `kadr.desktop` |
 | AUR | `kadr-sh` (from the tarball), `kadr-sh-bin`, `kadr-sh-git`; `provides=('kadr') conflicts=('kadr')`: the name `kadr` is taken by another project, and the binary `/usr/bin/kadr` conflicts |
 | crates.io | not published (the name `kadr` is squatted; the GUI is distributed as binaries) |
 
@@ -690,7 +690,7 @@ Check now are the app's `update.rs`. The background mode isn't there yet.
 - `CLAUDE.md` stays as the guide for agent contributors (many projects call it `AGENTS.md`;
   you can keep one and symlink the other), with no personal paths or local settings: those go in `.claude/settings.local.json`
   and in `.gitignore`.
-- `SECURITY.md` (where to report vulnerabilities: `security@kadr.sh`), issue templates (a bug with the OS and version,
+- `SECURITY.md` (where to report vulnerabilities: GitHub's private reporting; an address at the domain once there is one), issue templates (a bug with the OS and version,
   a feature), `.github/FUNDING.yml` if wanted.
 - The repository's description: "Screenshots and screen recording for Linux, macOS and Windows. Native,
   written in Rust." Other people's trademarks aren't mentioned in public texts. Topics: `screenshot`, `screen-recording`, `rust`, `gpui`, `wayland`, `hyprland`,
